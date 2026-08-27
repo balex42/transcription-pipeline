@@ -163,3 +163,17 @@ def test_token_aggregation_rejects_non_monotonic_timestamps() -> None:
             ],
             1.0,
         )
+
+
+def test_token_aggregation_accepts_words_emitted_in_the_same_rnnt_frame() -> None:
+    words = aggregate_nemotron_tokens(
+        [
+            {"token": " eins", "start": 0.0, "end": 0.08},
+            {"token": " zwei", "start": 0.0, "end": 0.08},
+        ],
+        1.0,
+    )
+    assert [(word.text, word.start, word.end) for word in words] == [
+        ("eins", 0.0, 0.08),
+        ("zwei", 0.0, 0.08),
+    ]

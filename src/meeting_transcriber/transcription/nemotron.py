@@ -290,16 +290,18 @@ def _timestamp_value(entry: dict[str, object], name: str) -> object:
 
 
 def _validate_global_words(words: list[ASRWord], duration: float) -> list[ASRWord]:
-    previous_end = 0.0
+    previous_start = 0.0
     for word in words:
         if (
             word.start is None
             or word.end < word.start
-            or word.start + 1e-6 < previous_end
+            or word.start + 1e-6 < previous_start
             or word.end > duration + 0.25
         ):
             raise NemotronStreamingError("Nemotron returned non-monotonic global token timing")
-        previous_end = word.end
+        # RNNT can emit several non-blank tokens in one encoder frame. Their
+        # resulting lexical intervals may overlap while their emission order is valid.
+        previous_start = word.start
     return words
 
 
