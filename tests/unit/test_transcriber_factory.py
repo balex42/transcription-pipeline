@@ -6,13 +6,16 @@ from meeting_transcriber.config import (
     DEFAULT_NEMOTRON_MODEL,
     DEFAULT_PARAKEET_MODEL,
     DEFAULT_QWEN_MODEL,
+    DEFAULT_VOXTRAL_MODEL,
     PipelineConfig,
 )
 from meeting_transcriber.errors import UnsupportedASRBackendError
+from meeting_transcriber.transcription.base import TranscriberCapabilities
 from meeting_transcriber.transcription.factory import create_transcriber
 from meeting_transcriber.transcription.nemotron import NemotronTranscriber
 from meeting_transcriber.transcription.parakeet import ParakeetTranscriber
 from meeting_transcriber.transcription.qwen import QwenTranscriber
+from meeting_transcriber.transcription.voxtral import VoxtralTranscriber
 
 
 def config(backend: str, model: str | None = None) -> PipelineConfig:
@@ -27,6 +30,7 @@ def config(backend: str, model: str | None = None) -> PipelineConfig:
         ("parakeet", ParakeetTranscriber, DEFAULT_PARAKEET_MODEL),
         ("qwen", QwenTranscriber, DEFAULT_QWEN_MODEL),
         ("nemotron", NemotronTranscriber, DEFAULT_NEMOTRON_MODEL),
+        ("voxtral", VoxtralTranscriber, DEFAULT_VOXTRAL_MODEL),
     ],
 )
 def test_factory_selects_adapter_and_default_model(
@@ -39,6 +43,10 @@ def test_factory_selects_adapter_and_default_model(
         assert transcriber.capabilities.requires_forced_alignment is True
     if backend == "nemotron":
         assert transcriber.capabilities.streaming is True
+    if backend == "voxtral":
+        assert transcriber.capabilities == TranscriberCapabilities(
+            False, True, True, True, streaming=True
+        )
 
 
 def test_explicit_model_overrides_backend_default() -> None:

@@ -16,9 +16,11 @@ flowchart TD
     transcriber --> parakeet[Parakeet\ninternal segments]
     transcriber --> qwen[Qwen\ninternal segments plus aligner]
     transcriber --> nemotron[Nemotron\ncache-aware streaming]
+    transcriber --> voxtral[Voxtral\nnative streaming]
     parakeet --> words[Global ASRWord list]
     qwen --> words
     nemotron --> words
+    voxtral --> words
     words --> align[SpeakerAligner]
     timeline --> align
     align --> turns[TurnBuilder]
@@ -32,6 +34,7 @@ Audio segmentation is not part of the generic pipeline. Each ASR backend owns it
 - `parakeet`: `nvidia/parakeet-tdt-0.6b-v3`. Native TDT word timestamps, punctuation, capitalization, and internal 180-second segments with 15-second overlap.
 - `qwen`: `Qwen/Qwen3-ASR-1.7B-hf` plus `Qwen/Qwen3-ForcedAligner-0.6B-hf`. Qwen recognizes bounded 240-second internal segments with 15-second overlap, releases ASR, aligns all recognized segments once, then reconciles them. Collapsed 80 ms-grid boundaries are interpolated and reported in metadata. The aligner limit is 300 seconds.
 - `nemotron`: `nvidia/nemotron-3.5-asr-streaming-0.6b`. Native Transformers RNNT cache-aware streaming, explicit `de-DE` conditioning, native token emission timestamps, and internal token-to-word aggregation. Batch transcription defaults to 13 lookahead tokens (1.12s latency) for the model's highest-accuracy streaming configuration. It does not issue independent ASR requests for long-form audio.
+- `voxtral`: `mistralai/Voxtral-Mini-4B-Realtime-2602`. Native Transformers cache-aware streaming in one continuous `generate()` session using processor-defined buffers and EOF padding. `[STREAMING_WORD]` token positions provide approximate emission-group end times; starts remain unset for speaker alignment to infer.
 - Diarization: `pyannote/speaker-diarization-community-1` runs once over the normalized full meeting.
 
 Nemotron word intervals are aggregates of RNNT token emission times, not manually aligned acoustic boundaries. Leading-space tokenizer markers start words; trailing punctuation attaches to the preceding word; opening punctuation attaches to the following lexical token.
@@ -49,6 +52,7 @@ All adapters use deterministic inference, `model.eval()`, `torch.inference_mode(
 | transformers | `5.13.0` |
 | accelerate | `1.12.0` |
 | librosa | `0.11.0` |
+| mistral-common | `1.10.0` with `audio` extra |
 | pyannote.audio | `4.0.7` |
 | numpy | `2.2.6` |
 
@@ -68,13 +72,14 @@ python3.11 -m venv .venv
 meeting-transcriber transcribe meeting.m4a --asr parakeet --output ./result/parakeet --device cuda
 meeting-transcriber transcribe meeting.m4a --asr qwen --output ./result/qwen --device cuda
 meeting-transcriber transcribe meeting.m4a --asr nemotron --output ./result/nemotron --device cuda
+meeting-transcriber transcribe meeting.m4a --asr voxtral --output ./result/voxtral --device cuda
 ```
 
 Compare all production configurations with one normalization and one diarization pass:
 
 ```bash
 meeting-transcriber compare meeting.m4a \
-  --models parakeet,qwen,nemotron \
+  --models parakeet,qwen,nemotron,voxtral \
   --output ./comparison --device cuda
 ```
 
@@ -110,6 +115,8 @@ Equivalent CLI flags include `--parakeet-segment-duration`, `--qwen-segment-dura
 
 Nemotron validates an explicit lookahead through the loaded processor. Batch transcription defaults to 13 lookahead tokens; set `NEMOTRON_NUM_LOOKAHEAD_TOKENS` or `--nemotron-num-lookahead-tokens` to select another supported latency/accuracy trade-off. The checkpoint derives its first/subsequent streaming buffer sizes and latency from model/processor configuration.
 
+Voxtral derives its first/subsequent buffers, transcript delay, and right EOF padding from the loaded processor. Its marker-derived end times are approximate, and multiple lexical words may share one native emission-group end time.
+
 ## Output and Metrics
 
 `OUTPUT/transcript.json` is the canonical versioned output. Its word timestamps are seconds from the beginning of the normalized meeting and are compatible with the pyannote timeline.
@@ -124,10 +131,11 @@ comparison/
 │   ├── transcript.json
 │   └── transcript.txt
 ├── qwen/
-└── nemotron/
+├── nemotron/
+└── voxtral/
 ```
 
-Each backend metadata file records model/device/dtype, load time, ASR time, total backend time, RTF, peak CUDA memory, backend configuration, and backend-specific metrics. Forced-alignment backends record recognition, recognizer release, aligner load, alignment, and aligner release timings; Qwen also records `interpolated_word_timestamps`. Nemotron records language, lookahead, streaming latency, and `stream_buffers_processed`.
+Each backend metadata file records model/device/dtype, load time, ASR time, total backend time, RTF, peak CUDA memory, backend configuration, and backend-specific metrics. Forced-alignment backends record recognition, recognizer release, aligner load, alignment, and aligner release timings; Qwen also records `interpolated_word_timestamps`. Nemotron records language, lookahead, streaming latency, and `stream_buffers_processed`; Voxtral records native delay, right padding, and stream buffer counts.
 
 With `--keep-intermediate`, generic diarization, ASR words, and attributed words are retained under `OUTPUT/intermediate`. Backend-specific state remains internal and is never added to the canonical transcript schema.
 
@@ -139,6 +147,7 @@ On an approved connected staging system, prefetch artifacts:
 HF_TOKEN=hf_... meeting-transcriber prefetch-models --asr parakeet
 HF_TOKEN=hf_... meeting-transcriber prefetch-models --asr qwen
 HF_TOKEN=hf_... meeting-transcriber prefetch-models --asr nemotron
+HF_TOKEN=hf_... meeting-transcriber prefetch-models --asr voxtral
 ```
 
 Qwen prefetch includes the configured Qwen forced-aligner artifact.
@@ -151,7 +160,8 @@ Also obtain the accepted pyannote artifact through the approved process. Transfe
 ├── parakeet-tdt-0.6b-v3/
 ├── qwen3-asr-1.7b/
 ├── qwen3-forced-aligner-0.6b/
-└── nemotron-3.5-asr-streaming-0.6b/
+├── nemotron-3.5-asr-streaming-0.6b/
+└── voxtral-mini-4b-realtime-2602/
 ```
 
 Run with mounted local paths and no runtime network access:

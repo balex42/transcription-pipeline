@@ -102,12 +102,12 @@ def test_comparison_prepares_once_and_separates_backend_outputs(tmp_path: Path) 
         return transcriber
 
     ASRComparisonRunner(pipeline, build_transcriber).run(
-        ["parakeet", "qwen", "nemotron"], config.output_directory
+        ["parakeet", "qwen", "nemotron", "voxtral"], config.output_directory
     )
-    assert (preprocessor.calls, diarizer.calls, len(transcribers)) == (1, 1, 3)
+    assert (preprocessor.calls, diarizer.calls, len(transcribers)) == (1, 1, 4)
     assert (config.output_directory / "diarization.json").is_file()
     assert (config.output_directory / "metadata.json").is_file()
-    for backend in ("parakeet", "qwen", "nemotron"):
+    for backend in ("parakeet", "qwen", "nemotron", "voxtral"):
         assert (config.output_directory / backend / "transcript.json").is_file()
         assert (config.output_directory / backend / "asr_words.json").is_file()
     assert (config.output_directory / "qwen" / "metadata.json").is_file()
@@ -131,4 +131,7 @@ def test_real_model_pipeline(tmp_path: Path) -> None:
     result = create_default_pipeline(config).run()
     assert (result.output_directory / "transcript.json").is_file()  # type: ignore[operator]
     assert result.asr_words
-    assert all(word.start is not None and word.end >= word.start for word in result.asr_words)
+    if config.asr_backend == "voxtral":
+        assert all(word.start is None and word.end >= 0 for word in result.asr_words)
+    else:
+        assert all(word.start is not None and word.end >= word.start for word in result.asr_words)

@@ -31,3 +31,11 @@ class QwenAlignmentError(MeetingTranscriberError):
 
 class NemotronStreamingError(MeetingTranscriberError):
     """Raised when Nemotron streaming inference cannot produce valid words."""
+
+
+class VoxtralStreamingError(MeetingTranscriberError):
+    """Raised when Voxtral streaming inference cannot produce valid words."""
+
+
+class VoxtralTimestampError(MeetingTranscriberError):
+    """Raised when Voxtral native emission markers cannot produce timing."""

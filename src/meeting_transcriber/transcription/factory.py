@@ -12,14 +12,15 @@ from meeting_transcriber.transcription.qwen import (
     QwenRecognizer,
     QwenTranscriber,
 )
+from meeting_transcriber.transcription.voxtral import VoxtralTranscriber
 
 
 def create_transcriber(config: PipelineConfig, device: str) -> Transcriber:
     """Create the selected ASR adapter without loading its model yet."""
-    if config.asr_backend not in {"parakeet", "qwen", "nemotron"}:
+    if config.asr_backend not in {"parakeet", "qwen", "nemotron", "voxtral"}:
         raise UnsupportedASRBackendError(
             f"Unsupported ASR backend '{config.asr_backend}'. "
-            "Supported backends: parakeet, qwen, nemotron."
+            "Supported backends: parakeet, qwen, nemotron, voxtral."
         )
     model = config.resolved_asr_model
     if config.asr_backend == "parakeet":
@@ -40,4 +41,6 @@ def create_transcriber(config: PipelineConfig, device: str) -> Transcriber:
         return NemotronTranscriber(
             model, device, config.language, config.nemotron_num_lookahead_tokens
         )
+    if config.asr_backend == "voxtral":
+        return VoxtralTranscriber(model, device)
     raise AssertionError("validated backend did not match a registered adapter")

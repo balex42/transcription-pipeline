@@ -8,6 +8,7 @@ from meeting_transcriber.config import (
     DEFAULT_PARAKEET_MODEL,
     DEFAULT_QWEN_ALIGNER_MODEL,
     DEFAULT_QWEN_MODEL,
+    DEFAULT_VOXTRAL_MODEL,
     PipelineConfig,
 )
 
@@ -24,6 +25,7 @@ def test_default_backend_is_parakeet() -> None:
 
 def test_environment_backend_and_default_model_mapping() -> None:
     assert make({}, {"ASR_BACKEND": "nemotron"}).resolved_asr_model == DEFAULT_NEMOTRON_MODEL
+    assert make({}, {"ASR_BACKEND": "voxtral"}).resolved_asr_model == DEFAULT_VOXTRAL_MODEL
 
 
 def test_nemotron_uses_highest_accuracy_lookahead_by_default() -> None:

@@ -37,3 +37,14 @@ def test_multiple_speakers_and_missing_coverage() -> None:
         "SPEAKER_00",
         "SPEAKER_01",
     ]
+
+
+def test_end_only_voxtral_words_infer_starts_from_the_preceding_boundary() -> None:
+    result = OverlapSpeakerAligner().align(
+        [ASRWord("eins", 1.0), ASRWord("zwei", 2.0)],
+        [DiarizationSegment("SPEAKER_00", 0, 1.4), DiarizationSegment("SPEAKER_01", 1.4, 3)],
+    )
+    assert [(word.start, word.end, word.speaker, word.start_is_inferred) for word in result] == [
+        (0.0, 1.0, "SPEAKER_00", True),
+        (1.0, 2.0, "SPEAKER_01", True),
+    ]

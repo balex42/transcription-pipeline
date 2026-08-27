@@ -12,8 +12,9 @@ DEFAULT_QWEN_ALIGNER_MODEL = "Qwen/Qwen3-ForcedAligner-0.6B-hf"
 DEFAULT_QWEN_MODEL = "Qwen/Qwen3-ASR-1.7B-hf"
 DEFAULT_NEMOTRON_MODEL = "nvidia/nemotron-3.5-asr-streaming-0.6b"
 DEFAULT_NEMOTRON_NUM_LOOKAHEAD_TOKENS = 13
+DEFAULT_VOXTRAL_MODEL = "mistralai/Voxtral-Mini-4B-Realtime-2602"
 DEFAULT_PYANNOTE_MODEL = "pyannote/speaker-diarization-community-1"
-ASR_BACKENDS = ("parakeet", "qwen", "nemotron")
+ASR_BACKENDS = ("parakeet", "qwen", "nemotron", "voxtral")
 QWEN_MAX_ALIGNMENT_DURATION_SECONDS = 300.0
 DEFAULT_PARAKEET_SEGMENT_DURATION = 180.0
 DEFAULT_PARAKEET_SEGMENT_OVERLAP = 15.0
@@ -23,6 +24,7 @@ DEFAULT_ASR_MODELS = {
     "parakeet": DEFAULT_PARAKEET_MODEL,
     "qwen": DEFAULT_QWEN_MODEL,
     "nemotron": DEFAULT_NEMOTRON_MODEL,
+    "voxtral": DEFAULT_VOXTRAL_MODEL,
 }
 
 
