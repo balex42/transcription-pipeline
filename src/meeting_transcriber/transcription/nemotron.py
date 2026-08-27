@@ -230,7 +230,6 @@ def aggregate_nemotron_tokens(entries: list[dict[str, object]], duration: float)
     text = ""
     start: float | None = None
     end: float | None = None
-    opening = "([{'\"„«"
     trailing = ".,!?;:%)]}'\"”»"
 
     def emit() -> None:
@@ -252,23 +251,24 @@ def aggregate_nemotron_tokens(entries: list[dict[str, object]], duration: float)
             raise ASROutputError("Nemotron token timestamp is invalid")
         if token.startswith("<") and token.endswith(">"):
             continue
-        starts_word = token[:1].isspace() or token.startswith(("▁", "Ġ"))
         piece = token.lstrip(" ▁Ġ")
+        is_boundary = token[:1].isspace() or token[:1] in {"▁", "Ġ"}
         if not piece:
+            if is_boundary and text:
+                emit()
             continue
         if all(character in trailing for character in piece):
             if text:
                 text += piece
                 end = end_time
             continue
-        if starts_word and text:
+        if is_boundary and text:
             emit()
         if not text:
+            # Standalone decoded boundaries carry no lexical text; the next token's
+            # emission frame is the most precise available start for the new word.
             start = start_time
-        if all(character in opening for character in piece):
-            text += piece
-        else:
-            text += piece
+        text += piece
         end = end_time
     emit()
     return _validate_global_words(words, duration)

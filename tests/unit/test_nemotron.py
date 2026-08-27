@@ -177,3 +177,56 @@ def test_token_aggregation_accepts_words_emitted_in_the_same_rnnt_frame() -> Non
         ("eins", 0.0, 0.08),
         ("zwei", 0.0, 0.08),
     ]
+
+
+def test_token_aggregation_preserves_standalone_decoded_space_boundary() -> None:
+    words = aggregate_nemotron_tokens(
+        [
+            {"token": "Hallo", "start": 0.0, "end": 0.08},
+            {"token": " ", "start": 0.08, "end": 0.16},
+            {"token": "ich", "start": 0.16, "end": 0.24},
+            {"token": " ", "start": 0.24, "end": 0.32},
+            {"token": "Sie", "start": 0.32, "end": 0.4},
+        ],
+        1.0,
+    )
+    assert [(word.text, word.start, word.end) for word in words] == [
+        ("Hallo", 0.0, 0.08),
+        ("ich", 0.16, 0.24),
+        ("Sie", 0.32, 0.4),
+    ]
+
+
+def test_token_aggregation_preserves_standalone_metaspace_boundary() -> None:
+    words = aggregate_nemotron_tokens(
+        [
+            {"token": "Hallo", "start": 0.0, "end": 0.08},
+            {"token": "▁", "start": 0.08, "end": 0.16},
+            {"token": "ich", "start": 0.08, "end": 0.16},
+            {"token": " ", "start": 0.16, "end": 0.24},
+            {"token": "Sie", "start": 0.16, "end": 0.24},
+        ],
+        1.0,
+    )
+    assert [(word.text, word.start, word.end) for word in words] == [
+        ("Hallo", 0.0, 0.08),
+        ("ich", 0.08, 0.16),
+        ("Sie", 0.16, 0.24),
+    ]
+
+
+def test_token_aggregation_starts_opening_punctuation_after_boundary() -> None:
+    words = aggregate_nemotron_tokens(
+        [
+            {"token": "Ergebnis", "start": 0.0, "end": 0.08},
+            {"token": " ", "start": 0.08, "end": 0.16},
+            {"token": "(", "start": 0.16, "end": 0.24},
+            {"token": "neu", "start": 0.24, "end": 0.32},
+            {"token": ")", "start": 0.32, "end": 0.4},
+        ],
+        1.0,
+    )
+    assert [(word.text, word.start, word.end) for word in words] == [
+        ("Ergebnis", 0.0, 0.08),
+        ("(neu)", 0.16, 0.4),
+    ]

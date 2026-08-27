@@ -58,8 +58,6 @@ def _add_runtime_options(parser: argparse.ArgumentParser, include_asr: bool) -> 
     parser.add_argument("--pyannote-model")
     parser.add_argument("--parakeet-segment-duration", type=float)
     parser.add_argument("--parakeet-segment-overlap", type=float)
-    parser.add_argument("--whisper-segment-duration", type=float)
-    parser.add_argument("--whisper-segment-overlap", type=float)
     parser.add_argument("--qwen-segment-duration", type=float)
     parser.add_argument("--qwen-segment-overlap", type=float)
     parser.add_argument("--nemotron-num-lookahead-tokens", type=int)
@@ -123,8 +121,6 @@ def _config_from_args(args: argparse.Namespace) -> PipelineConfig:
         "pyannote_model": args.pyannote_model,
         "parakeet_segment_duration": args.parakeet_segment_duration,
         "parakeet_segment_overlap": args.parakeet_segment_overlap,
-        "whisper_segment_duration": args.whisper_segment_duration,
-        "whisper_segment_overlap": args.whisper_segment_overlap,
         "qwen_segment_duration": args.qwen_segment_duration,
         "qwen_segment_overlap": args.qwen_segment_overlap,
         "nemotron_num_lookahead_tokens": args.nemotron_num_lookahead_tokens,

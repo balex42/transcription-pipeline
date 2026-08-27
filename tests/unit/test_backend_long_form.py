@@ -71,7 +71,7 @@ def test_parakeet_segments_and_reconciles_inside_its_adapter(tmp_path: Path) -> 
 
 def test_whisper_receives_the_complete_recording_for_native_long_form(tmp_path: Path) -> None:
     pipeline = WhisperPipeline()
-    transcriber = WhisperTranscriber("/models/whisper", "cpu", 120.0, 10.0)
+    transcriber = WhisperTranscriber("/models/whisper", "cpu")
     transcriber._pipeline = pipeline
 
     words = transcriber.transcribe(audio(tmp_path))
@@ -79,6 +79,7 @@ def test_whisper_receives_the_complete_recording_for_native_long_form(tmp_path: 
     assert pipeline.request is not None
     samples, kwargs = pipeline.request
     assert isinstance(samples, np.ndarray) and len(samples) == 48_000
-    assert kwargs["chunk_length_s"] == 120.0
-    assert kwargs["stride_length_s"] == 10.0
+    assert "chunk_length_s" not in kwargs
+    assert "stride_length_s" not in kwargs
+    assert transcriber.backend_configuration == {"long_form_strategy": "native"}
     assert [(word.text, word.start, word.end) for word in words] == [("Guten", 0.0, 0.5)]

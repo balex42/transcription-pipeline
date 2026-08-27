@@ -125,8 +125,6 @@ def test_real_model_pipeline(tmp_path: Path) -> None:
         asr_backend=os.environ.get("MODEL_TEST_BACKEND", "parakeet"),
         parakeet_segment_duration=30,
         parakeet_segment_overlap=5,
-        whisper_segment_duration=30,
-        whisper_segment_overlap=5,
         qwen_segment_duration=30,
         qwen_segment_overlap=5,
     )

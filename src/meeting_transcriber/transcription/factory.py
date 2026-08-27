@@ -31,12 +31,7 @@ def create_transcriber(config: PipelineConfig, device: str) -> Transcriber:
             config.parakeet_segment_overlap,
         )
     if config.asr_backend == "whisper":
-        return WhisperTranscriber(
-            model,
-            device,
-            config.whisper_segment_duration,
-            config.whisper_segment_overlap,
-        )
+        return WhisperTranscriber(model, device)
     if config.asr_backend == "qwen":
         return QwenTranscriber(
             QwenRecognizer(model, device),

@@ -17,8 +17,6 @@ ASR_BACKENDS = ("parakeet", "whisper", "qwen", "nemotron")
 QWEN_MAX_ALIGNMENT_DURATION_SECONDS = 300.0
 DEFAULT_PARAKEET_SEGMENT_DURATION = 180.0
 DEFAULT_PARAKEET_SEGMENT_OVERLAP = 15.0
-DEFAULT_WHISPER_SEGMENT_DURATION = 180.0
-DEFAULT_WHISPER_SEGMENT_OVERLAP = 15.0
 DEFAULT_QWEN_SEGMENT_DURATION = 240.0
 DEFAULT_QWEN_SEGMENT_OVERLAP = 15.0
 DEFAULT_ASR_MODELS = {
@@ -62,8 +60,6 @@ class PipelineConfig:
     pyannote_model: str = DEFAULT_PYANNOTE_MODEL
     parakeet_segment_duration: float = DEFAULT_PARAKEET_SEGMENT_DURATION
     parakeet_segment_overlap: float = DEFAULT_PARAKEET_SEGMENT_OVERLAP
-    whisper_segment_duration: float = DEFAULT_WHISPER_SEGMENT_DURATION
-    whisper_segment_overlap: float = DEFAULT_WHISPER_SEGMENT_OVERLAP
     qwen_segment_duration: float = DEFAULT_QWEN_SEGMENT_DURATION
     qwen_segment_overlap: float = DEFAULT_QWEN_SEGMENT_OVERLAP
     nemotron_num_lookahead_tokens: int | None = None
@@ -83,7 +79,6 @@ class PipelineConfig:
             raise ValueError(f"asr_backend must be one of: {', '.join(ASR_BACKENDS)}")
         for name, duration, overlap in (
             ("parakeet", self.parakeet_segment_duration, self.parakeet_segment_overlap),
-            ("whisper", self.whisper_segment_duration, self.whisper_segment_overlap),
             ("qwen", self.qwen_segment_duration, self.qwen_segment_overlap),
         ):
             if duration <= 0 or not 0 <= overlap < duration:
@@ -173,16 +168,6 @@ class PipelineConfig:
                 "parakeet_segment_overlap",
                 "PARAKEET_SEGMENT_OVERLAP",
                 DEFAULT_PARAKEET_SEGMENT_OVERLAP,
-            ),
-            whisper_segment_duration=choose_float(
-                "whisper_segment_duration",
-                "WHISPER_SEGMENT_DURATION",
-                DEFAULT_WHISPER_SEGMENT_DURATION,
-            ),
-            whisper_segment_overlap=choose_float(
-                "whisper_segment_overlap",
-                "WHISPER_SEGMENT_OVERLAP",
-                DEFAULT_WHISPER_SEGMENT_OVERLAP,
             ),
             qwen_segment_duration=choose_float(
                 "qwen_segment_duration",

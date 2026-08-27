@@ -26,13 +26,7 @@ class WhisperTranscriber(Transcriber):
 
     capabilities = TranscriberCapabilities(True, True, True, True)
 
-    def __init__(
-        self,
-        model: str,
-        device: str,
-        segment_duration: float = 180.0,
-        segment_overlap: float = 15.0,
-    ) -> None:
+    def __init__(self, model: str, device: str) -> None:
         self.model_reference = model
         self.device = device
         _, self.dtype_name = inference_dtype(device)
@@ -40,10 +34,7 @@ class WhisperTranscriber(Transcriber):
         self._pipeline: _WhisperPipeline | None = None
         self.backend_metrics: dict[str, float] = {}
         self.backend_models: dict[str, str] = {}
-        self.backend_configuration = {
-            "long_form_chunk_length_seconds": segment_duration,
-            "long_form_stride_seconds": segment_overlap,
-        }
+        self.backend_configuration = {"long_form_strategy": "native"}
 
     def load(self) -> None:
         """Load Whisper and its ASR pipeline lazily."""
@@ -58,8 +49,6 @@ class WhisperTranscriber(Transcriber):
             result = pipeline(
                 load_normalized_samples(audio),
                 return_timestamps="word",
-                chunk_length_s=self.backend_configuration["long_form_chunk_length_seconds"],
-                stride_length_s=self.backend_configuration["long_form_stride_seconds"],
                 generate_kwargs={
                     "language": "german",
                     "task": "transcribe",
