@@ -34,7 +34,13 @@ class WhisperTranscriber(Transcriber):
         self._pipeline: _WhisperPipeline | None = None
         self.backend_metrics: dict[str, float] = {}
         self.backend_models: dict[str, str] = {}
-        self.backend_configuration = {"long_form_strategy": "native"}
+        self.chunk_length_seconds = 30.0
+        self.stride_length_seconds = 5.0
+        self.backend_configuration = {
+            "long_form_strategy": "chunked",
+            "chunk_length_seconds": self.chunk_length_seconds,
+            "stride_length_seconds": self.stride_length_seconds,
+        }
 
     def load(self) -> None:
         """Load Whisper and its ASR pipeline lazily."""
@@ -49,6 +55,8 @@ class WhisperTranscriber(Transcriber):
             result = pipeline(
                 load_normalized_samples(audio),
                 return_timestamps="word",
+                chunk_length_s=self.chunk_length_seconds,
+                stride_length_s=(self.stride_length_seconds, self.stride_length_seconds),
                 generate_kwargs={
                     "language": "german",
                     "task": "transcribe",

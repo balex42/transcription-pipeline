@@ -79,7 +79,11 @@ def test_whisper_receives_the_complete_recording_for_native_long_form(tmp_path: 
     assert pipeline.request is not None
     samples, kwargs = pipeline.request
     assert isinstance(samples, np.ndarray) and len(samples) == 48_000
-    assert "chunk_length_s" not in kwargs
-    assert "stride_length_s" not in kwargs
-    assert transcriber.backend_configuration == {"long_form_strategy": "native"}
+    assert kwargs["chunk_length_s"] == 30.0
+    assert kwargs["stride_length_s"] == (5.0, 5.0)
+    assert transcriber.backend_configuration == {
+        "long_form_strategy": "chunked",
+        "chunk_length_seconds": 30.0,
+        "stride_length_seconds": 5.0,
+    }
     assert [(word.text, word.start, word.end) for word in words] == [("Guten", 0.0, 0.5)]
