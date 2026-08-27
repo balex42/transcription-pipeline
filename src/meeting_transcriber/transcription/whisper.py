@@ -1,0 +1,116 @@
+"""Native Transformers pipeline adapter for Whisper large-v3."""
+
+from __future__ import annotations
+
+from typing import Any, Protocol, cast
+
+from meeting_transcriber.errors import ASROutputError, ModelLoadError
+from meeting_transcriber.models import ASRWord, AudioChunk
+from meeting_transcriber.runtime.device import inference_dtype
+from meeting_transcriber.transcription.base import Transcriber, TranscriberCapabilities
+
+
+class _WhisperModel(Protocol):
+    def to(self, device: str) -> object: ...
+
+    def eval(self) -> object: ...
+
+
+class _WhisperPipeline(Protocol):
+    def __call__(self, inputs: object, **kwargs: object) -> dict[str, object]: ...
+
+
+class WhisperTranscriber(Transcriber):
+    """Use Transformers Whisper ASR pipeline with German word timestamps."""
+
+    capabilities = TranscriberCapabilities(True, True, True, True)
+
+    def __init__(self, model: str, device: str) -> None:
+        self.model_reference = model
+        self.device = device
+        _, self.dtype_name = inference_dtype(device)
+        self._model: _WhisperModel | None = None
+        self._pipeline: _WhisperPipeline | None = None
+
+    def load(self) -> None:
+        """Load Whisper and its ASR pipeline lazily."""
+        self._load()
+
+    def transcribe(self, chunk: AudioChunk) -> list[ASRWord]:
+        """Transcribe German speech with deterministic word-level timestamps."""
+        pipeline = self._load()
+        import torch
+
+        with torch.inference_mode():
+            result = pipeline(
+                chunk.audio,
+                return_timestamps="word",
+                generate_kwargs={
+                    "language": "german",
+                    "task": "transcribe",
+                    "do_sample": False,
+                    "num_beams": 1,
+                },
+            )
+        return normalize_whisper_chunks(result.get("chunks", []), chunk.chunk_id)
+
+    def _load(self) -> _WhisperPipeline:
+        if self._pipeline is not None:
+            return self._pipeline
+        try:
+            from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor, pipeline
+
+            dtype, _ = inference_dtype(self.device)
+            loaded_model = AutoModelForSpeechSeq2Seq.from_pretrained(
+                self.model_reference,
+                dtype=dtype,
+            )
+            loaded_model.to(self.device)
+            loaded_model.eval()
+            processor = AutoProcessor.from_pretrained(self.model_reference)  # type: ignore[no-untyped-call]
+            device_index = 0 if self.device == "cuda" else -1
+            asr_pipeline = cast(
+                _WhisperPipeline,
+                pipeline(
+                    "automatic-speech-recognition",
+                    model=loaded_model,
+                    tokenizer=processor.tokenizer,
+                    feature_extractor=processor.feature_extractor,
+                    torch_dtype=cast(Any, dtype),
+                    device=device_index,
+                ),
+            )
+            self._model, self._pipeline = cast(_WhisperModel, loaded_model), asr_pipeline
+            return asr_pipeline
+        except Exception as error:
+            raise ModelLoadError(
+                f"could not load Whisper model {self.model_reference}: {error}"
+            ) from error
+
+    def release(self) -> None:
+        """Drop model and pipeline references for sequential GPU execution."""
+        self._model = None
+        self._pipeline = None
+
+
+def normalize_whisper_chunks(chunks: object, chunk_id: int) -> list[ASRWord]:
+    """Normalize Transformers pipeline ``return_timestamps='word'`` output."""
+    if not isinstance(chunks, list):
+        raise ASROutputError("Whisper returned an unsupported word timestamp structure")
+    words: list[ASRWord] = []
+    for item in chunks:
+        if not isinstance(item, dict):
+            raise ASROutputError("Whisper returned a non-object word timestamp")
+        text = str(item.get("text", "")).strip()
+        timestamp = item.get("timestamp")
+        if not text:
+            continue
+        if not isinstance(timestamp, tuple | list) or len(timestamp) != 2:
+            raise ASROutputError("Whisper word timestamp is missing start/end values")
+        start, end = timestamp
+        if not isinstance(start, int | float) or not isinstance(end, int | float):
+            raise ASROutputError("Whisper word timestamp must contain numeric values")
+        if end < start:
+            raise ASROutputError("Whisper word timestamp ends before it starts")
+        words.append(ASRWord(text=text, start=float(start), end=float(end), chunk_id=chunk_id))
+    return words

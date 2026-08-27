@@ -1,0 +1,74 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: german-meeting-transcription
+spec:
+  backoffLimit: 1
+  template:
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: transcriber
+          image: registry.example/meeting-transcriber:0.1.0
+          args:
+            - transcribe
+            - /input/meeting.m4a
+            - --output
+            - /output
+            - --working-directory
+            - /work
+            - --device
+            - cuda
+          env:
+            - name: HF_HOME
+              value: /models/huggingface
+            - name: GRANITE_MODEL
+              value: /models/granite
+            - name: ASR_BACKEND
+              value: parakeet
+            - name: ASR_MODEL
+              value: /models/parakeet
+            - name: PYANNOTE_MODEL
+              value: /models/pyannote
+            # Create this value from a Secret in a real deployment; never embed it in an image.
+            - name: HF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: huggingface-token
+                  key: token
+          resources:
+            limits:
+              nvidia.com/gpu: "1"
+            requests:
+              nvidia.com/gpu: "1"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - name: input
+              mountPath: /input
+              readOnly: true
+            - name: output
+              mountPath: /output
+            - name: model-cache
+              mountPath: /models
+            - name: work
+              mountPath: /work
+      volumes:
+        - name: input
+          persistentVolumeClaim:
+            claimName: meeting-input
+        - name: output
+          persistentVolumeClaim:
+            claimName: meeting-output
+        - name: model-cache
+          persistentVolumeClaim:
+            claimName: model-cache
+        - name: work
+          emptyDir: {}
