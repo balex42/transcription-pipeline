@@ -32,7 +32,7 @@ Audio segmentation is not part of the generic pipeline. Each ASR backend owns it
 ## ASR Backends
 
 - `parakeet`: `nvidia/parakeet-tdt-0.6b-v3`. Native TDT word timestamps, punctuation, capitalization, and internal 180-second segments with 15-second overlap.
-- `whisper`: `openai/whisper-large-v3`. German `task=transcribe`, Transformers word timestamps, punctuation/capitalization, and Transformers chunked long-form processing: 30-second chunks (the model window size) with a 5-second stride on each side.
+- `whisper`: `openai/whisper-large-v3`. German `task=transcribe`, Transformers word timestamps, punctuation/capitalization, and internal 30-second segments (the native model window) with 5-second overlap, one pipeline call per segment so word-level DTW attention maps are not accumulated across the meeting.
 - `qwen`: `Qwen/Qwen3-ASR-1.7B-hf` plus `Qwen/Qwen3-ForcedAligner-0.6B-hf`. Qwen recognizes bounded 240-second internal segments with 15-second overlap, releases ASR, aligns all recognized segments once, then reconciles them. The aligner limit is 300 seconds.
 - `nemotron`: `nvidia/nemotron-3.5-asr-streaming-0.6b`. Native Transformers RNNT cache-aware streaming, explicit `de-DE` conditioning, native token emission timestamps, and internal token-to-word aggregation. It does not issue independent ASR requests for long-form audio.
 - Diarization: `pyannote/speaker-diarization-community-1` runs once over the normalized full meeting.
@@ -110,7 +110,7 @@ HF_HOME
 HF_TOKEN
 ```
 
-Equivalent CLI flags include `--parakeet-segment-duration`, `--qwen-segment-duration`, and `--nemotron-num-lookahead-tokens`. Whisper does not expose a segment setting: its chunk length is fixed to the model's 30-second window with a 5-second stride on each side. There is intentionally no global `--chunk-duration` or `CHUNK_DURATION`: those old settings were removed because they incorrectly coupled backend implementations.
+Equivalent CLI flags include `--parakeet-segment-duration`, `--qwen-segment-duration`, and `--nemotron-num-lookahead-tokens`. Whisper does not expose a segment setting: its segment duration is fixed to the model's native 30-second window with 5-second overlap. There is intentionally no global `--chunk-duration` or `CHUNK_DURATION`: those old settings were removed because they incorrectly coupled backend implementations.
 
 Nemotron validates an explicit lookahead through the loaded processor. The checkpoint advertises its supported lookahead values and derives its first/subsequent streaming buffer sizes and latency from model/processor configuration.
 

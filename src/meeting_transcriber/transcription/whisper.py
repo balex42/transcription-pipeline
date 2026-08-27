@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from typing import Any, Protocol, cast
 
-from meeting_transcriber.audio.segmenter import load_normalized_samples
+from meeting_transcriber.audio.segmenter import AudioSegmenter
 from meeting_transcriber.errors import ASROutputError, ModelLoadError
-from meeting_transcriber.models import ASRWord, NormalizedAudio
+from meeting_transcriber.models import ASRWord, AudioSegment, NormalizedAudio
 from meeting_transcriber.runtime.device import inference_dtype
 from meeting_transcriber.transcription.base import Transcriber, TranscriberCapabilities
+from meeting_transcriber.transcription.segments import reconcile_segment_words
 
 
 class _WhisperModel(Protocol):
@@ -34,12 +35,14 @@ class WhisperTranscriber(Transcriber):
         self._pipeline: _WhisperPipeline | None = None
         self.backend_metrics: dict[str, float] = {}
         self.backend_models: dict[str, str] = {}
-        self.chunk_length_seconds = 30.0
-        self.stride_length_seconds = 5.0
+        # Pipeline calls must never exceed the model's 30-second window: longer
+        # chunks are silently truncated by the feature extractor. One pipeline
+        # call per segment also bounds the cross-attention tensors that
+        # word-level DTW timestamps otherwise accumulate across the meeting.
+        self._segmenter = AudioSegmenter(30.0, 5.0)
         self.backend_configuration = {
-            "long_form_strategy": "chunked",
-            "chunk_length_seconds": self.chunk_length_seconds,
-            "stride_length_seconds": self.stride_length_seconds,
+            "segment_duration_seconds": 30.0,
+            "segment_overlap_seconds": 5.0,
         }
 
     def load(self) -> None:
@@ -47,16 +50,22 @@ class WhisperTranscriber(Transcriber):
         self._load()
 
     def transcribe(self, audio: NormalizedAudio) -> list[ASRWord]:
-        """Use Transformers long-form handling on the complete normalized meeting."""
+        """Transcribe segment-sized windows sequentially and reconcile overlaps."""
+        segments = self._segmenter.segment(audio)
+        self.backend_metrics["segments_processed"] = float(len(segments))
+        return reconcile_segment_words(
+            segments, {segment.index: self._transcribe_segment(segment) for segment in segments}
+        )
+
+    def _transcribe_segment(self, segment: AudioSegment) -> list[ASRWord]:
+        """Return word timestamps relative to one model-window-sized segment."""
         pipeline = self._load()
         import torch
 
         with torch.inference_mode():
             result = pipeline(
-                load_normalized_samples(audio),
+                segment.audio,
                 return_timestamps="word",
-                chunk_length_s=self.chunk_length_seconds,
-                stride_length_s=(self.stride_length_seconds, self.stride_length_seconds),
                 generate_kwargs={"language": "german", "task": "transcribe"},
             )
         return normalize_whisper_chunks(result.get("chunks", []))
