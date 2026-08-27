@@ -4,18 +4,23 @@ Local, batch-friendly German meeting transcription using pyannote Community-1 fo
 
 ## Architecture
 
-```text
-recording -> ffmpeg normalization -> 16 kHz mono WAV -> pyannote (whole meeting)
-                                                        |
-                                                 exclusive timeline
-                                                        |
-                                             release diarization model
-                                                        |
-normalized WAV -> overlapping AudioChunker -> selected ASR backend -> ChunkMerger
-                                                                    |
-                                          SpeakerAligner <- global words
-                                                                    |
-                                             TurnBuilder -> JSON / text exporters
+```mermaid
+flowchart TD
+    input[Input recording] --> normalize[AudioPreprocessor\nffmpeg: 16 kHz mono PCM WAV]
+    normalize --> diarize[Pyannote Community-1\nwhole-meeting diarization]
+    diarize --> timeline[Exclusive speaker timeline]
+    timeline --> release[Release diarization model]
+    normalize --> chunk[AudioChunker\noverlapping ASR chunks]
+    release --> asr[Selected ASR backend\nParakeet, Whisper, or Granite]
+    chunk --> asr
+    asr --> words[Normalized ASR words]
+    words --> merge[ChunkMerger]
+    merge --> align[SpeakerAligner]
+    timeline --> align
+    align --> attributed[Attributed words]
+    attributed --> turns[TurnBuilder]
+    turns --> transcript[Transcript]
+    transcript --> export[JSON and text exporters]
 ```
 
 The orchestrator depends on small protocols (`Diarizer`, `Transcriber`, `SpeakerAligner`, and `TranscriptExporter`) and constructor injection. Future `PostProcessor`, `Summarizer`, `SpeakerIdentifier`, `ObjectStorage`, and `JobStatusReporter` contracts are declared in `extensions.py`, without implementations.
