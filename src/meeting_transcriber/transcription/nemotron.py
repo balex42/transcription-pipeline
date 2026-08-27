@@ -16,7 +16,7 @@ from meeting_transcriber.transcription.base import Transcriber, TranscriberCapab
 
 
 class _NemotronProcessor(Protocol):
-    num_lookahead_tokens: int
+    default_num_lookahead_tokens: int
     num_samples_first_audio_chunk: int
     num_samples_per_audio_chunk: int
     num_mel_frames_first_audio_chunk: int
@@ -182,7 +182,7 @@ class NemotronTranscriber(Transcriber):
                     "Nemotron does not support "
                     f"{self.requested_lookahead} lookahead tokens: {error}"
                 ) from error
-        return _processor_int(processor, "num_lookahead_tokens", allow_zero=True)
+        return _processor_int(processor, "default_num_lookahead_tokens", allow_zero=True)
 
     def _load(self) -> tuple[_NemotronModel, _NemotronProcessor]:
         if self._model is not None and self._processor is not None:

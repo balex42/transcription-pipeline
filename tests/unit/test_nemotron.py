@@ -22,7 +22,7 @@ class Inputs(dict[str, object]):
 
 
 class Processor:
-    num_lookahead_tokens = 3
+    default_num_lookahead_tokens = 3
     num_samples_first_audio_chunk = 4
     num_samples_per_audio_chunk = 4
     num_mel_frames_first_audio_chunk = 2
@@ -42,14 +42,14 @@ class Processor:
         self.calls.append({"audio": audio, **kwargs})
         return Inputs(
             input_features=f"feature-{len(self.calls)}",
-            num_lookahead_tokens=self.num_lookahead_tokens,
+            num_lookahead_tokens=self.default_num_lookahead_tokens,
             prompt_ids="de-DE",
         )
 
     def set_num_lookahead_tokens(self, value: int) -> None:
         if value not in {0, 3, 6, 13}:
             raise ValueError("unsupported")
-        self.num_lookahead_tokens = value
+        self.default_num_lookahead_tokens = value
 
     def decode(
         self, sequences: object, **kwargs: object
