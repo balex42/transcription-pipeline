@@ -1,14 +1,17 @@
+from __future__ import annotations
+
 import wave
 from pathlib import Path
 
 import numpy as np
 
 from meeting_transcriber.models import ASRWord, AudioMetadata, AudioSegment, NormalizedAudio
-from meeting_transcriber.transcription.qwen.transcriber import QwenTranscriber
+from meeting_transcriber.transcription.base import TranscriberCapabilities
+from meeting_transcriber.transcription.forced_alignment import ForcedAlignmentTranscriber
 
 
 class Recognizer:
-    model_reference = "/models/qwen"
+    model_reference = "/models/recognizer"
     device = "cpu"
     dtype_name = "float32"
 
@@ -20,7 +23,7 @@ class Recognizer:
 
     def recognize(self, segment: AudioSegment) -> str:
         self.events.append(f"recognize-{segment.index}")
-        return "eins zwei" if segment.index == 0 else ""
+        return "eins zwei"
 
     def release(self) -> None:
         self.events.append("recognizer-release")
@@ -38,7 +41,7 @@ class Aligner:
 
     def align(self, segment: AudioSegment, transcript: str) -> list[ASRWord]:
         self.events.append(f"align-{segment.index}-{transcript}")
-        return [ASRWord("eins", 0.1, start=0.0)]
+        return [ASRWord("eins", end=0.4, start=0.1)]
 
     def release(self) -> None:
         self.events.append("aligner-release")
@@ -54,11 +57,16 @@ def audio(tmp_path: Path) -> NormalizedAudio:
     return NormalizedAudio(path, AudioMetadata(path.name, 3.0))
 
 
-def test_qwen_runs_recognition_then_alignment_with_one_load_per_model(tmp_path: Path) -> None:
+def test_generic_transcriber_releases_recognizer_before_reusing_aligner(tmp_path: Path) -> None:
     events: list[str] = []
-    transcriber = QwenTranscriber(Recognizer(events), Aligner(events), 2, 1)  # type: ignore[arg-type]
+    transcriber = ForcedAlignmentTranscriber(
+        Recognizer(events),
+        Aligner(events),
+        TranscriberCapabilities(True, True, False, False, requires_forced_alignment=True),
+        2.0,
+        1.0,
+    )
 
-    transcriber.load()
     words = transcriber.transcribe(audio(tmp_path))
 
     assert events == [
@@ -68,7 +76,8 @@ def test_qwen_runs_recognition_then_alignment_with_one_load_per_model(tmp_path: 
         "recognizer-release",
         "aligner-load",
         "align-0-eins zwei",
+        "align-1-eins zwei",
         "aligner-release",
     ]
-    assert [word.text for word in words] == ["eins"]
+    assert [(word.text, word.start, word.end) for word in words] == [("eins", 0.1, 0.4)]
     assert transcriber.backend_models == {"forced_aligner_model": "/models/aligner"}

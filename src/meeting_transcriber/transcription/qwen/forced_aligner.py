@@ -16,6 +16,8 @@ _TIMESTAMP_TOLERANCE_SECONDS = 0.25
 class QwenForcedAligner:
     """Generate validated native word boundaries for recognized German text."""
 
+    max_segment_duration = 300.0
+
     def __init__(self, model: str, device: str) -> None:
         self.model_reference = model
         self.device = device

@@ -38,7 +38,7 @@ def test_factory_selects_adapter_and_default_model(
     transcriber = create_transcriber(config(backend), "cpu")
     assert isinstance(transcriber, adapter)
     assert transcriber.model_reference == model
-    if backend == "qwen":
+    if backend in {"qwen", "whisper"}:
         assert transcriber.capabilities.requires_forced_alignment is True
     if backend == "nemotron":
         assert transcriber.capabilities.streaming is True

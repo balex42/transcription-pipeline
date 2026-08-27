@@ -92,7 +92,9 @@ def main(argv: list[str] | None = None) -> int:
             _prefetch(
                 prefetch_config.resolved_asr_model,
                 args.pyannote_model,
-                prefetch_config.qwen_aligner_model if args.asr == "qwen" else None,
+                prefetch_config.qwen_aligner_model
+                if args.asr in {"qwen", "whisper"}
+                else None,
             )
             return 0
         config = _config_from_args(args)

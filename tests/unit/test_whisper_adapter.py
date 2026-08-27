@@ -1,23 +1,14 @@
 import pytest
 
 from meeting_transcriber.errors import ASROutputError
-from meeting_transcriber.transcription.whisper import normalize_whisper_chunks
+from meeting_transcriber.transcription.whisper import normalize_whisper_text
 
 
-def test_normalizes_word_timestamps_and_preserves_punctuation() -> None:
-    words = normalize_whisper_chunks(
-        [
-            {"text": " Guten", "timestamp": (0.0, 0.4)},
-            {"text": " Morgen!", "timestamp": (0.4, 0.9)},
-        ],
-    )
-    assert [(word.text, word.start, word.end) for word in words] == [
-        ("Guten", 0.0, 0.4),
-        ("Morgen!", 0.4, 0.9),
-    ]
+def test_normalize_whisper_text_trims_plain_transcript() -> None:
+    assert normalize_whisper_text({"text": " Guten Morgen "}) == "Guten Morgen"
 
 
-def test_empty_output_and_malformed_timestamp() -> None:
-    assert normalize_whisper_chunks([]) == []
+@pytest.mark.parametrize("result", [None, {}, {"text": None}, {"text": ["Hallo"]}])
+def test_normalize_whisper_text_rejects_malformed_responses(result: object) -> None:
     with pytest.raises(ASROutputError):
-        normalize_whisper_chunks([{"text": "Hallo", "timestamp": (0,)}])
+        normalize_whisper_text(result)

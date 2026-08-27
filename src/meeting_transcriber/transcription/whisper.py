@@ -1,15 +1,17 @@
-"""Native Transformers pipeline adapter for Whisper large-v3."""
+"""Whisper recognition configured for reusable forced word alignment."""
 
 from __future__ import annotations
 
 from typing import Any, Protocol, cast
 
-from meeting_transcriber.audio.segmenter import AudioSegmenter
 from meeting_transcriber.errors import ASROutputError, ModelLoadError
-from meeting_transcriber.models import ASRWord, AudioSegment, NormalizedAudio
+from meeting_transcriber.models import AudioSegment
 from meeting_transcriber.runtime.device import inference_dtype
-from meeting_transcriber.transcription.base import Transcriber, TranscriberCapabilities
-from meeting_transcriber.transcription.segments import reconcile_segment_words
+from meeting_transcriber.transcription.base import TranscriberCapabilities
+from meeting_transcriber.transcription.forced_alignment import (
+    ForcedAligner,
+    ForcedAlignmentTranscriber,
+)
 
 
 class _WhisperModel(Protocol):
@@ -22,10 +24,8 @@ class _WhisperPipeline(Protocol):
     def __call__(self, inputs: object, **kwargs: object) -> dict[str, object]: ...
 
 
-class WhisperTranscriber(Transcriber):
-    """Use Transformers Whisper ASR pipeline with German word timestamps."""
-
-    capabilities = TranscriberCapabilities(True, True, True, True)
+class WhisperRecognizer:
+    """Use Transformers Whisper for bounded German transcript recognition."""
 
     def __init__(self, model: str, device: str) -> None:
         self.model_reference = model
@@ -33,42 +33,22 @@ class WhisperTranscriber(Transcriber):
         _, self.dtype_name = inference_dtype(device)
         self._model: _WhisperModel | None = None
         self._pipeline: _WhisperPipeline | None = None
-        self.backend_metrics: dict[str, float] = {}
-        self.backend_models: dict[str, str] = {}
-        # Pipeline calls must never exceed the model's 30-second window: longer
-        # chunks are silently truncated by the feature extractor. One pipeline
-        # call per segment also bounds the cross-attention tensors that
-        # word-level DTW timestamps otherwise accumulate across the meeting.
-        self._segmenter = AudioSegmenter(30.0, 5.0)
-        self.backend_configuration = {
-            "segment_duration_seconds": 30.0,
-            "segment_overlap_seconds": 5.0,
-        }
 
     def load(self) -> None:
         """Load Whisper and its ASR pipeline lazily."""
         self._load()
 
-    def transcribe(self, audio: NormalizedAudio) -> list[ASRWord]:
-        """Transcribe segment-sized windows sequentially and reconcile overlaps."""
-        segments = self._segmenter.segment(audio)
-        self.backend_metrics["segments_processed"] = float(len(segments))
-        return reconcile_segment_words(
-            segments, {segment.index: self._transcribe_segment(segment) for segment in segments}
-        )
-
-    def _transcribe_segment(self, segment: AudioSegment) -> list[ASRWord]:
-        """Return word timestamps relative to one model-window-sized segment."""
+    def recognize(self, segment: AudioSegment) -> str:
+        """Return transcript text without retaining word-timestamp attention tensors."""
         pipeline = self._load()
         import torch
 
         with torch.inference_mode():
             result = pipeline(
                 segment.audio,
-                return_timestamps="word",
                 generate_kwargs={"language": "german", "task": "transcribe"},
             )
-        return normalize_whisper_chunks(result.get("chunks", []))
+        return normalize_whisper_text(result)
 
     def _load(self) -> _WhisperPipeline:
         if self._pipeline is not None:
@@ -107,29 +87,27 @@ class WhisperTranscriber(Transcriber):
             ) from error
 
     def release(self) -> None:
-        """Drop model and pipeline references for sequential GPU execution."""
+        """Drop model and pipeline references before forced alignment."""
         self._model = None
         self._pipeline = None
 
 
-def normalize_whisper_chunks(chunks: object) -> list[ASRWord]:
-    """Normalize Transformers pipeline ``return_timestamps='word'`` output."""
-    if not isinstance(chunks, list):
-        raise ASROutputError("Whisper returned an unsupported word timestamp structure")
-    words: list[ASRWord] = []
-    for item in chunks:
-        if not isinstance(item, dict):
-            raise ASROutputError("Whisper returned a non-object word timestamp")
-        text = str(item.get("text", "")).strip()
-        timestamp = item.get("timestamp")
-        if not text:
-            continue
-        if not isinstance(timestamp, tuple | list) or len(timestamp) != 2:
-            raise ASROutputError("Whisper word timestamp is missing start/end values")
-        start, end = timestamp
-        if not isinstance(start, int | float) or not isinstance(end, int | float):
-            raise ASROutputError("Whisper word timestamp must contain numeric values")
-        if end < start:
-            raise ASROutputError("Whisper word timestamp ends before it starts")
-        words.append(ASRWord(text=text, start=float(start), end=float(end)))
-    return words
+class WhisperTranscriber(ForcedAlignmentTranscriber):
+    """Recognize with Whisper and delegate word timing to any forced aligner."""
+
+    capabilities = TranscriberCapabilities(True, True, True, True, requires_forced_alignment=True)
+
+    def __init__(self, model: str, device: str, aligner: ForcedAligner) -> None:
+        # Whisper accepts at most 30 seconds per feature window. Recognition and
+        # alignment stay separate so word timestamps never retain attention maps.
+        super().__init__(WhisperRecognizer(model, device), aligner, self.capabilities, 30.0, 5.0)
+
+
+def normalize_whisper_text(result: object) -> str:
+    """Validate the plain-text output returned by the Transformers pipeline."""
+    if not isinstance(result, dict):
+        raise ASROutputError("Whisper returned an unsupported transcription structure")
+    text = result.get("text")
+    if not isinstance(text, str):
+        raise ASROutputError("Whisper response did not contain transcription text")
+    return text.strip()
