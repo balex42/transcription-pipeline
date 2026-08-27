@@ -7,7 +7,6 @@ from meeting_transcriber.config import (
     DEFAULT_PARAKEET_MODEL,
     DEFAULT_QWEN_ALIGNER_MODEL,
     DEFAULT_QWEN_MODEL,
-    DEFAULT_WHISPER_MODEL,
     PipelineConfig,
 )
 
@@ -23,16 +22,15 @@ def test_default_backend_is_parakeet() -> None:
 
 
 def test_environment_backend_and_default_model_mapping() -> None:
-    assert make({}, {"ASR_BACKEND": "whisper"}).resolved_asr_model == DEFAULT_WHISPER_MODEL
     assert make({}, {"ASR_BACKEND": "nemotron"}).resolved_asr_model == DEFAULT_NEMOTRON_MODEL
 
 
 def test_cli_backend_and_model_override_environment() -> None:
     config = make(
-        {"asr_backend": "whisper", "asr_model": "/models/whisper"},
+        {"asr_backend": "qwen", "asr_model": "/models/qwen"},
         {"ASR_BACKEND": "parakeet", "ASR_MODEL": "/models/parakeet"},
     )
-    assert (config.asr_backend, config.resolved_asr_model) == ("whisper", "/models/whisper")
+    assert (config.asr_backend, config.resolved_asr_model) == ("qwen", "/models/qwen")
 
 
 def test_qwen_uses_asr_and_forced_aligner_defaults() -> None:

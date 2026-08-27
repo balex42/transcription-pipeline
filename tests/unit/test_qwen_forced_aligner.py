@@ -79,18 +79,6 @@ def test_qwen_reconciler_converts_segment_boundaries_to_meeting_offsets() -> Non
     assert [(word.start, word.end) for word in merged] == [(12.2, 12.6)]
 
 
-def test_normalizer_clips_or_drops_trailing_boundary_overflow() -> None:
-    words = normalize_qwen_alignment(
-        [
-            {"text": "innerhalb", "start_time": 1.8, "end_time": 2.8},
-            {"text": "danach", "start_time": 2.1, "end_time": 2.5},
-        ],
-        segment(),
-    )
-
-    assert [(word.text, word.start, word.end) for word in words] == [("innerhalb", 1.8, 2.0)]
-
-
 @pytest.mark.parametrize(
     "entries",
     [
@@ -98,6 +86,7 @@ def test_normalizer_clips_or_drops_trailing_boundary_overflow() -> None:
         [{"text": "", "start_time": 0, "end_time": 1}],
         [{"text": "bad", "start_time": 2, "end_time": 1}],
         [{"text": "bad", "start_time": float("nan"), "end_time": 1}],
+        [{"text": "bad", "start_time": 0, "end_time": 3}],
         [
             {"text": "first", "start_time": 0.5, "end_time": 1.0},
             {"text": "second", "start_time": 0.2, "end_time": 0.8},

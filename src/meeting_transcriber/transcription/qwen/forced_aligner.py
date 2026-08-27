@@ -122,11 +122,8 @@ def normalize_qwen_alignment(entries: object, segment: AudioSegment) -> list[ASR
             raise QwenAlignmentError("Qwen forced aligner returned non-finite word timing")
         if start < -_TIMESTAMP_TOLERANCE_SECONDS or end < start:
             raise QwenAlignmentError("Qwen forced aligner returned an invalid word interval")
-        # The classifier timestamp grid can place a trailing word past a hard
-        # segment boundary. Keep its in-window portion; the overlapping next
-        # segment owns words that begin after this window.
-        if start >= duration:
-            continue
+        if end > duration + _TIMESTAMP_TOLERANCE_SECONDS:
+            raise QwenAlignmentError("Qwen forced aligner returned timing beyond the audio chunk")
         if start + _TIMESTAMP_TOLERANCE_SECONDS < previous_start or end < previous_end:
             raise QwenAlignmentError("Qwen forced aligner returned non-monotonic word timing")
         words.append(

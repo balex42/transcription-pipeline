@@ -10,10 +10,9 @@ from pathlib import Path
 DEFAULT_PARAKEET_MODEL = "nvidia/parakeet-tdt-0.6b-v3"
 DEFAULT_QWEN_ALIGNER_MODEL = "Qwen/Qwen3-ForcedAligner-0.6B-hf"
 DEFAULT_QWEN_MODEL = "Qwen/Qwen3-ASR-1.7B-hf"
-DEFAULT_WHISPER_MODEL = "openai/whisper-large-v3"
 DEFAULT_NEMOTRON_MODEL = "nvidia/nemotron-3.5-asr-streaming-0.6b"
 DEFAULT_PYANNOTE_MODEL = "pyannote/speaker-diarization-community-1"
-ASR_BACKENDS = ("parakeet", "whisper", "qwen", "nemotron")
+ASR_BACKENDS = ("parakeet", "qwen", "nemotron")
 QWEN_MAX_ALIGNMENT_DURATION_SECONDS = 300.0
 DEFAULT_PARAKEET_SEGMENT_DURATION = 180.0
 DEFAULT_PARAKEET_SEGMENT_OVERLAP = 15.0
@@ -21,7 +20,6 @@ DEFAULT_QWEN_SEGMENT_DURATION = 240.0
 DEFAULT_QWEN_SEGMENT_OVERLAP = 15.0
 DEFAULT_ASR_MODELS = {
     "parakeet": DEFAULT_PARAKEET_MODEL,
-    "whisper": DEFAULT_WHISPER_MODEL,
     "qwen": DEFAULT_QWEN_MODEL,
     "nemotron": DEFAULT_NEMOTRON_MODEL,
 }

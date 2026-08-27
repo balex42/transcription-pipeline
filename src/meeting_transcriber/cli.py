@@ -31,8 +31,8 @@ def build_parser() -> argparse.ArgumentParser:
     _add_runtime_options(compare, include_asr=False)
     compare.add_argument(
         "--models",
-        default="parakeet,whisper,qwen,nemotron",
-        help="comma-separated ASR backends: parakeet, whisper, qwen, nemotron",
+        default="parakeet,qwen,nemotron",
+        help="comma-separated ASR backends: parakeet, qwen, nemotron",
     )
     prefetch = commands.add_parser(
         "prefetch-models", help="download models into configured Hugging Face cache"
@@ -51,7 +51,7 @@ def _add_runtime_options(parser: argparse.ArgumentParser, include_asr: bool) -> 
     parser.add_argument("--device", choices=["auto", "cuda", "cpu"])
     if include_asr:
         parser.add_argument(
-            "--asr", choices=ASR_BACKENDS, help="ASR backend: parakeet, whisper, qwen, nemotron"
+            "--asr", choices=ASR_BACKENDS, help="ASR backend: parakeet, qwen, nemotron"
         )
         parser.add_argument("--asr-model", help="Hugging Face model ID or local model directory")
     parser.add_argument("--qwen-aligner-model", help="Qwen forced-aligner model ID or local path")
@@ -93,8 +93,7 @@ def main(argv: list[str] | None = None) -> int:
                 prefetch_config.resolved_asr_model,
                 args.pyannote_model,
                 prefetch_config.qwen_aligner_model
-                if args.asr in {"qwen", "whisper"}
-                else None,
+                if args.asr == "qwen" else None,
             )
             return 0
         config = _config_from_args(args)

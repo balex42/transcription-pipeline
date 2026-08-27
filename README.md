@@ -14,11 +14,9 @@ flowchart TD
     audio --> transcriber[Selected Transcriber\nreceives whole recording]
     release --> transcriber
     transcriber --> parakeet[Parakeet\ninternal segments]
-    transcriber --> whisper[Whisper\ninternal segments plus aligner]
     transcriber --> qwen[Qwen\ninternal segments plus aligner]
     transcriber --> nemotron[Nemotron\ncache-aware streaming]
     parakeet --> words[Global ASRWord list]
-    whisper --> words
     qwen --> words
     nemotron --> words
     words --> align[SpeakerAligner]
@@ -32,7 +30,6 @@ Audio segmentation is not part of the generic pipeline. Each ASR backend owns it
 ## ASR Backends
 
 - `parakeet`: `nvidia/parakeet-tdt-0.6b-v3`. Native TDT word timestamps, punctuation, capitalization, and internal 180-second segments with 15-second overlap.
-- `whisper`: `openai/whisper-large-v3` plus `Qwen/Qwen3-ForcedAligner-0.6B-hf`. Whisper recognizes German `task=transcribe` text in native 30-second windows with 5-second overlap, releases Whisper, then uses the reusable forced aligner for word timestamps and reconciles overlap boundaries.
 - `qwen`: `Qwen/Qwen3-ASR-1.7B-hf` plus `Qwen/Qwen3-ForcedAligner-0.6B-hf`. Qwen recognizes bounded 240-second internal segments with 15-second overlap, releases ASR, aligns all recognized segments once, then reconciles them. The aligner limit is 300 seconds.
 - `nemotron`: `nvidia/nemotron-3.5-asr-streaming-0.6b`. Native Transformers RNNT cache-aware streaming, explicit `de-DE` conditioning, native token emission timestamps, and internal token-to-word aggregation. It does not issue independent ASR requests for long-form audio.
 - Diarization: `pyannote/speaker-diarization-community-1` runs once over the normalized full meeting.
@@ -69,7 +66,6 @@ python3.11 -m venv .venv
 
 ```bash
 meeting-transcriber transcribe meeting.m4a --asr parakeet --output ./result/parakeet --device cuda
-meeting-transcriber transcribe meeting.m4a --asr whisper --output ./result/whisper --device cuda
 meeting-transcriber transcribe meeting.m4a --asr qwen --output ./result/qwen --device cuda
 meeting-transcriber transcribe meeting.m4a --asr nemotron --output ./result/nemotron --device cuda
 ```
@@ -78,7 +74,7 @@ Compare all production configurations with one normalization and one diarization
 
 ```bash
 meeting-transcriber compare meeting.m4a \
-  --models parakeet,whisper,qwen,nemotron \
+  --models parakeet,qwen,nemotron \
   --output ./comparison --device cuda
 ```
 
@@ -110,7 +106,7 @@ HF_HOME
 HF_TOKEN
 ```
 
-Equivalent CLI flags include `--parakeet-segment-duration`, `--qwen-segment-duration`, and `--nemotron-num-lookahead-tokens`. Whisper does not expose a segment setting: its segment duration is fixed to the model's native 30-second window with 5-second overlap. There is intentionally no global `--chunk-duration` or `CHUNK_DURATION`: those old settings were removed because they incorrectly coupled backend implementations.
+Equivalent CLI flags include `--parakeet-segment-duration`, `--qwen-segment-duration`, and `--nemotron-num-lookahead-tokens`. There is intentionally no global `--chunk-duration` or `CHUNK_DURATION`: those old settings were removed because they incorrectly coupled backend implementations.
 
 Nemotron validates an explicit lookahead through the loaded processor. The checkpoint advertises its supported lookahead values and derives its first/subsequent streaming buffer sizes and latency from model/processor configuration.
 
@@ -127,7 +123,6 @@ comparison/
 │   ├── metadata.json
 │   ├── transcript.json
 │   └── transcript.txt
-├── whisper/
 ├── qwen/
 └── nemotron/
 ```
@@ -142,12 +137,11 @@ On an approved connected staging system, prefetch artifacts:
 
 ```bash
 HF_TOKEN=hf_... meeting-transcriber prefetch-models --asr parakeet
-HF_TOKEN=hf_... meeting-transcriber prefetch-models --asr whisper
 HF_TOKEN=hf_... meeting-transcriber prefetch-models --asr qwen
 HF_TOKEN=hf_... meeting-transcriber prefetch-models --asr nemotron
 ```
 
-Whisper and Qwen prefetch commands both include the configured Qwen forced-aligner artifact.
+Qwen prefetch includes the configured Qwen forced-aligner artifact.
 
 Also obtain the accepted pyannote artifact through the approved process. Transfer approved artifacts and externally generated checksums through the air gap. A production volume can use:
 
@@ -155,7 +149,6 @@ Also obtain the accepted pyannote artifact through the approved process. Transfe
 /models/
 ├── pyannote-community-1/
 ├── parakeet-tdt-0.6b-v3/
-├── whisper-large-v3/
 ├── qwen3-asr-1.7b/
 ├── qwen3-forced-aligner-0.6b/
 └── nemotron-3.5-asr-streaming-0.6b/

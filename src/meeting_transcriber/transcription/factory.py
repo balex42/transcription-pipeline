@@ -12,15 +12,14 @@ from meeting_transcriber.transcription.qwen import (
     QwenRecognizer,
     QwenTranscriber,
 )
-from meeting_transcriber.transcription.whisper import WhisperTranscriber
 
 
 def create_transcriber(config: PipelineConfig, device: str) -> Transcriber:
     """Create the selected ASR adapter without loading its model yet."""
-    if config.asr_backend not in {"parakeet", "whisper", "qwen", "nemotron"}:
+    if config.asr_backend not in {"parakeet", "qwen", "nemotron"}:
         raise UnsupportedASRBackendError(
             f"Unsupported ASR backend '{config.asr_backend}'. "
-            "Supported backends: parakeet, whisper, qwen, nemotron."
+            "Supported backends: parakeet, qwen, nemotron."
         )
     model = config.resolved_asr_model
     if config.asr_backend == "parakeet":
@@ -29,10 +28,6 @@ def create_transcriber(config: PipelineConfig, device: str) -> Transcriber:
             device,
             config.parakeet_segment_duration,
             config.parakeet_segment_overlap,
-        )
-    if config.asr_backend == "whisper":
-        return WhisperTranscriber(
-            model, device, QwenForcedAligner(config.qwen_aligner_model, device)
         )
     if config.asr_backend == "qwen":
         return QwenTranscriber(
