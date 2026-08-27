@@ -25,12 +25,20 @@ class AudioMetadata:
 
 
 @dataclass(frozen=True)
-class AudioChunk:
-    """A normalized PCM audio chunk with absolute meeting offsets."""
+class NormalizedAudio:
+    """One normalized meeting recording passed intact to an ASR backend."""
 
-    chunk_id: int
-    absolute_start: float
-    absolute_end: float
+    path: Path
+    metadata: AudioMetadata
+
+
+@dataclass(frozen=True)
+class AudioSegment:
+    """Backend-private PCM segment with absolute meeting offsets."""
+
+    index: int
+    start: float
+    end: float
     audio: NDArray[np.float32]
     sample_rate: int = 16_000
 
@@ -51,7 +59,6 @@ class ASRWord:
     text: str
     end: float
     start: float | None = None
-    chunk_id: int | None = None
     confidence: float | None = None
 
 
@@ -64,7 +71,6 @@ class AttributedWord:
     end: float
     speaker: str
     start_is_inferred: bool = False
-    chunk_id: int | None = None
 
 
 @dataclass(frozen=True)
@@ -111,8 +117,6 @@ class ASRRunMetadata:
     device: str
     dtype: str
     audio_duration_seconds: float
-    chunk_duration_seconds: float
-    chunk_overlap_seconds: float
     model_load_seconds: float
     transcription_seconds: float
     total_asr_seconds: float
@@ -123,3 +127,4 @@ class ASRRunMetadata:
     torch_version: str = "unknown"
     backend_metrics: dict[str, float] = field(default_factory=dict)
     backend_models: dict[str, str] = field(default_factory=dict)
+    backend_configuration: dict[str, str | int | float | bool | None] = field(default_factory=dict)

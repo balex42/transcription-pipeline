@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from meeting_transcriber.config import (
+    DEFAULT_NEMOTRON_MODEL,
     DEFAULT_PARAKEET_MODEL,
     DEFAULT_QWEN_ALIGNER_MODEL,
     DEFAULT_QWEN_MODEL,
@@ -18,11 +19,12 @@ def make(overrides: dict[str, object], env: dict[str, str] | None = None) -> Pip
 def test_default_backend_is_parakeet() -> None:
     config = make({})
     assert (config.asr_backend, config.resolved_asr_model) == ("parakeet", DEFAULT_PARAKEET_MODEL)
-    assert (config.chunk_duration, config.chunk_overlap) == (180.0, 15.0)
+    assert (config.parakeet_segment_duration, config.parakeet_segment_overlap) == (180.0, 15.0)
 
 
 def test_environment_backend_and_default_model_mapping() -> None:
     assert make({}, {"ASR_BACKEND": "whisper"}).resolved_asr_model == DEFAULT_WHISPER_MODEL
+    assert make({}, {"ASR_BACKEND": "nemotron"}).resolved_asr_model == DEFAULT_NEMOTRON_MODEL
 
 
 def test_cli_backend_and_model_override_environment() -> None:
@@ -37,42 +39,42 @@ def test_qwen_uses_asr_and_forced_aligner_defaults() -> None:
     config = make({"asr_backend": "qwen"})
     assert config.resolved_asr_model == DEFAULT_QWEN_MODEL
     assert config.qwen_aligner_model == DEFAULT_QWEN_ALIGNER_MODEL
-    assert (config.chunk_duration, config.chunk_overlap) == (240.0, 15.0)
+    assert (config.qwen_segment_duration, config.qwen_segment_overlap) == (240.0, 15.0)
 
 
-def test_environment_chunk_settings_override_qwen_defaults() -> None:
+def test_environment_segment_settings_override_qwen_defaults() -> None:
     config = make(
         {"asr_backend": "qwen"},
-        {"CHUNK_DURATION": "120", "CHUNK_OVERLAP": "20"},
+        {"QWEN_SEGMENT_DURATION": "120", "QWEN_SEGMENT_OVERLAP": "20"},
     )
-    assert (config.chunk_duration, config.chunk_overlap) == (120.0, 20.0)
+    assert (config.qwen_segment_duration, config.qwen_segment_overlap) == (120.0, 20.0)
 
 
-def test_explicit_chunk_settings_override_qwen_defaults() -> None:
+def test_explicit_segment_settings_override_qwen_defaults() -> None:
     config = make(
         {
             "asr_backend": "qwen",
-            "chunk_duration": 120,
-            "chunk_overlap": 20,
+            "qwen_segment_duration": 120,
+            "qwen_segment_overlap": 20,
             "qwen_aligner_model": "/models/aligner",
         },
         {
             "ASR_MODEL": "/models/qwen",
-            "CHUNK_DURATION": "60",
-            "CHUNK_OVERLAP": "5",
+            "QWEN_SEGMENT_DURATION": "60",
+            "QWEN_SEGMENT_OVERLAP": "5",
             "QWEN_ALIGNER_MODEL": "/models/environment-aligner",
         },
     )
-    assert (config.chunk_duration, config.chunk_overlap) == (120.0, 20.0)
+    assert (config.qwen_segment_duration, config.qwen_segment_overlap) == (120.0, 20.0)
     assert (config.resolved_asr_model, config.qwen_aligner_model) == (
         "/models/qwen",
         "/models/aligner",
     )
 
 
-def test_qwen_rejects_chunks_above_forced_alignment_limit() -> None:
+def test_qwen_rejects_segments_above_forced_alignment_limit() -> None:
     with pytest.raises(ValueError, match="forced-aligner limit"):
-        make({"asr_backend": "qwen", "chunk_duration": 301})
+        make({"asr_backend": "qwen", "qwen_segment_duration": 301})
 
 
 def test_obsolete_granite_configuration_fails_clearly() -> None:

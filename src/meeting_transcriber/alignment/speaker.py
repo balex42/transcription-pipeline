@@ -51,7 +51,6 @@ class OverlapSpeakerAligner:
                     end=word.end,
                     speaker=speaker or UNKNOWN_SPEAKER,
                     start_is_inferred=word.start is None,
-                    chunk_id=word.chunk_id,
                 )
             )
             previous_end = max(previous_end, word.end)

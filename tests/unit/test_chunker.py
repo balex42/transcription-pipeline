@@ -3,7 +3,8 @@ from pathlib import Path
 
 import numpy as np
 
-from meeting_transcriber.audio.chunker import AudioChunker
+from meeting_transcriber.audio.segmenter import AudioSegmenter
+from meeting_transcriber.models import AudioMetadata, NormalizedAudio
 
 
 def write_wav(path: Path, seconds: float) -> None:
@@ -15,26 +16,28 @@ def write_wav(path: Path, seconds: float) -> None:
         wav.writeframes(samples.tobytes())
 
 
-def test_short_recording_is_one_chunk(tmp_path: Path) -> None:
+def audio(path: Path, seconds: float) -> NormalizedAudio:
+    write_wav(path, seconds)
+    return NormalizedAudio(path, AudioMetadata(path.name, seconds))
+
+
+def test_short_recording_is_one_segment(tmp_path: Path) -> None:
     path = tmp_path / "short.wav"
-    write_wav(path, 3)
-    chunks = AudioChunker(10, 2).chunk(path)
-    assert [(chunk.absolute_start, chunk.absolute_end) for chunk in chunks] == [(0.0, 3.0)]
+    segments = AudioSegmenter(10, 2).segment(audio(path, 3))
+    assert [(segment.start, segment.end) for segment in segments] == [(0.0, 3.0)]
 
 
-def test_exact_chunk_boundary_does_not_make_empty_tail(tmp_path: Path) -> None:
+def test_exact_segment_boundary_does_not_make_empty_tail(tmp_path: Path) -> None:
     path = tmp_path / "exact.wav"
-    write_wav(path, 10)
-    chunks = AudioChunker(10, 2).chunk(path)
-    assert len(chunks) == 1
-    assert chunks[0].absolute_end == 10
+    segments = AudioSegmenter(10, 2).segment(audio(path, 10))
+    assert len(segments) == 1
+    assert segments[0].end == 10
 
 
-def test_overlapping_and_final_partial_chunks_have_absolute_offsets(tmp_path: Path) -> None:
+def test_overlapping_and_final_partial_segments_have_absolute_offsets(tmp_path: Path) -> None:
     path = tmp_path / "long.wav"
-    write_wav(path, 23)
-    chunks = AudioChunker(10, 2).chunk(path)
-    assert [(chunk.chunk_id, chunk.absolute_start, chunk.absolute_end) for chunk in chunks] == [
+    segments = AudioSegmenter(10, 2).segment(audio(path, 23))
+    assert [(segment.index, segment.start, segment.end) for segment in segments] == [
         (0, 0.0, 10.0),
         (1, 8.0, 18.0),
         (2, 16.0, 23.0),

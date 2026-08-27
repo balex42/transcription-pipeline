@@ -5,10 +5,12 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Any, Protocol, cast
 
+from meeting_transcriber.audio.segmenter import AudioSegmenter
 from meeting_transcriber.errors import ASROutputError, ModelLoadError
-from meeting_transcriber.models import ASRWord, AudioChunk
+from meeting_transcriber.models import ASRWord, AudioSegment, NormalizedAudio
 from meeting_transcriber.runtime.device import inference_dtype
 from meeting_transcriber.transcription.base import Transcriber, TranscriberCapabilities
+from meeting_transcriber.transcription.segments import reconcile_segment_words
 
 
 class _ParakeetProcessor(Protocol):
@@ -30,24 +32,45 @@ class ParakeetTranscriber(Transcriber):
 
     capabilities = TranscriberCapabilities(True, True, True, True)
 
-    def __init__(self, model: str, device: str) -> None:
+    def __init__(
+        self,
+        model: str,
+        device: str,
+        segment_duration: float = 180.0,
+        segment_overlap: float = 15.0,
+    ) -> None:
         self.model_reference = model
         self.device = device
         _, self.dtype_name = inference_dtype(device)
         self._model: _ParakeetModel | None = None
         self._processor: _ParakeetProcessor | None = None
+        self._segmenter = AudioSegmenter(segment_duration, segment_overlap)
+        self.backend_metrics: dict[str, float] = {}
+        self.backend_models: dict[str, str] = {}
+        self.backend_configuration = {
+            "segment_duration_seconds": segment_duration,
+            "segment_overlap_seconds": segment_overlap,
+        }
 
     def load(self) -> None:
         """Load the native Parakeet TDT model lazily."""
         self._load()
 
-    def transcribe(self, chunk: AudioChunk) -> list[ASRWord]:
-        """Return native start/end timestamps relative to ``chunk``."""
+    def transcribe(self, audio: NormalizedAudio) -> list[ASRWord]:
+        """Segment and reconcile the full meeting inside the Parakeet adapter."""
+        segments = self._segmenter.segment(audio)
+        self.backend_metrics["segments_processed"] = float(len(segments))
+        return reconcile_segment_words(
+            segments, {segment.index: self._transcribe_segment(segment) for segment in segments}
+        )
+
+    def _transcribe_segment(self, segment: AudioSegment) -> list[ASRWord]:
+        """Return native start/end timestamps relative to one internal segment."""
         model, processor = self._load()
         import torch
 
         dtype, _ = inference_dtype(self.device)
-        inputs = processor(chunk.audio, sampling_rate=chunk.sample_rate, return_tensors="pt")
+        inputs = processor(segment.audio, sampling_rate=segment.sample_rate, return_tensors="pt")
         inputs = inputs.to(self.device, dtype=dtype)
         with torch.inference_mode():
             output = model.generate(**inputs, return_dict_in_generate=True, do_sample=False)
@@ -56,7 +79,7 @@ class ParakeetTranscriber(Transcriber):
             durations=output.durations,
             skip_special_tokens=True,
         )
-        return normalize_parakeet_timestamps(timestamps, chunk.chunk_id)
+        return normalize_parakeet_timestamps(timestamps)
 
     def _load(self) -> tuple[_ParakeetModel, _ParakeetProcessor]:
         if self._model is not None and self._processor is not None:
@@ -92,11 +115,11 @@ class ParakeetTranscriber(Transcriber):
         self._processor = None
 
 
-def normalize_parakeet_timestamps(timestamps: object, chunk_id: int) -> list[ASRWord]:
+def normalize_parakeet_timestamps(timestamps: object) -> list[ASRWord]:
     """Normalize Parakeet pieces into punctuation-preserving word intervals."""
     entries = list(_timestamp_entries(timestamps))
     if entries and all("token" in entry and "word" not in entry for entry in entries):
-        return _token_pieces_to_words(entries, chunk_id)
+        return _token_pieces_to_words(entries)
     words: list[ASRWord] = []
     for entry in entries:
         text = str(entry.get("word", entry.get("token", entry.get("text", "")))).strip()
@@ -111,11 +134,11 @@ def normalize_parakeet_timestamps(timestamps: object, chunk_id: int) -> list[ASR
             raise ASROutputError("Parakeet word timestamp is missing numeric start/end values")
         if end < start:
             raise ASROutputError("Parakeet word timestamp ends before it starts")
-        words.append(ASRWord(text=text, start=float(start), end=float(end), chunk_id=chunk_id))
+        words.append(ASRWord(text=text, start=float(start), end=float(end)))
     return words
 
 
-def _token_pieces_to_words(entries: list[dict[str, object]], chunk_id: int) -> list[ASRWord]:
+def _token_pieces_to_words(entries: list[dict[str, object]]) -> list[ASRWord]:
     """Join SentencePiece-style timestamped fragments into lexical words."""
     words: list[ASRWord] = []
     text = ""
@@ -126,7 +149,7 @@ def _token_pieces_to_words(entries: list[dict[str, object]], chunk_id: int) -> l
     def emit() -> None:
         nonlocal text, start, end
         if text and start is not None and end is not None:
-            words.append(ASRWord(text=text, start=start, end=end, chunk_id=chunk_id))
+            words.append(ASRWord(text=text, start=start, end=end))
         text, start, end = "", None, None
 
     for entry in entries:

@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from typing import Any, Protocol, cast
 
+from meeting_transcriber.audio.segmenter import load_normalized_samples
 from meeting_transcriber.errors import ASROutputError, ModelLoadError
-from meeting_transcriber.models import ASRWord, AudioChunk
+from meeting_transcriber.models import ASRWord, NormalizedAudio
 from meeting_transcriber.runtime.device import inference_dtype
 from meeting_transcriber.transcription.base import Transcriber, TranscriberCapabilities
 
@@ -25,26 +26,40 @@ class WhisperTranscriber(Transcriber):
 
     capabilities = TranscriberCapabilities(True, True, True, True)
 
-    def __init__(self, model: str, device: str) -> None:
+    def __init__(
+        self,
+        model: str,
+        device: str,
+        segment_duration: float = 180.0,
+        segment_overlap: float = 15.0,
+    ) -> None:
         self.model_reference = model
         self.device = device
         _, self.dtype_name = inference_dtype(device)
         self._model: _WhisperModel | None = None
         self._pipeline: _WhisperPipeline | None = None
+        self.backend_metrics: dict[str, float] = {}
+        self.backend_models: dict[str, str] = {}
+        self.backend_configuration = {
+            "long_form_chunk_length_seconds": segment_duration,
+            "long_form_stride_seconds": segment_overlap,
+        }
 
     def load(self) -> None:
         """Load Whisper and its ASR pipeline lazily."""
         self._load()
 
-    def transcribe(self, chunk: AudioChunk) -> list[ASRWord]:
-        """Transcribe German speech with deterministic word-level timestamps."""
+    def transcribe(self, audio: NormalizedAudio) -> list[ASRWord]:
+        """Use Transformers long-form handling on the complete normalized meeting."""
         pipeline = self._load()
         import torch
 
         with torch.inference_mode():
             result = pipeline(
-                chunk.audio,
+                load_normalized_samples(audio),
                 return_timestamps="word",
+                chunk_length_s=self.backend_configuration["long_form_chunk_length_seconds"],
+                stride_length_s=self.backend_configuration["long_form_stride_seconds"],
                 generate_kwargs={
                     "language": "german",
                     "task": "transcribe",
@@ -52,7 +67,7 @@ class WhisperTranscriber(Transcriber):
                     "num_beams": 1,
                 },
             )
-        return normalize_whisper_chunks(result.get("chunks", []), chunk.chunk_id)
+        return normalize_whisper_chunks(result.get("chunks", []))
 
     def _load(self) -> _WhisperPipeline:
         if self._pipeline is not None:
@@ -96,7 +111,7 @@ class WhisperTranscriber(Transcriber):
         self._pipeline = None
 
 
-def normalize_whisper_chunks(chunks: object, chunk_id: int) -> list[ASRWord]:
+def normalize_whisper_chunks(chunks: object) -> list[ASRWord]:
     """Normalize Transformers pipeline ``return_timestamps='word'`` output."""
     if not isinstance(chunks, list):
         raise ASROutputError("Whisper returned an unsupported word timestamp structure")
@@ -115,5 +130,5 @@ def normalize_whisper_chunks(chunks: object, chunk_id: int) -> list[ASRWord]:
             raise ASROutputError("Whisper word timestamp must contain numeric values")
         if end < start:
             raise ASROutputError("Whisper word timestamp ends before it starts")
-        words.append(ASRWord(text=text, start=float(start), end=float(end), chunk_id=chunk_id))
+        words.append(ASRWord(text=text, start=float(start), end=float(end)))
     return words

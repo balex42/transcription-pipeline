@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
+from typing import Protocol
 
-from meeting_transcriber.models import ASRWord, AudioChunk
+from meeting_transcriber.models import ASRWord, NormalizedAudio
 
 
 @dataclass(frozen=True)
@@ -16,28 +16,22 @@ class TranscriberCapabilities:
     word_end_timestamps: bool
     punctuation: bool
     capitalization: bool
+    streaming: bool = False
+    requires_forced_alignment: bool = False
 
 
 class Transcriber(Protocol):
-    """Transcribe one audio chunk into chunk-relative ASR words."""
+    """Transcribe one complete normalized meeting into global ASR words."""
 
     capabilities: TranscriberCapabilities
     model_reference: str
     dtype_name: str
 
-    def transcribe(self, chunk: AudioChunk) -> list[ASRWord]:
-        """Return raw words whose ``end`` is relative to ``chunk``."""
+    def transcribe(self, audio: NormalizedAudio) -> list[ASRWord]:
+        """Return finalized timestamped words relative to the meeting start."""
 
     def release(self) -> None:
         """Release model resources."""
 
     def load(self) -> None:
         """Load the model so callers can measure model initialization separately."""
-
-
-@runtime_checkable
-class BatchTranscriber(Protocol):
-    """Optional ASR interface for backends with a meeting-level lifecycle."""
-
-    def transcribe_chunks(self, chunks: list[AudioChunk]) -> dict[int, list[ASRWord]]:
-        """Return chunk-relative words after processing all supplied chunks."""

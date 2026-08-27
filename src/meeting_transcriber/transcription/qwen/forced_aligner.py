@@ -7,10 +7,10 @@ import re
 from typing import Any
 
 from meeting_transcriber.errors import ModelLoadError, QwenAlignmentError
-from meeting_transcriber.models import ASRWord, AudioChunk
+from meeting_transcriber.models import ASRWord, AudioSegment
 from meeting_transcriber.runtime.device import inference_dtype
 
-_TIMESTAMP_TOLERANCE_SECONDS = 0.1
+_TIMESTAMP_TOLERANCE_SECONDS = 0.25
 
 
 class QwenForcedAligner:
@@ -47,8 +47,8 @@ class QwenForcedAligner:
                 f"could not load Qwen forced-aligner model {self.model_reference}: {error}"
             ) from error
 
-    def align(self, chunk: AudioChunk, transcript: str) -> list[ASRWord]:
-        """Return chunk-relative Qwen word intervals for one recognized chunk."""
+    def align(self, segment: AudioSegment, transcript: str) -> list[ASRWord]:
+        """Return segment-relative Qwen word intervals for one recognized segment."""
         if not transcript:
             return []
         self.load()
@@ -58,7 +58,7 @@ class QwenForcedAligner:
 
             dtype, _ = inference_dtype(self.device)
             inputs, word_lists = self._processor.prepare_forced_aligner_inputs(
-                audio=chunk.audio,
+                audio=segment.audio,
                 transcript=transcript,
                 language="de",
             )
@@ -73,19 +73,19 @@ class QwenForcedAligner:
             )
             if not isinstance(decoded, list) or len(decoded) != 1:
                 raise QwenAlignmentError("Qwen forced aligner returned an unexpected batch shape")
-            words = normalize_qwen_alignment(decoded[0], chunk)
+            words = normalize_qwen_alignment(decoded[0], segment)
             _validate_transcript_coverage(transcript, words)
             return words
         except QwenAlignmentError as error:
             raise QwenAlignmentError(
                 "Qwen forced alignment failed for "
-                f"chunk {chunk.chunk_id} ({chunk.absolute_start:.3f}-{chunk.absolute_end:.3f}s) "
+                f"segment {segment.index} ({segment.start:.3f}-{segment.end:.3f}s) "
                 f"with model {self.model_reference}: {error}"
             ) from error
         except Exception as error:
             raise QwenAlignmentError(
                 "Qwen forced alignment failed for "
-                f"chunk {chunk.chunk_id} ({chunk.absolute_start:.3f}-{chunk.absolute_end:.3f}s) "
+                f"segment {segment.index} ({segment.start:.3f}-{segment.end:.3f}s) "
                 f"with model {self.model_reference}: {error}"
             ) from error
 
@@ -95,13 +95,13 @@ class QwenForcedAligner:
         self._processor = None
 
 
-def normalize_qwen_alignment(entries: object, chunk: AudioChunk) -> list[ASRWord]:
+def normalize_qwen_alignment(entries: object, segment: AudioSegment) -> list[ASRWord]:
     """Validate native Qwen word boundaries and normalize them to ``ASRWord``."""
     if not isinstance(entries, list) or not entries:
         raise QwenAlignmentError(
-            f"Qwen forced aligner returned no words for chunk {chunk.chunk_id}"
+            f"Qwen forced aligner returned no words for segment {segment.index}"
         )
-    duration = chunk.absolute_end - chunk.absolute_start
+    duration = segment.end - segment.start
     previous_start = -_TIMESTAMP_TOLERANCE_SECONDS
     previous_end = -_TIMESTAMP_TOLERANCE_SECONDS
     words: list[ASRWord] = []
@@ -129,7 +129,6 @@ def normalize_qwen_alignment(entries: object, chunk: AudioChunk) -> list[ASRWord
                 text=text.strip(),
                 start=max(start, 0.0),
                 end=min(end, duration),
-                chunk_id=chunk.chunk_id,
             )
         )
         previous_start, previous_end = start, end

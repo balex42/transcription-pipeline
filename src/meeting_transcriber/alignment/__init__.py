@@ -1,1 +1,1 @@
-"""ASR chunk reconciliation and speaker attribution."""
+"""Speaker attribution for globally timestamped ASR words."""

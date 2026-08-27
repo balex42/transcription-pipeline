@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import torch
 
-from meeting_transcriber.models import AudioChunk
+from meeting_transcriber.models import AudioSegment
 from meeting_transcriber.transcription.qwen.recognizer import QwenRecognizer
 
 
@@ -37,8 +37,8 @@ class Model:
         return torch.tensor([[1, 2, 3]])
 
 
-def chunk() -> AudioChunk:
-    return AudioChunk(7, 20.0, 22.0, np.zeros(32_000, dtype=np.float32))
+def segment() -> AudioSegment:
+    return AudioSegment(7, 20.0, 22.0, np.zeros(32_000, dtype=np.float32))
 
 
 def test_recognizer_requests_deterministic_german_transcription() -> None:
@@ -48,7 +48,7 @@ def test_recognizer_requests_deterministic_german_transcription() -> None:
     recognizer._processor = processor
     recognizer._model = model
 
-    assert recognizer.recognize(chunk()) == "Guten Morgen"
+    assert recognizer.recognize(segment()) == "Guten Morgen"
     assert processor.request is not None
     assert processor.request["language"] == "de"
     assert processor.request["prompt"] == "Names: Fenske"
@@ -58,8 +58,8 @@ def test_recognizer_requests_deterministic_german_transcription() -> None:
     assert model.kwargs["max_new_tokens"] == 2_048
 
 
-def test_recognizer_preserves_empty_transcript_for_chunk_orchestration() -> None:
+def test_recognizer_preserves_empty_transcript_for_segment_orchestration() -> None:
     recognizer = QwenRecognizer("/models/qwen", "cpu")
     recognizer._processor = Processor("  ")
     recognizer._model = Model()
-    assert recognizer.recognize(chunk()) == ""
+    assert recognizer.recognize(segment()) == ""

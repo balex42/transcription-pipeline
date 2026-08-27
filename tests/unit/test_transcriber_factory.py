@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from meeting_transcriber.config import (
+    DEFAULT_NEMOTRON_MODEL,
     DEFAULT_PARAKEET_MODEL,
     DEFAULT_QWEN_MODEL,
     DEFAULT_WHISPER_MODEL,
@@ -10,6 +11,7 @@ from meeting_transcriber.config import (
 )
 from meeting_transcriber.errors import UnsupportedASRBackendError
 from meeting_transcriber.transcription.factory import create_transcriber
+from meeting_transcriber.transcription.nemotron import NemotronTranscriber
 from meeting_transcriber.transcription.parakeet import ParakeetTranscriber
 from meeting_transcriber.transcription.qwen import QwenTranscriber
 from meeting_transcriber.transcription.whisper import WhisperTranscriber
@@ -27,6 +29,7 @@ def config(backend: str, model: str | None = None) -> PipelineConfig:
         ("parakeet", ParakeetTranscriber, DEFAULT_PARAKEET_MODEL),
         ("whisper", WhisperTranscriber, DEFAULT_WHISPER_MODEL),
         ("qwen", QwenTranscriber, DEFAULT_QWEN_MODEL),
+        ("nemotron", NemotronTranscriber, DEFAULT_NEMOTRON_MODEL),
     ],
 )
 def test_factory_selects_adapter_and_default_model(
@@ -36,7 +39,9 @@ def test_factory_selects_adapter_and_default_model(
     assert isinstance(transcriber, adapter)
     assert transcriber.model_reference == model
     if backend == "qwen":
-        assert config(backend).resolved_chunk_duration == 240.0
+        assert transcriber.capabilities.requires_forced_alignment is True
+    if backend == "nemotron":
+        assert transcriber.capabilities.streaming is True
 
 
 def test_explicit_model_overrides_backend_default() -> None:

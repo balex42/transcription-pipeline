@@ -12,13 +12,11 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Protocol
 
-from meeting_transcriber.alignment.chunks import ChunkMerger
 from meeting_transcriber.alignment.speaker import (
     UNKNOWN_SPEAKER,
     OverlapSpeakerAligner,
     SpeakerAligner,
 )
-from meeting_transcriber.audio.chunker import AudioChunker
 from meeting_transcriber.audio.preprocess import AudioPreprocessor
 from meeting_transcriber.config import PipelineConfig
 from meeting_transcriber.diarization.base import Diarizer
@@ -29,9 +27,9 @@ from meeting_transcriber.models import (
     ASRRunMetadata,
     ASRWord,
     AttributedWord,
-    AudioChunk,
     AudioMetadata,
     DiarizationSegment,
+    NormalizedAudio,
     PipelineResult,
     Transcript,
 )
@@ -41,7 +39,7 @@ from meeting_transcriber.runtime.device import (
     resolve_device,
 )
 from meeting_transcriber.runtime.lifecycle import release_model
-from meeting_transcriber.transcription.base import BatchTranscriber, Transcriber
+from meeting_transcriber.transcription.base import Transcriber
 from meeting_transcriber.transcription.factory import create_transcriber
 from meeting_transcriber.turns.builder import TurnBuilder
 
@@ -63,26 +61,17 @@ class AudioNormalizer(Protocol):
         """Return normalized recording metadata."""
 
 
-class ChunkProvider(Protocol):
-    """Split a normalized WAV into ASR chunks."""
-
-    def chunk(self, normalized_wav: Path) -> list[AudioChunk]:
-        """Return chunked audio with absolute offsets."""
-
-
 @dataclass(frozen=True)
 class PreparedMeeting:
     """One normalization and diarization result reusable by multiple ASR runs."""
 
-    metadata: AudioMetadata
-    normalized_wav: Path
-    chunks: list[AudioChunk]
+    audio: NormalizedAudio
     diarization: list[DiarizationSegment]
     work_directory: Path
 
 
 class MeetingTranscriptionPipeline:
-    """Run normalization, global diarization, chunked ASR, alignment, and export."""
+    """Run normalization, global diarization, ASR, alignment, and export."""
 
     def __init__(
         self,
@@ -90,8 +79,6 @@ class MeetingTranscriptionPipeline:
         diarizer_factory: Callable[[], Diarizer],
         transcriber_factory: Callable[[], Transcriber],
         preprocessor: AudioNormalizer | None = None,
-        chunker: ChunkProvider | None = None,
-        merger: ChunkMerger | None = None,
         aligner: SpeakerAligner | None = None,
         turn_builder: TurnBuilder | None = None,
     ) -> None:
@@ -99,10 +86,6 @@ class MeetingTranscriptionPipeline:
         self.diarizer_factory = diarizer_factory
         self.transcriber_factory = transcriber_factory
         self.preprocessor = preprocessor or AudioPreprocessor()
-        self.chunker = chunker or AudioChunker(
-            config.resolved_chunk_duration, config.resolved_chunk_overlap
-        )
-        self.merger = merger or ChunkMerger()
         self.aligner = aligner or OverlapSpeakerAligner(config.alignment_tolerance)
         self.turn_builder = turn_builder or TurnBuilder(config.turn_gap_seconds)
 
@@ -137,10 +120,7 @@ class MeetingTranscriptionPipeline:
             diarization = diarizer.diarize(normalized)
         finally:
             release_model(diarizer)
-        self._stage("chunk")
-        chunks = self.chunker.chunk(normalized)
-        LOGGER.info("created audio chunks", extra={"chunks": len(chunks)})
-        return PreparedMeeting(metadata, normalized, chunks, diarization, job_directory)
+        return PreparedMeeting(NormalizedAudio(normalized, metadata), diarization, job_directory)
 
     def cleanup(self, prepared: PreparedMeeting) -> None:
         """Remove temporary normalized audio unless debugging retained it."""
@@ -169,22 +149,9 @@ class MeetingTranscriptionPipeline:
         )
         transcriber.load()
         load_seconds = time.monotonic() - load_started
-        words_by_chunk: dict[int, list[ASRWord]] = {}
         transcription_started = time.monotonic()
         try:
-            if isinstance(transcriber, BatchTranscriber):
-                words_by_chunk = transcriber.transcribe_chunks(prepared.chunks)
-            else:
-                for index, chunk in enumerate(prepared.chunks, start=1):
-                    LOGGER.info(
-                        "transcribing chunk",
-                        extra={
-                            "backend": backend,
-                            "chunk": index,
-                            "total_chunks": len(prepared.chunks),
-                        },
-                    )
-                    words_by_chunk[chunk.chunk_id] = transcriber.transcribe(chunk)
+            words = transcriber.transcribe(prepared.audio)
             transcription_seconds = time.monotonic() - transcription_started
             allocated, reserved = peak_cuda_memory(
                 getattr(transcriber, "device", self.config.device)
@@ -192,21 +159,20 @@ class MeetingTranscriptionPipeline:
         finally:
             release_model(transcriber)
         total_seconds = time.monotonic() - total_started
-        self._stage("merge")
-        words = self.merger.merge(prepared.chunks, words_by_chunk)
         self._stage("align")
         attributed = self.aligner.align(words, prepared.diarization)
         self._stage("turns")
         turns = self.turn_builder.build(attributed)
         speakers = sorted({word.speaker for word in attributed if word.speaker != UNKNOWN_SPEAKER})
         transcript = Transcript(
-            metadata=prepared.metadata,
+            metadata=prepared.audio.metadata,
             asr_backend=backend,
             asr_model=transcriber.model_reference,
             diarization_model=self.config.pyannote_model,
             speakers=speakers,
             words=attributed,
             turns=turns,
+            language=self.config.language,
         )
         result = PipelineResult(
             transcript=transcript,
@@ -220,19 +186,18 @@ class MeetingTranscriptionPipeline:
             model=transcriber.model_reference,
             device=getattr(transcriber, "device", self.config.device),
             dtype=transcriber.dtype_name,
-            audio_duration_seconds=prepared.metadata.duration_seconds,
-            chunk_duration_seconds=self.config.resolved_chunk_duration,
-            chunk_overlap_seconds=self.config.resolved_chunk_overlap,
+            audio_duration_seconds=prepared.audio.metadata.duration_seconds,
             model_load_seconds=load_seconds,
             transcription_seconds=transcription_seconds,
             total_asr_seconds=total_seconds,
-            real_time_factor=total_seconds / prepared.metadata.duration_seconds,
+            real_time_factor=total_seconds / prepared.audio.metadata.duration_seconds,
             peak_cuda_memory_allocated_bytes=allocated,
             peak_cuda_memory_reserved_bytes=reserved,
             transformers_version=_package_version("transformers"),
             torch_version=_package_version("torch"),
             backend_metrics=getattr(transcriber, "backend_metrics", {}),
             backend_models=getattr(transcriber, "backend_models", {}),
+            backend_configuration=getattr(transcriber, "backend_configuration", {}),
         )
         LOGGER.info("ASR backend complete", extra=asdict(metrics))
         return result, metrics

@@ -22,8 +22,12 @@ class ASROutputError(MeetingTranscriberError):
 
 
 class QwenRecognitionError(MeetingTranscriberError):
-    """Raised when Qwen ASR cannot produce a chunk transcript."""
+    """Raised when Qwen ASR cannot produce an internal segment transcript."""
 
 
 class QwenAlignmentError(MeetingTranscriberError):
     """Raised when Qwen forced alignment cannot produce valid word timing."""
+
+
+class NemotronStreamingError(MeetingTranscriberError):
+    """Raised when Nemotron streaming inference cannot produce valid words."""

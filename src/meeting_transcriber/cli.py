@@ -31,8 +31,8 @@ def build_parser() -> argparse.ArgumentParser:
     _add_runtime_options(compare, include_asr=False)
     compare.add_argument(
         "--models",
-        default="parakeet,whisper,qwen",
-        help="comma-separated ASR backends: parakeet, whisper, qwen",
+        default="parakeet,whisper,qwen,nemotron",
+        help="comma-separated ASR backends: parakeet, whisper, qwen, nemotron",
     )
     prefetch = commands.add_parser(
         "prefetch-models", help="download models into configured Hugging Face cache"
@@ -51,21 +51,19 @@ def _add_runtime_options(parser: argparse.ArgumentParser, include_asr: bool) -> 
     parser.add_argument("--device", choices=["auto", "cuda", "cpu"])
     if include_asr:
         parser.add_argument(
-            "--asr", choices=ASR_BACKENDS, help="ASR backend: parakeet, whisper, qwen"
+            "--asr", choices=ASR_BACKENDS, help="ASR backend: parakeet, whisper, qwen, nemotron"
         )
         parser.add_argument("--asr-model", help="Hugging Face model ID or local model directory")
     parser.add_argument("--qwen-aligner-model", help="Qwen forced-aligner model ID or local path")
     parser.add_argument("--pyannote-model")
-    parser.add_argument(
-        "--chunk-duration",
-        type=float,
-        help="seconds per chunk (Qwen default: 240; other backends: 180)",
-    )
-    parser.add_argument(
-        "--chunk-overlap",
-        type=float,
-        help="seconds of overlap (default: 15)",
-    )
+    parser.add_argument("--parakeet-segment-duration", type=float)
+    parser.add_argument("--parakeet-segment-overlap", type=float)
+    parser.add_argument("--whisper-segment-duration", type=float)
+    parser.add_argument("--whisper-segment-overlap", type=float)
+    parser.add_argument("--qwen-segment-duration", type=float)
+    parser.add_argument("--qwen-segment-overlap", type=float)
+    parser.add_argument("--nemotron-num-lookahead-tokens", type=int)
+    parser.add_argument("--language", help="ASR language locale (default: de-DE)")
     parser.add_argument("--num-speakers", type=int)
     parser.add_argument("--min-speakers", type=int)
     parser.add_argument("--max-speakers", type=int)
@@ -123,8 +121,14 @@ def _config_from_args(args: argparse.Namespace) -> PipelineConfig:
         "asr_model": getattr(args, "asr_model", None),
         "qwen_aligner_model": args.qwen_aligner_model,
         "pyannote_model": args.pyannote_model,
-        "chunk_duration": args.chunk_duration,
-        "chunk_overlap": args.chunk_overlap,
+        "parakeet_segment_duration": args.parakeet_segment_duration,
+        "parakeet_segment_overlap": args.parakeet_segment_overlap,
+        "whisper_segment_duration": args.whisper_segment_duration,
+        "whisper_segment_overlap": args.whisper_segment_overlap,
+        "qwen_segment_duration": args.qwen_segment_duration,
+        "qwen_segment_overlap": args.qwen_segment_overlap,
+        "nemotron_num_lookahead_tokens": args.nemotron_num_lookahead_tokens,
+        "language": args.language,
         "num_speakers": args.num_speakers,
         "min_speakers": args.min_speakers,
         "max_speakers": args.max_speakers,

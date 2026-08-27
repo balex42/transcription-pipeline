@@ -1,53 +1,47 @@
 # German Meeting Transcriber
 
-Local, batch-friendly German meeting transcription using pyannote Community-1 for anonymous speaker diarization and interchangeable Parakeet, Whisper, or Qwen ASR. It intentionally contains no summarization, LLM post-processing, API service, or remote inference.
+Local, batch-friendly German meeting transcription with anonymous pyannote Community-1 diarization. It has no summarization, API service, remote inference, NeMo, or vLLM dependency.
 
 ## Architecture
 
 ```mermaid
 flowchart TD
     input[Input recording] --> normalize[AudioPreprocessor\nffmpeg: 16 kHz mono PCM WAV]
-    normalize --> diarize[Pyannote Community-1\nwhole-meeting diarization]
-    diarize --> timeline[Exclusive speaker timeline]
+    normalize --> audio[NormalizedAudio]
+    audio --> diarize[Pyannote Community-1\nwhole-meeting diarization]
+    diarize --> timeline[Global speaker timeline]
     timeline --> release[Release diarization model]
-    normalize --> chunk[AudioChunker\noverlapping ASR chunks]
-    release --> parakeet[Parakeet]
-    release --> whisper[Whisper]
-    release --> qwen_asr[Qwen3 ASR]
-    chunk --> parakeet
-    chunk --> whisper
-    chunk --> qwen_asr
-    qwen_asr --> qwen_align[Qwen3 Forced Aligner]
-    chunk --> qwen_align
-    parakeet --> words[Normalized ASR words]
+    audio --> transcriber[Selected Transcriber\nreceives whole recording]
+    release --> transcriber
+    transcriber --> parakeet[Parakeet\ninternal segments]
+    transcriber --> whisper[Whisper\nnative long form]
+    transcriber --> qwen[Qwen\ninternal segments plus aligner]
+    transcriber --> nemotron[Nemotron\ncache-aware streaming]
+    parakeet --> words[Global ASRWord list]
     whisper --> words
-    qwen_align --> words
-    words --> merge[ChunkMerger]
-    merge --> align[SpeakerAligner]
+    qwen --> words
+    nemotron --> words
+    words --> align[SpeakerAligner]
     timeline --> align
     align --> turns[TurnBuilder]
     turns --> export[Transcript JSON and text exporters]
 ```
 
-Pyannote owns canonical speaker identity. No ASR backend speaker labels are used. Downstream components consume only the common `ASRWord` contract.
+Audio segmentation is not part of the generic pipeline. Each ASR backend owns its own long-form processing strategy and returns finalized, globally timestamped `ASRWord` values. Pyannote owns canonical speaker identity; ASR speaker labels are never used.
 
 ## ASR Backends
 
-- Parakeet: `nvidia/parakeet-tdt-0.6b-v3`. Native Transformers TDT timestamps, punctuation, and capitalization.
-- Whisper: `openai/whisper-large-v3`. German transcription is explicitly requested with Transformers word timestamps.
-- Qwen: `Qwen/Qwen3-ASR-1.7B-hf` transcribes each chunk, then `Qwen/Qwen3-ForcedAligner-0.6B-hf` supplies native word start/end timing. The two models run sequentially: ASR is loaded once for all chunks and released before the aligner is loaded once.
-- Diarization: `pyannote/speaker-diarization-community-1` runs over the normalized full meeting and exposes its exclusive speaker timeline.
+- `parakeet`: `nvidia/parakeet-tdt-0.6b-v3`. Native TDT word timestamps, punctuation, capitalization, and internal 180-second segments with 15-second overlap.
+- `whisper`: `openai/whisper-large-v3`. German `task=transcribe`, Transformers word timestamps, punctuation/capitalization, and Transformers native long-form processing with a 180-second/15-second backend setting.
+- `qwen`: `Qwen/Qwen3-ASR-1.7B-hf` plus `Qwen/Qwen3-ForcedAligner-0.6B-hf`. Qwen recognizes bounded 240-second internal segments with 15-second overlap, releases ASR, aligns all recognized segments once, then reconciles them. The aligner limit is 300 seconds.
+- `nemotron`: `nvidia/nemotron-3.5-asr-streaming-0.6b`. Native Transformers RNNT cache-aware streaming, explicit `de-DE` conditioning, native token emission timestamps, and internal token-to-word aggregation. It does not issue independent ASR requests for long-form audio.
+- Diarization: `pyannote/speaker-diarization-community-1` runs once over the normalized full meeting.
 
-All adapters use deterministic inference, `model.eval()`, `torch.inference_mode()`, and `trust_remote_code=False`. CUDA uses FP16 on Turing-class GPUs and BF16 only where PyTorch confirms support; CPU uses FP32.
+Nemotron word intervals are aggregates of RNNT token emission times, not manually aligned acoustic boundaries. Leading-space tokenizer markers start words; trailing punctuation attaches to the preceding word; opening punctuation attaches to the following lexical token.
 
-## Prerequisites
+All adapters use deterministic inference, `model.eval()`, `torch.inference_mode()`, and `trust_remote_code=False`. CUDA uses FP16 on Turing-class GPUs and BF16 only when PyTorch verifies support; CPU uses FP32.
 
-- Python 3.11
-- `ffmpeg` and `ffprobe` on `PATH`
-- enough RAM, or an NVIDIA GPU for practical production inference
-- a Hugging Face token only when downloading the gated pyannote model
-
-## Python Setup
+## Dependencies
 
 | Package | Version |
 | --- | --- |
@@ -61,7 +55,7 @@ All adapters use deterministic inference, `model.eval()`, `torch.inference_mode(
 | pyannote.audio | `4.0.7` |
 | numpy | `2.2.6` |
 
-Install the appropriate PyTorch CPU/CUDA wheel first when required by the package index, then install the project:
+Install the appropriate PyTorch CPU/CUDA wheel first when required, then install the project:
 
 ```bash
 python3.11 -m venv .venv
@@ -69,47 +63,46 @@ python3.11 -m venv .venv
 .venv/bin/pip install -e '.[dev]'
 ```
 
-## CLI
+`ffmpeg` and `ffprobe` must be on `PATH`.
+
+## Commands
 
 ```bash
-meeting-transcriber transcribe INPUT --output OUTPUT [options]
-meeting-transcriber compare INPUT --output OUTPUT [options]
+meeting-transcriber transcribe meeting.m4a --asr parakeet --output ./result/parakeet --device cuda
+meeting-transcriber transcribe meeting.m4a --asr whisper --output ./result/whisper --device cuda
+meeting-transcriber transcribe meeting.m4a --asr qwen --output ./result/qwen --device cuda
+meeting-transcriber transcribe meeting.m4a --asr nemotron --output ./result/nemotron --device cuda
 ```
 
-Supported values for `--asr` and `--models` are `parakeet`, `whisper`, and `qwen`.
-
-Options include `--asr-model`, `--qwen-aligner-model`, `--pyannote-model`, `--device auto|cuda|cpu`, `--chunk-duration`, `--chunk-overlap`, `--num-speakers`, `--min-speakers`, `--max-speakers`, `--working-directory`, `--keep-intermediate`, and `--log-level`.
-
-Parakeet and Whisper default to 180-second chunks with 15-second overlap. Qwen defaults to 240-second chunks with 15-second overlap. The Qwen forced aligner accepts at most approximately five minutes, so Qwen rejects a chunk duration over 300 seconds before processing begins.
+Compare all production configurations with one normalization and one diarization pass:
 
 ```bash
-meeting-transcriber transcribe meeting.m4a \
-  --asr parakeet --output ./result/parakeet --device cuda
-
-meeting-transcriber transcribe meeting.m4a \
-  --asr whisper --output ./result/whisper --device cuda
-
-meeting-transcriber transcribe meeting.m4a \
-  --asr qwen --output ./result/qwen --device cuda
-
-meeting-transcriber transcribe meeting.m4a \
-  --asr qwen \
-  --asr-model /models/qwen3-asr-1.7b \
-  --qwen-aligner-model /models/qwen3-forced-aligner-0.6b \
-  --output ./result/qwen --device cuda
+meeting-transcriber compare meeting.m4a \
+  --models parakeet,whisper,qwen,nemotron \
+  --output ./comparison --device cuda
 ```
 
-Configuration precedence is CLI arguments, environment variables, then defaults:
+Comparison executes ASR backends sequentially and releases each model before loading the next one. It does not force common segments on models with incompatible long-form behavior.
+
+### Backend Configuration
+
+CLI values override environment values, which override defaults.
 
 ```text
 ASR_BACKEND
 ASR_MODEL
 QWEN_ALIGNER_MODEL
 PYANNOTE_MODEL
+PARAKEET_SEGMENT_DURATION
+PARAKEET_SEGMENT_OVERLAP
+WHISPER_SEGMENT_DURATION
+WHISPER_SEGMENT_OVERLAP
+QWEN_SEGMENT_DURATION
+QWEN_SEGMENT_OVERLAP
+NEMOTRON_NUM_LOOKAHEAD_TOKENS
+LANGUAGE
 DEVICE
 WORKING_DIRECTORY
-CHUNK_DURATION
-CHUNK_OVERLAP
 NUM_SPEAKERS
 MIN_SPEAKERS
 MAX_SPEAKERS
@@ -119,92 +112,13 @@ HF_HOME
 HF_TOKEN
 ```
 
-`ASR_BACKEND` defaults to `parakeet`. `ASR_MODEL` selects the ASR model or a local path; for Qwen, `QWEN_ALIGNER_MODEL` selects the second local model artifact.
+Equivalent CLI flags include `--parakeet-segment-duration`, `--whisper-segment-duration`, `--qwen-segment-duration`, and `--nemotron-num-lookahead-tokens`. There is intentionally no global `--chunk-duration` or `CHUNK_DURATION`: those old settings were removed because they incorrectly coupled backend implementations.
 
-## Output and Provenance
+Nemotron validates an explicit lookahead through the loaded processor. The checkpoint advertises its supported lookahead values and derives its first/subsequent streaming buffer sizes and latency from model/processor configuration.
 
-`OUTPUT/transcript.json` is canonical and versioned (`"version": "1.0"`). It contains source metadata, backend/model metadata, anonymous `SPEAKER_XX` IDs, derived turns, and speaker-attributed words. All normal backends provide native word starts and ends.
+## Output and Metrics
 
-With `--keep-intermediate`, `OUTPUT/intermediate/diarization.json`, `asr_words.json`, and `attributed_words.json` are retained. Qwen keeps recognized chunk text in memory only until forced alignment completes; it never leaks Qwen-specific data into the common downstream pipeline.
-
-Comparison metadata records backend/model references, configured chunking, dtype, PyTorch and Transformers versions, total time, RTF, peak CUDA memory, and Qwen phase timings. `comparison/qwen/metadata.json` additionally records the Qwen ASR and forced-aligner model references and their load, inference/alignment, and unload timings.
-
-For controlled air-gap imports, pin approved upstream revisions and record SHA256 checksums outside the runtime pipeline. The application does not hash multi-gigabyte model artifacts at transcription time and does not make metadata/version network calls.
-
-## Offline and Air-Gapped Models
-
-On a connected staging system, download approved model revisions through the organization’s approved process:
-
-```bash
-HF_TOKEN=hf_... meeting-transcriber prefetch-models --asr parakeet
-HF_TOKEN=hf_... meeting-transcriber prefetch-models --asr whisper
-HF_TOKEN=hf_... meeting-transcriber prefetch-models --asr qwen
-```
-
-Also obtain the accepted `pyannote/speaker-diarization-community-1` artifact through the approved process. Transfer approved model artifacts and their externally generated checksums through the organization’s air gap. A production model volume can contain:
-
-```text
-/models/
-├── pyannote-community-1/
-├── parakeet-tdt-0.6b-v3/
-├── whisper-large-v3/
-├── qwen3-asr-1.7b/
-└── qwen3-forced-aligner-0.6b/
-```
-
-Run from local paths with runtime network access disabled:
-
-```bash
-HF_HUB_OFFLINE=1 \
-TRANSFORMERS_OFFLINE=1 \
-ASR_BACKEND=qwen \
-ASR_MODEL=/models/qwen3-asr-1.7b \
-QWEN_ALIGNER_MODEL=/models/qwen3-forced-aligner-0.6b \
-PYANNOTE_MODEL=/models/pyannote-community-1 \
-meeting-transcriber transcribe /data/meeting.m4a --output /data/result --device cuda
-```
-
-After local model artifacts are available, production inference requires no network access and no Qwen/Alibaba API credential.
-
-## Podman
-
-Build the single common, non-root OpenShift-compatible image:
-
-```bash
-podman build -t meeting-transcriber:local -f Containerfile .
-```
-
-Run with locally mounted models in an air-gapped environment:
-
-```bash
-podman run --rm --device nvidia.com/gpu=all \
-  --userns=keep-id --user "$(id -u):$(id -g)" \
-  -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 \
-  -e ASR_BACKEND=qwen \
-  -e ASR_MODEL=/models/qwen3-asr-1.7b \
-  -e QWEN_ALIGNER_MODEL=/models/qwen3-forced-aligner-0.6b \
-  -e PYANNOTE_MODEL=/models/pyannote-community-1 \
-  -v "$PWD/input:/input:ro,Z" -v "$PWD/result:/output:Z" \
-  -v "$PWD/work:/work:Z" -v "$PWD/models:/models:ro,Z" \
-  meeting-transcriber:local transcribe /input/meeting.m4a \
-  --output /output --working-directory /work --device cuda
-```
-
-The image does not contain model weights, accepts an arbitrary OpenShift UID, and writes only to `/work`, `/cache`, or mounted output locations.
-
-## OpenShift
-
-`deploy/openshift/job.example.yaml` requests one GPU and demonstrates mounted local Qwen, forced-aligner, and pyannote model paths with `HF_HUB_OFFLINE=1` and `TRANSFORMERS_OFFLINE=1`. It requires no network egress and leaves object storage and orchestration outside this application.
-
-## Manual Comparison
-
-Normalization and pyannote run once; ASR backends execute sequentially on the same prepared meeting:
-
-```bash
-meeting-transcriber compare meeting.m4a \
-  --models parakeet,whisper,qwen \
-  --output ./comparison --device cuda
-```
+`OUTPUT/transcript.json` is the canonical versioned output. Its word timestamps are seconds from the beginning of the normalized meeting and are compatible with the pyannote timeline.
 
 ```text
 comparison/
@@ -212,38 +126,85 @@ comparison/
 ├── metadata.json
 ├── parakeet/
 │   ├── asr_words.json
+│   ├── metadata.json
 │   ├── transcript.json
 │   └── transcript.txt
 ├── whisper/
-│   ├── asr_words.json
-│   ├── transcript.json
-│   └── transcript.txt
-└── qwen/
-    ├── asr_words.json
-    ├── metadata.json
-    ├── transcript.json
-    └── transcript.txt
+├── qwen/
+└── nemotron/
 ```
 
-The shared comparison chunks use the command’s explicit settings or the regular 180-second/15-second defaults, which remain within Qwen’s forced-alignment limit.
+Each backend metadata file records model/device/dtype, load time, ASR time, total backend time, RTF, peak CUDA memory, backend configuration, and backend-specific metrics. Qwen records recognition and forced-alignment timing. Nemotron records language, lookahead, streaming latency, and `stream_buffers_processed`.
 
-## Limitations
+With `--keep-intermediate`, generic diarization, ASR words, and attributed words are retained under `OUTPUT/intermediate`. Backend-specific state remains internal and is never added to the canonical transcript schema.
 
-- Qwen forced alignment is limited to approximately five-minute chunks and fails the Qwen backend rather than fabricating untimestamped words.
-- Parakeet native Transformers output is timestamped tokenizer pieces; its adapter groups them into words.
-- Whisper word timestamps can drift around rapid or overlapping speech.
-- ASR timestamps and pyannote speaker boundaries can still be imperfect around overlaps.
-- Speaker IDs are anonymous voices, not real identities.
-- German is the intended language.
+## Offline and Air-Gapped Models
+
+On an approved connected staging system, prefetch artifacts:
+
+```bash
+HF_TOKEN=hf_... meeting-transcriber prefetch-models --asr parakeet
+HF_TOKEN=hf_... meeting-transcriber prefetch-models --asr whisper
+HF_TOKEN=hf_... meeting-transcriber prefetch-models --asr qwen
+HF_TOKEN=hf_... meeting-transcriber prefetch-models --asr nemotron
+```
+
+Also obtain the accepted pyannote artifact through the approved process. Transfer approved artifacts and externally generated checksums through the air gap. A production volume can use:
+
+```text
+/models/
+├── pyannote-community-1/
+├── parakeet-tdt-0.6b-v3/
+├── whisper-large-v3/
+├── qwen3-asr-1.7b/
+├── qwen3-forced-aligner-0.6b/
+└── nemotron-3.5-asr-streaming-0.6b/
+```
+
+Run with mounted local paths and no runtime network access:
+
+```bash
+HF_HUB_OFFLINE=1 \
+TRANSFORMERS_OFFLINE=1 \
+ASR_BACKEND=nemotron \
+ASR_MODEL=/models/nemotron-3.5-asr-streaming-0.6b \
+PYANNOTE_MODEL=/models/pyannote-community-1 \
+meeting-transcriber transcribe /data/meeting.m4a --output /data/result --device cuda
+```
+
+With all required artifacts mounted locally, inference performs no network access, telemetry, NVIDIA API calls, or remote-code loading.
+
+## Podman and OpenShift
+
+Build the single non-root, arbitrary-UID compatible image:
+
+```bash
+podman build -t meeting-transcriber:local -f Containerfile .
+```
+
+```bash
+podman run --rm --device nvidia.com/gpu=all \
+  --userns=keep-id --user "$(id -u):$(id -g)" \
+  -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 \
+  -e ASR_BACKEND=nemotron \
+  -e ASR_MODEL=/models/nemotron-3.5-asr-streaming-0.6b \
+  -e PYANNOTE_MODEL=/models/pyannote-community-1 \
+  -v "$PWD/input:/input:ro,Z" -v "$PWD/result:/output:Z" \
+  -v "$PWD/work:/work:Z" -v "$PWD/models:/models:ro,Z" \
+  meeting-transcriber:local transcribe /input/meeting.m4a \
+  --output /output --working-directory /work --device cuda
+```
+
+`deploy/openshift/job.example.yaml` requests one GPU and demonstrates the same mounted-local-model offline model. No model weights or secrets are baked into the image.
 
 ## Verification
 
 Normal tests download no models and require no GPU:
 
 ```bash
-pytest
-ruff check .
-mypy src/meeting_transcriber
+uv run pytest
+uv run ruff check .
+uv run mypy src/meeting_transcriber
 ```
 
-An optional real-model smoke test requires predownloaded local artifacts, a German WAV, and `RUN_MODEL_TESTS=1 MODEL_TEST_BACKEND=qwen MODEL_TEST_AUDIO=/path/to/audio.wav pytest tests/integration`.
+An optional real-model smoke test requires predownloaded local artifacts, a German WAV, and `RUN_MODEL_TESTS=1 MODEL_TEST_BACKEND=nemotron MODEL_TEST_AUDIO=/path/to/audio.wav uv run pytest tests/integration`.

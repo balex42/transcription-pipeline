@@ -27,11 +27,9 @@ spec:
             - name: HF_HOME
               value: /models/huggingface
             - name: ASR_BACKEND
-              value: qwen
+              value: nemotron
             - name: ASR_MODEL
-              value: /models/qwen3-asr-1.7b
-            - name: QWEN_ALIGNER_MODEL
-              value: /models/qwen3-forced-aligner-0.6b
+              value: /models/nemotron-3.5-asr-streaming-0.6b
             - name: PYANNOTE_MODEL
               value: /models/pyannote-community-1
             - name: HF_HUB_OFFLINE

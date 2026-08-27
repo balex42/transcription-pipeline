@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from meeting_transcriber.errors import ModelLoadError, QwenRecognitionError
-from meeting_transcriber.models import AudioChunk
+from meeting_transcriber.models import AudioSegment
 from meeting_transcriber.runtime.device import inference_dtype
 
 
@@ -51,8 +51,8 @@ class QwenRecognizer:
                 f"could not load Qwen ASR model {self.model_reference}: {error}"
             ) from error
 
-    def recognize(self, chunk: AudioChunk) -> str:
-        """Return deterministic German transcription text for one audio chunk."""
+    def recognize(self, segment: AudioSegment) -> str:
+        """Return deterministic German transcription text for one internal segment."""
         self.load()
         assert self._model is not None and self._processor is not None
         try:
@@ -60,7 +60,7 @@ class QwenRecognizer:
 
             dtype, _ = inference_dtype(self.device)
             request: dict[str, object] = {
-                "audio": chunk.audio,
+                "audio": segment.audio,
                 "language": "de",
             }
             if self.context:
@@ -85,13 +85,13 @@ class QwenRecognizer:
         except QwenRecognitionError as error:
             raise QwenRecognitionError(
                 "Qwen recognition failed for "
-                f"chunk {chunk.chunk_id} ({chunk.absolute_start:.3f}-{chunk.absolute_end:.3f}s) "
+                f"segment {segment.index} ({segment.start:.3f}-{segment.end:.3f}s) "
                 f"with model {self.model_reference}: {error}"
             ) from error
         except Exception as error:
             raise QwenRecognitionError(
                 "Qwen recognition failed for "
-                f"chunk {chunk.chunk_id} ({chunk.absolute_start:.3f}-{chunk.absolute_end:.3f}s) "
+                f"segment {segment.index} ({segment.start:.3f}-{segment.end:.3f}s) "
                 f"with model {self.model_reference}: {error}"
             ) from error
 
