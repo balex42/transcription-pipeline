@@ -12,6 +12,11 @@ DEFAULT_PARAKEET_MODEL = "nvidia/parakeet-tdt-0.6b-v3"
 DEFAULT_WHISPER_MODEL = "openai/whisper-large-v3"
 DEFAULT_PYANNOTE_MODEL = "pyannote/speaker-diarization-community-1"
 ASR_BACKENDS = ("parakeet", "whisper", "granite")
+DEFAULT_CHUNK_SETTINGS = {
+    "parakeet": (180.0, 15.0),
+    "whisper": (180.0, 15.0),
+    "granite": (90.0, 10.0),
+}
 DEFAULT_ASR_MODELS = {
     "parakeet": DEFAULT_PARAKEET_MODEL,
     "whisper": DEFAULT_WHISPER_MODEL,
@@ -123,6 +128,11 @@ class PipelineConfig:
                 raise ValueError(f"{name} must be an integer")
             return value
 
+        asr_backend = choose("asr_backend", "ASR_BACKEND", "parakeet")
+        default_chunk_duration, default_chunk_overlap = DEFAULT_CHUNK_SETTINGS.get(
+            asr_backend, DEFAULT_CHUNK_SETTINGS["parakeet"]
+        )
+
         return cls(
             input_path=input_path,
             output_directory=output_directory,
@@ -130,7 +140,7 @@ class PipelineConfig:
                 choose("working_directory", "WORKING_DIRECTORY", str(Path.cwd() / "work"))
             ),
             device=choose("device", "DEVICE", "auto"),
-            asr_backend=choose("asr_backend", "ASR_BACKEND", "parakeet"),
+            asr_backend=asr_backend,
             asr_model=(
                 str(overrides["asr_model"])
                 if overrides.get("asr_model") is not None
@@ -138,8 +148,10 @@ class PipelineConfig:
             ),
             granite_model=choose("granite_model", "GRANITE_MODEL", DEFAULT_GRANITE_MODEL),
             pyannote_model=choose("pyannote_model", "PYANNOTE_MODEL", DEFAULT_PYANNOTE_MODEL),
-            chunk_duration=choose_float("chunk_duration", "CHUNK_DURATION", 180.0),
-            chunk_overlap=choose_float("chunk_overlap", "CHUNK_OVERLAP", 15.0),
+            chunk_duration=choose_float(
+                "chunk_duration", "CHUNK_DURATION", default_chunk_duration
+            ),
+            chunk_overlap=choose_float("chunk_overlap", "CHUNK_OVERLAP", default_chunk_overlap),
             num_speakers=choose_int("num_speakers", "NUM_SPEAKERS"),
             min_speakers=choose_int("min_speakers", "MIN_SPEAKERS"),
             max_speakers=choose_int("max_speakers", "MAX_SPEAKERS"),

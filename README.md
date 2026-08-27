@@ -93,7 +93,7 @@ python -m meeting_transcriber transcribe INPUT --output OUTPUT [options]
 meeting-transcriber transcribe INPUT --output OUTPUT [options]
 ```
 
-Options include `--asr parakeet|whisper|granite`, `--asr-model`, `--device auto|cuda|cpu`, `--granite-model` (legacy Granite alias), `--pyannote-model`, `--chunk-duration 180`, `--chunk-overlap 15`, `--num-speakers`, `--min-speakers`, `--max-speakers`, `--working-directory`, `--keep-intermediate`, and `--log-level`.
+Options include `--asr parakeet|whisper|granite`, `--asr-model`, `--device auto|cuda|cpu`, `--granite-model` (legacy Granite alias), `--pyannote-model`, `--chunk-duration`, `--chunk-overlap`, `--num-speakers`, `--min-speakers`, `--max-speakers`, `--working-directory`, `--keep-intermediate`, and `--log-level`. Parakeet and Whisper default to 180-second chunks with 15-second overlap; Granite defaults to 90-second chunks with 10-second overlap.
 
 Local runs use `./work` by default. The container sets `WORKING_DIRECTORY=/work`; supply `--working-directory` when using another mounted work volume.
 

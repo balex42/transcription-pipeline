@@ -53,8 +53,16 @@ def _add_runtime_options(parser: argparse.ArgumentParser, include_asr: bool) -> 
         parser.add_argument("--asr-model", help="Hugging Face model ID or local model directory")
     parser.add_argument("--granite-model", help="deprecated Granite-only model alias")
     parser.add_argument("--pyannote-model")
-    parser.add_argument("--chunk-duration", type=float)
-    parser.add_argument("--chunk-overlap", type=float)
+    parser.add_argument(
+        "--chunk-duration",
+        type=float,
+        help="seconds per chunk (Granite default: 90; other backends: 180)",
+    )
+    parser.add_argument(
+        "--chunk-overlap",
+        type=float,
+        help="seconds of overlap (Granite default: 10; other backends: 15)",
+    )
     parser.add_argument("--num-speakers", type=int)
     parser.add_argument("--min-speakers", type=int)
     parser.add_argument("--max-speakers", type=int)
