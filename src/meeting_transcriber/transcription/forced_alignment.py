@@ -118,6 +118,9 @@ class ForcedAlignmentTranscriber:
     ) -> dict[int, list[ASRWord]]:
         load_started = time.monotonic()
         try:
+            reset_metrics = getattr(self._aligner, "reset_alignment_metrics", None)
+            if callable(reset_metrics):
+                reset_metrics()
             self._aligner.load()
             self.backend_metrics["forced_aligner_load_seconds"] = time.monotonic() - load_started
             alignment_started = time.monotonic()
@@ -127,6 +130,11 @@ class ForcedAlignmentTranscriber:
                     recognized_segment.segment, recognized_segment.text
                 )
             self.backend_metrics["forced_alignment_seconds"] = time.monotonic() - alignment_started
+            alignment_metrics = getattr(self._aligner, "alignment_metrics", {})
+            if isinstance(alignment_metrics, dict):
+                for name, value in alignment_metrics.items():
+                    if isinstance(name, str) and isinstance(value, int | float):
+                        self.backend_metrics[name] = float(value)
             return words_by_segment
         finally:
             release_started = time.monotonic()

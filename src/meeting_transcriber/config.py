@@ -11,6 +11,7 @@ DEFAULT_PARAKEET_MODEL = "nvidia/parakeet-tdt-0.6b-v3"
 DEFAULT_QWEN_ALIGNER_MODEL = "Qwen/Qwen3-ForcedAligner-0.6B-hf"
 DEFAULT_QWEN_MODEL = "Qwen/Qwen3-ASR-1.7B-hf"
 DEFAULT_NEMOTRON_MODEL = "nvidia/nemotron-3.5-asr-streaming-0.6b"
+DEFAULT_NEMOTRON_NUM_LOOKAHEAD_TOKENS = 13
 DEFAULT_PYANNOTE_MODEL = "pyannote/speaker-diarization-community-1"
 ASR_BACKENDS = ("parakeet", "qwen", "nemotron")
 QWEN_MAX_ALIGNMENT_DURATION_SECONDS = 300.0
@@ -60,7 +61,7 @@ class PipelineConfig:
     parakeet_segment_overlap: float = DEFAULT_PARAKEET_SEGMENT_OVERLAP
     qwen_segment_duration: float = DEFAULT_QWEN_SEGMENT_DURATION
     qwen_segment_overlap: float = DEFAULT_QWEN_SEGMENT_OVERLAP
-    nemotron_num_lookahead_tokens: int | None = None
+    nemotron_num_lookahead_tokens: int | None = DEFAULT_NEMOTRON_NUM_LOOKAHEAD_TOKENS
     language: str = "de-DE"
     num_speakers: int | None = None
     min_speakers: int | None = None
@@ -140,6 +141,9 @@ class PipelineConfig:
             return value
 
         asr_backend = choose("asr_backend", "ASR_BACKEND", "parakeet")
+        nemotron_lookahead = choose_int(
+            "nemotron_num_lookahead_tokens", "NEMOTRON_NUM_LOOKAHEAD_TOKENS"
+        )
         return cls(
             input_path=input_path,
             output_directory=output_directory,
@@ -177,8 +181,10 @@ class PipelineConfig:
                 "QWEN_SEGMENT_OVERLAP",
                 DEFAULT_QWEN_SEGMENT_OVERLAP,
             ),
-            nemotron_num_lookahead_tokens=choose_int(
-                "nemotron_num_lookahead_tokens", "NEMOTRON_NUM_LOOKAHEAD_TOKENS"
+            nemotron_num_lookahead_tokens=(
+                DEFAULT_NEMOTRON_NUM_LOOKAHEAD_TOKENS
+                if nemotron_lookahead is None
+                else nemotron_lookahead
             ),
             language=choose("language", "LANGUAGE", "de-DE"),
             num_speakers=choose_int("num_speakers", "NUM_SPEAKERS"),

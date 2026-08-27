@@ -4,6 +4,7 @@ import pytest
 
 from meeting_transcriber.config import (
     DEFAULT_NEMOTRON_MODEL,
+    DEFAULT_NEMOTRON_NUM_LOOKAHEAD_TOKENS,
     DEFAULT_PARAKEET_MODEL,
     DEFAULT_QWEN_ALIGNER_MODEL,
     DEFAULT_QWEN_MODEL,
@@ -23,6 +24,14 @@ def test_default_backend_is_parakeet() -> None:
 
 def test_environment_backend_and_default_model_mapping() -> None:
     assert make({}, {"ASR_BACKEND": "nemotron"}).resolved_asr_model == DEFAULT_NEMOTRON_MODEL
+
+
+def test_nemotron_uses_highest_accuracy_lookahead_by_default() -> None:
+    assert make({}).nemotron_num_lookahead_tokens == DEFAULT_NEMOTRON_NUM_LOOKAHEAD_TOKENS
+
+
+def test_nemotron_lookahead_allows_a_low_latency_override() -> None:
+    assert make({}, {"NEMOTRON_NUM_LOOKAHEAD_TOKENS": "0"}).nemotron_num_lookahead_tokens == 0
 
 
 def test_cli_backend_and_model_override_environment() -> None:

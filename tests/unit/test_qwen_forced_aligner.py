@@ -79,6 +79,42 @@ def test_qwen_reconciler_converts_segment_boundaries_to_meeting_offsets() -> Non
     assert [(word.start, word.end) for word in merged] == [(12.2, 12.6)]
 
 
+def test_normalizer_interpolates_collapsed_word_timestamp_runs() -> None:
+    words = normalize_qwen_alignment(
+        [
+            {"text": "eins", "start_time": 0.0, "end_time": 0.4},
+            {"text": "zwei", "start_time": 0.5, "end_time": 0.5},
+            {"text": "drei", "start_time": 0.5, "end_time": 0.5},
+            {"text": "vier", "start_time": 0.6, "end_time": 0.9},
+        ],
+        segment(),
+    )
+
+    assert [(word.text, word.start, word.end) for word in words] == [
+        ("eins", 0.0, 0.4),
+        ("zwei", 0.4, 0.5),
+        ("drei", 0.5, 0.6),
+        ("vier", 0.6, 0.9),
+    ]
+
+
+def test_normalizer_repairs_collapsed_word_without_anchor_space() -> None:
+    words = normalize_qwen_alignment(
+        [
+            {"text": "eins", "start_time": 0.0, "end_time": 0.5},
+            {"text": "zwei", "start_time": 0.5, "end_time": 0.5},
+            {"text": "drei", "start_time": 0.5, "end_time": 0.8},
+        ],
+        segment(),
+    )
+
+    assert [(word.text, word.start, word.end) for word in words] == [
+        ("eins", 0.0, 0.5),
+        ("zwei", 0.46, 0.54),
+        ("drei", 0.5, 0.8),
+    ]
+
+
 @pytest.mark.parametrize(
     "entries",
     [

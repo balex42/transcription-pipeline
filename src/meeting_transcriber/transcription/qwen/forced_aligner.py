@@ -11,6 +11,7 @@ from meeting_transcriber.models import ASRWord, AudioSegment
 from meeting_transcriber.runtime.device import inference_dtype
 
 _TIMESTAMP_TOLERANCE_SECONDS = 0.25
+_TIMESTAMP_GRID_SECONDS = 0.08
 
 
 class QwenForcedAligner:
@@ -24,6 +25,7 @@ class QwenForcedAligner:
         _, self.dtype_name = inference_dtype(device)
         self._model: Any | None = None
         self._processor: Any | None = None
+        self.alignment_metrics: dict[str, float] = {}
 
     def load(self) -> None:
         """Load the native Qwen forced aligner without remote code."""
@@ -75,7 +77,10 @@ class QwenForcedAligner:
             )
             if not isinstance(decoded, list) or len(decoded) != 1:
                 raise QwenAlignmentError("Qwen forced aligner returned an unexpected batch shape")
-            words = normalize_qwen_alignment(decoded[0], segment)
+            words, repaired_count = _normalize_qwen_alignment(decoded[0], segment)
+            self.alignment_metrics["interpolated_word_timestamps"] = (
+                self.alignment_metrics.get("interpolated_word_timestamps", 0.0) + repaired_count
+            )
             _validate_transcript_coverage(transcript, words)
             return words
         except QwenAlignmentError as error:
@@ -96,9 +101,19 @@ class QwenForcedAligner:
         self._model = None
         self._processor = None
 
+    def reset_alignment_metrics(self) -> None:
+        """Clear per-meeting alignment metrics before a new alignment pass."""
+        self.alignment_metrics = {}
+
 
 def normalize_qwen_alignment(entries: object, segment: AudioSegment) -> list[ASRWord]:
     """Validate native Qwen word boundaries and normalize them to ``ASRWord``."""
+    words, _ = _normalize_qwen_alignment(entries, segment)
+    return words
+
+
+def _normalize_qwen_alignment(entries: object, segment: AudioSegment) -> tuple[list[ASRWord], int]:
+    """Normalize boundaries and repair timestamp-grid collisions."""
     if not isinstance(entries, list) or not entries:
         raise QwenAlignmentError(
             f"Qwen forced aligner returned no words for segment {segment.index}"
@@ -134,7 +149,54 @@ def normalize_qwen_alignment(entries: object, segment: AudioSegment) -> list[ASR
             )
         )
         previous_start, previous_end = start, end
-    return words
+    return _repair_zero_duration_words(words, duration)
+
+
+def _repair_zero_duration_words(words: list[ASRWord], duration: float) -> tuple[list[ASRWord], int]:
+    """Distribute words collapsed onto one Qwen timestamp-grid position.
+
+    Qwen's 80 ms timestamp grid can assign identical start/end positions to
+    adjacent short words. Prefer the span bounded by neighbouring non-collapsed
+    words; only synthesize one grid-width span when those anchors coincide.
+    """
+    repaired = list(words)
+    repaired_count = 0
+    index = 0
+    while index < len(repaired):
+        word = repaired[index]
+        if word.start is None or word.end != word.start:
+            index += 1
+            continue
+        run_end = index + 1
+        while run_end < len(repaired):
+            candidate = repaired[run_end]
+            if candidate.start is None or candidate.end != candidate.start:
+                break
+            run_end += 1
+        count = run_end - index
+        left = repaired[index - 1].end if index else 0.0
+        right = repaired[run_end].start if run_end < len(repaired) else duration
+        assert left is not None and right is not None
+        if right - left >= _TIMESTAMP_GRID_SECONDS:
+            start, end = left, right
+        else:
+            center = repaired[index].start
+            assert center is not None
+            span = min(_TIMESTAMP_GRID_SECONDS, duration)
+            start = min(max(center - span / 2, 0.0), duration - span)
+            end = start + span
+        interval = (end - start) / count
+        for offset in range(count):
+            original = repaired[index + offset]
+            repaired[index + offset] = ASRWord(
+                text=original.text,
+                start=start + interval * offset,
+                end=start + interval * (offset + 1),
+                confidence=original.confidence,
+            )
+        repaired_count += count
+        index = run_end
+    return repaired, repaired_count
 
 
 def _validate_transcript_coverage(transcript: str, words: list[ASRWord]) -> None:

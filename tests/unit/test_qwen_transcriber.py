@@ -29,6 +29,7 @@ class Recognizer:
 class Aligner:
     model_reference = "/models/aligner"
     max_segment_duration = 300.0
+    alignment_metrics = {"interpolated_word_timestamps": 2.0}
 
     def __init__(self, events: list[str]) -> None:
         self.events = events
@@ -72,3 +73,4 @@ def test_qwen_runs_recognition_then_alignment_with_one_load_per_model(tmp_path: 
     ]
     assert [word.text for word in words] == ["eins"]
     assert transcriber.backend_models == {"forced_aligner_model": "/models/aligner"}
+    assert transcriber.backend_metrics["interpolated_word_timestamps"] == 2.0
