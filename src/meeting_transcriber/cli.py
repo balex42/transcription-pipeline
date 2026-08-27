@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -11,6 +12,7 @@ from meeting_transcriber.comparison import ASRComparisonRunner
 from meeting_transcriber.config import (
     ASR_BACKENDS,
     DEFAULT_PYANNOTE_MODEL,
+    DEFAULT_QWEN_ALIGNER_MODEL,
     PipelineConfig,
 )
 from meeting_transcriber.errors import MeetingTranscriberError
@@ -29,14 +31,15 @@ def build_parser() -> argparse.ArgumentParser:
     _add_runtime_options(compare, include_asr=False)
     compare.add_argument(
         "--models",
-        default="parakeet,whisper,granite",
-        help="comma-separated ASR backends: parakeet, whisper, granite",
+        default="parakeet,whisper,qwen",
+        help="comma-separated ASR backends: parakeet, whisper, qwen",
     )
     prefetch = commands.add_parser(
         "prefetch-models", help="download models into configured Hugging Face cache"
     )
     prefetch.add_argument("--asr", choices=ASR_BACKENDS, default="parakeet")
     prefetch.add_argument("--asr-model")
+    prefetch.add_argument("--qwen-aligner-model")
     prefetch.add_argument("--pyannote-model", default=DEFAULT_PYANNOTE_MODEL)
     return parser
 
@@ -48,20 +51,20 @@ def _add_runtime_options(parser: argparse.ArgumentParser, include_asr: bool) -> 
     parser.add_argument("--device", choices=["auto", "cuda", "cpu"])
     if include_asr:
         parser.add_argument(
-            "--asr", choices=ASR_BACKENDS, help="ASR backend: parakeet, whisper, granite"
+            "--asr", choices=ASR_BACKENDS, help="ASR backend: parakeet, whisper, qwen"
         )
         parser.add_argument("--asr-model", help="Hugging Face model ID or local model directory")
-    parser.add_argument("--granite-model", help="deprecated Granite-only model alias")
+    parser.add_argument("--qwen-aligner-model", help="Qwen forced-aligner model ID or local path")
     parser.add_argument("--pyannote-model")
     parser.add_argument(
         "--chunk-duration",
         type=float,
-        help="seconds per chunk (Granite default: 90; other backends: 180)",
+        help="seconds per chunk (Qwen default: 240; other backends: 180)",
     )
     parser.add_argument(
         "--chunk-overlap",
         type=float,
-        help="seconds of overlap (Granite default: 10; other backends: 15)",
+        help="seconds of overlap (default: 15)",
     )
     parser.add_argument("--num-speakers", type=int)
     parser.add_argument("--min-speakers", type=int)
@@ -85,8 +88,16 @@ def main(argv: list[str] | None = None) -> int:
                 working_directory=Path("/work"),
                 asr_backend=args.asr,
                 asr_model=args.asr_model,
+                qwen_aligner_model=(
+                    args.qwen_aligner_model
+                    or os.environ.get("QWEN_ALIGNER_MODEL", DEFAULT_QWEN_ALIGNER_MODEL)
+                ),
             )
-            _prefetch(prefetch_config.resolved_asr_model, args.pyannote_model)
+            _prefetch(
+                prefetch_config.resolved_asr_model,
+                args.pyannote_model,
+                prefetch_config.qwen_aligner_model if args.asr == "qwen" else None,
+            )
             return 0
         config = _config_from_args(args)
         logging.getLogger(__name__).setLevel(config.log_level)
@@ -110,7 +121,7 @@ def _config_from_args(args: argparse.Namespace) -> PipelineConfig:
         "device": args.device,
         "asr_backend": getattr(args, "asr", None),
         "asr_model": getattr(args, "asr_model", None),
-        "granite_model": args.granite_model,
+        "qwen_aligner_model": args.qwen_aligner_model,
         "pyannote_model": args.pyannote_model,
         "chunk_duration": args.chunk_duration,
         "chunk_overlap": args.chunk_overlap,
@@ -123,7 +134,7 @@ def _config_from_args(args: argparse.Namespace) -> PipelineConfig:
     return PipelineConfig.from_environment(args.input, args.output, overrides)
 
 
-def _prefetch(asr_model: str, pyannote_model: str) -> None:
+def _prefetch(asr_model: str, pyannote_model: str, qwen_aligner_model: str | None = None) -> None:
     """Download selected ASR and pyannote model repositories for offline use.
 
     Pyannote access conditions must already have been accepted and HF_TOKEN must
@@ -133,6 +144,9 @@ def _prefetch(asr_model: str, pyannote_model: str) -> None:
 
     logging.getLogger(__name__).info("prefetching ASR model")
     snapshot_download(asr_model)
+    if qwen_aligner_model:
+        logging.getLogger(__name__).info("prefetching Qwen forced aligner")
+        snapshot_download(qwen_aligner_model)
     logging.getLogger(__name__).info("prefetching pyannote model")
     snapshot_download(pyannote_model, token=True)
 

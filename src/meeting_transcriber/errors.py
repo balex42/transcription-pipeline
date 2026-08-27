@@ -9,10 +9,6 @@ class AudioProcessingError(MeetingTranscriberError):
     """Raised when ffmpeg or WAV processing fails."""
 
 
-class TimestampParseError(MeetingTranscriberError):
-    """Raised when Granite timestamp output is structurally invalid."""
-
-
 class ModelLoadError(MeetingTranscriberError):
     """Raised when a local or Hugging Face model cannot be loaded."""
 
@@ -23,3 +19,11 @@ class UnsupportedASRBackendError(MeetingTranscriberError):
 
 class ASROutputError(MeetingTranscriberError):
     """Raised when a backend cannot normalize its timestamp output."""
+
+
+class QwenRecognitionError(MeetingTranscriberError):
+    """Raised when Qwen ASR cannot produce a chunk transcript."""
+
+
+class QwenAlignmentError(MeetingTranscriberError):
+    """Raised when Qwen forced alignment cannot produce valid word timing."""

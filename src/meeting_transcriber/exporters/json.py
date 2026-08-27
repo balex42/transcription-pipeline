@@ -14,20 +14,20 @@ class JsonTranscriptExporter:
     def export(self, transcript: Transcript, destination: Path) -> None:
         """Write canonical JSON. Word starts are explicitly marked inferred."""
         destination.parent.mkdir(parents=True, exist_ok=True)
+        metadata = {
+            "source": transcript.metadata.source,
+            "language": transcript.language,
+            "duration_seconds": transcript.metadata.duration_seconds,
+            "sample_rate": transcript.metadata.sample_rate,
+            "asr_backend": transcript.asr_backend,
+            "asr_model": transcript.asr_model,
+            "diarization_model": transcript.diarization_model,
+        }
+        if any(word.start_is_inferred for word in transcript.words):
+            metadata["word_start_note"] = "start was inferred for speaker alignment."
         payload = {
             "version": transcript.version,
-            "metadata": {
-                "source": transcript.metadata.source,
-                "language": transcript.language,
-                "duration_seconds": transcript.metadata.duration_seconds,
-                "sample_rate": transcript.metadata.sample_rate,
-                "asr_backend": transcript.asr_backend,
-                "asr_model": transcript.asr_model,
-                "diarization_model": transcript.diarization_model,
-                "word_start_note": (
-                    "start is inferred for alignment; end is Granite-generated word-end timing."
-                ),
-            },
+            "metadata": metadata,
             "speakers": transcript.speakers,
             "turns": [
                 {"speaker": turn.speaker, "start": turn.start, "end": turn.end, "text": turn.text}

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 from meeting_transcriber.models import ASRWord, AudioChunk
 
@@ -33,3 +33,11 @@ class Transcriber(Protocol):
 
     def load(self) -> None:
         """Load the model so callers can measure model initialization separately."""
+
+
+@runtime_checkable
+class BatchTranscriber(Protocol):
+    """Optional ASR interface for backends with a meeting-level lifecycle."""
+
+    def transcribe_chunks(self, chunks: list[AudioChunk]) -> dict[int, list[ASRWord]]:
+        """Return chunk-relative words after processing all supplied chunks."""

@@ -1,8 +1,11 @@
 from pathlib import Path
 
+import pytest
+
 from meeting_transcriber.config import (
-    DEFAULT_GRANITE_MODEL,
     DEFAULT_PARAKEET_MODEL,
+    DEFAULT_QWEN_ALIGNER_MODEL,
+    DEFAULT_QWEN_MODEL,
     DEFAULT_WHISPER_MODEL,
     PipelineConfig,
 )
@@ -30,28 +33,48 @@ def test_cli_backend_and_model_override_environment() -> None:
     assert (config.asr_backend, config.resolved_asr_model) == ("whisper", "/models/whisper")
 
 
-def test_granite_model_environment_remains_compatible() -> None:
-    config = make({"asr_backend": "granite"}, {"GRANITE_MODEL": "/models/granite"})
-    assert config.resolved_asr_model == "/models/granite"
-    assert DEFAULT_GRANITE_MODEL
+def test_qwen_uses_asr_and_forced_aligner_defaults() -> None:
+    config = make({"asr_backend": "qwen"})
+    assert config.resolved_asr_model == DEFAULT_QWEN_MODEL
+    assert config.qwen_aligner_model == DEFAULT_QWEN_ALIGNER_MODEL
+    assert (config.chunk_duration, config.chunk_overlap) == (240.0, 15.0)
 
 
-def test_granite_uses_shorter_default_chunks() -> None:
-    config = make({"asr_backend": "granite"})
-    assert (config.chunk_duration, config.chunk_overlap) == (90.0, 10.0)
-
-
-def test_environment_chunk_settings_override_granite_defaults() -> None:
+def test_environment_chunk_settings_override_qwen_defaults() -> None:
     config = make(
-        {"asr_backend": "granite"},
+        {"asr_backend": "qwen"},
         {"CHUNK_DURATION": "120", "CHUNK_OVERLAP": "20"},
     )
     assert (config.chunk_duration, config.chunk_overlap) == (120.0, 20.0)
 
 
-def test_explicit_chunk_settings_override_granite_defaults() -> None:
+def test_explicit_chunk_settings_override_qwen_defaults() -> None:
     config = make(
-        {"asr_backend": "granite", "chunk_duration": 120, "chunk_overlap": 20},
-        {"CHUNK_DURATION": "60", "CHUNK_OVERLAP": "5"},
+        {
+            "asr_backend": "qwen",
+            "chunk_duration": 120,
+            "chunk_overlap": 20,
+            "qwen_aligner_model": "/models/aligner",
+        },
+        {
+            "ASR_MODEL": "/models/qwen",
+            "CHUNK_DURATION": "60",
+            "CHUNK_OVERLAP": "5",
+            "QWEN_ALIGNER_MODEL": "/models/environment-aligner",
+        },
     )
     assert (config.chunk_duration, config.chunk_overlap) == (120.0, 20.0)
+    assert (config.resolved_asr_model, config.qwen_aligner_model) == (
+        "/models/qwen",
+        "/models/aligner",
+    )
+
+
+def test_qwen_rejects_chunks_above_forced_alignment_limit() -> None:
+    with pytest.raises(ValueError, match="forced-aligner limit"):
+        make({"asr_backend": "qwen", "chunk_duration": 301})
+
+
+def test_obsolete_granite_configuration_fails_clearly() -> None:
+    with pytest.raises(ValueError, match="GRANITE_MODEL is no longer supported"):
+        make({}, {"GRANITE_MODEL": "/models/granite"})

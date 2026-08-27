@@ -3,15 +3,15 @@ from pathlib import Path
 import pytest
 
 from meeting_transcriber.config import (
-    DEFAULT_GRANITE_MODEL,
     DEFAULT_PARAKEET_MODEL,
+    DEFAULT_QWEN_MODEL,
     DEFAULT_WHISPER_MODEL,
     PipelineConfig,
 )
 from meeting_transcriber.errors import UnsupportedASRBackendError
 from meeting_transcriber.transcription.factory import create_transcriber
-from meeting_transcriber.transcription.granite import GraniteTranscriber
 from meeting_transcriber.transcription.parakeet import ParakeetTranscriber
+from meeting_transcriber.transcription.qwen import QwenTranscriber
 from meeting_transcriber.transcription.whisper import WhisperTranscriber
 
 
@@ -26,7 +26,7 @@ def config(backend: str, model: str | None = None) -> PipelineConfig:
     [
         ("parakeet", ParakeetTranscriber, DEFAULT_PARAKEET_MODEL),
         ("whisper", WhisperTranscriber, DEFAULT_WHISPER_MODEL),
-        ("granite", GraniteTranscriber, DEFAULT_GRANITE_MODEL),
+        ("qwen", QwenTranscriber, DEFAULT_QWEN_MODEL),
     ],
 )
 def test_factory_selects_adapter_and_default_model(
@@ -35,6 +35,8 @@ def test_factory_selects_adapter_and_default_model(
     transcriber = create_transcriber(config(backend), "cpu")
     assert isinstance(transcriber, adapter)
     assert transcriber.model_reference == model
+    if backend == "qwen":
+        assert config(backend).resolved_chunk_duration == 240.0
 
 
 def test_explicit_model_overrides_backend_default() -> None:
@@ -42,9 +44,10 @@ def test_explicit_model_overrides_backend_default() -> None:
     assert transcriber.model_reference == "/models/whisper"
 
 
-def test_invalid_backend_fails_clearly() -> None:
+@pytest.mark.parametrize("backend", ["invalid", "granite"])
+def test_invalid_backend_fails_clearly(backend: str) -> None:
     invalid = object.__new__(PipelineConfig)
-    object.__setattr__(invalid, "asr_backend", "invalid")
+    object.__setattr__(invalid, "asr_backend", backend)
     object.__setattr__(invalid, "asr_model", None)
-    with pytest.raises(UnsupportedASRBackendError, match="invalid"):
+    with pytest.raises(UnsupportedASRBackendError, match=backend):
         create_transcriber(invalid, "cpu")

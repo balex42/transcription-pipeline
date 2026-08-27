@@ -67,11 +67,15 @@ class ParakeetTranscriber(Transcriber):
             dtype, _ = inference_dtype(self.device)
             processor = cast(
                 _ParakeetProcessor,
-                AutoProcessor.from_pretrained(self.model_reference),  # type: ignore[no-untyped-call]
+                AutoProcessor.from_pretrained(  # type: ignore[no-untyped-call]
+                    self.model_reference, trust_remote_code=False
+                ),
             )
             model = cast(
                 _ParakeetModel,
-                AutoModelForTDT.from_pretrained(self.model_reference, dtype=dtype),
+                AutoModelForTDT.from_pretrained(
+                    self.model_reference, dtype=dtype, trust_remote_code=False
+                ),
             )
             model.to(self.device)
             model.eval()

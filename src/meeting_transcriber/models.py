@@ -1,8 +1,7 @@
 """Typed data contracts shared by pipeline stages.
 
 All public timestamps are floating-point seconds from the start of the source
-recording. Granite exposes word *end* boundaries only; inferred starts are
-marked explicitly rather than presented as model output.
+recording.
 """
 
 from __future__ import annotations
@@ -47,34 +46,24 @@ class DiarizationSegment:
 
 @dataclass(frozen=True)
 class ASRWord:
-    """Backend-neutral lexical output with a word-end timestamp.
-
-    ``start`` is native for adapters that provide it and absent for Granite.
-    ``previous_boundary`` can be a prior Granite word end or silence boundary
-    and is used solely to derive an approximate alignment interval.
-    """
+    """Backend-neutral lexical output with optional native word boundaries."""
 
     text: str
     end: float
     start: float | None = None
     chunk_id: int | None = None
-    previous_boundary: float | None = None
     confidence: float | None = None
 
 
 @dataclass(frozen=True)
 class AttributedWord:
-    """An ASR word assigned to a diarization speaker.
-
-    ``start`` is approximate when ``start_is_inferred`` is true. ``end`` remains
-    Granite's generated word-end boundary.
-    """
+    """An ASR word assigned to a diarization speaker."""
 
     text: str
     start: float
     end: float
     speaker: str
-    start_is_inferred: bool = True
+    start_is_inferred: bool = False
     chunk_id: int | None = None
 
 
@@ -130,3 +119,7 @@ class ASRRunMetadata:
     real_time_factor: float
     peak_cuda_memory_allocated_bytes: int | None
     peak_cuda_memory_reserved_bytes: int | None
+    transformers_version: str = "unknown"
+    torch_version: str = "unknown"
+    backend_metrics: dict[str, float] = field(default_factory=dict)
+    backend_models: dict[str, str] = field(default_factory=dict)

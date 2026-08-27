@@ -8,7 +8,7 @@ from collections.abc import Callable
 from dataclasses import asdict, replace
 from pathlib import Path
 
-from meeting_transcriber.config import ASR_BACKENDS, PipelineConfig
+from meeting_transcriber.config import ASR_BACKENDS, PipelineConfig, validate_backend_chunk_duration
 from meeting_transcriber.errors import UnsupportedASRBackendError
 from meeting_transcriber.pipeline import MeetingTranscriptionPipeline
 from meeting_transcriber.runtime.device import resolve_device
@@ -36,6 +36,8 @@ class ASRComparisonRunner:
             raise UnsupportedASRBackendError(f"unsupported ASR backend(s): {', '.join(invalid)}")
         if not backends:
             raise ValueError("at least one ASR backend is required")
+        for backend in backends:
+            validate_backend_chunk_duration(backend, self.pipeline.config.resolved_chunk_duration)
         output_directory.mkdir(parents=True, exist_ok=True)
         prepared = self.pipeline.prepare()
         try:
@@ -57,6 +59,10 @@ class ASRComparisonRunner:
                 self.pipeline.write_records(
                     output_directory / backend / "asr_words.json", result.asr_words
                 )
+                if backend == "qwen":
+                    (output_directory / backend / "metadata.json").write_text(
+                        json.dumps(asdict(metrics), indent=2) + "\n", encoding="utf-8"
+                    )
                 runs.append(asdict(metrics))
             metadata = {
                 "source": prepared.metadata.source,

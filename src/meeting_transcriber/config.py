@@ -7,29 +7,32 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-DEFAULT_GRANITE_MODEL = "ibm-granite/granite-speech-4.1-2b-plus"
 DEFAULT_PARAKEET_MODEL = "nvidia/parakeet-tdt-0.6b-v3"
+DEFAULT_QWEN_ALIGNER_MODEL = "Qwen/Qwen3-ForcedAligner-0.6B-hf"
+DEFAULT_QWEN_MODEL = "Qwen/Qwen3-ASR-1.7B-hf"
 DEFAULT_WHISPER_MODEL = "openai/whisper-large-v3"
 DEFAULT_PYANNOTE_MODEL = "pyannote/speaker-diarization-community-1"
-ASR_BACKENDS = ("parakeet", "whisper", "granite")
+ASR_BACKENDS = ("parakeet", "whisper", "qwen")
+QWEN_MAX_ALIGNMENT_DURATION_SECONDS = 300.0
 DEFAULT_CHUNK_SETTINGS = {
     "parakeet": (180.0, 15.0),
     "whisper": (180.0, 15.0),
-    "granite": (90.0, 10.0),
+    "qwen": (240.0, 15.0),
 }
 DEFAULT_ASR_MODELS = {
     "parakeet": DEFAULT_PARAKEET_MODEL,
     "whisper": DEFAULT_WHISPER_MODEL,
-    "granite": DEFAULT_GRANITE_MODEL,
+    "qwen": DEFAULT_QWEN_MODEL,
 }
-DEFAULT_TIMESTAMP_PROMPT = (
-    "<|audio|> Timestamps: Transcribe the speech. After each word, add a timestamp tag "
-    "showing the end time in centiseconds, e.g. hello [T:45] world [T:82]"
-)
-DEFAULT_SYSTEM_PROMPT = (
-    "Knowledge Cutoff Date: April 2024.\nToday's Date: December 19, 2024.\n"
-    "You are Granite, developed by IBM. You are a helpful AI assistant"
-)
+
+
+def validate_backend_chunk_duration(backend: str, duration: float) -> None:
+    """Reject backend/model combinations that exceed a known audio limit."""
+    if backend == "qwen" and duration > QWEN_MAX_ALIGNMENT_DURATION_SECONDS:
+        raise ValueError(
+            "Qwen chunk_duration cannot exceed "
+            f"{QWEN_MAX_ALIGNMENT_DURATION_SECONDS:g} seconds, the forced-aligner limit"
+        )
 
 
 def _env_int(env: Mapping[str, str], name: str) -> int | None:
@@ -52,19 +55,15 @@ class PipelineConfig:
     device: str = "auto"
     asr_backend: str = "parakeet"
     asr_model: str | None = None
-    # Retained as a Granite-only compatibility alias for existing deployments.
-    granite_model: str = DEFAULT_GRANITE_MODEL
+    qwen_aligner_model: str = DEFAULT_QWEN_ALIGNER_MODEL
     pyannote_model: str = DEFAULT_PYANNOTE_MODEL
-    chunk_duration: float = 180.0
-    chunk_overlap: float = 15.0
+    chunk_duration: float | None = None
+    chunk_overlap: float | None = None
     num_speakers: int | None = None
     min_speakers: int | None = None
     max_speakers: int | None = None
     keep_intermediate_files: bool = False
     log_level: str = "INFO"
-    granite_timestamp_prompt: str = DEFAULT_TIMESTAMP_PROMPT
-    granite_system_prompt: str = DEFAULT_SYSTEM_PROMPT
-    max_new_tokens: int = 10_000
     alignment_tolerance: float = 0.25
     turn_gap_seconds: float = 1.0
 
@@ -73,8 +72,14 @@ class PipelineConfig:
             raise ValueError("device must be auto, cuda, or cpu")
         if self.asr_backend not in ASR_BACKENDS:
             raise ValueError(f"asr_backend must be one of: {', '.join(ASR_BACKENDS)}")
-        if self.chunk_duration <= 0 or not 0 <= self.chunk_overlap < self.chunk_duration:
+        default_duration, default_overlap = DEFAULT_CHUNK_SETTINGS[self.asr_backend]
+        duration = default_duration if self.chunk_duration is None else self.chunk_duration
+        overlap = default_overlap if self.chunk_overlap is None else self.chunk_overlap
+        object.__setattr__(self, "chunk_duration", duration)
+        object.__setattr__(self, "chunk_overlap", overlap)
+        if duration <= 0 or not 0 <= overlap < duration:
             raise ValueError("chunk_overlap must be non-negative and shorter than chunk_duration")
+        validate_backend_chunk_duration(self.asr_backend, duration)
         if self.num_speakers is not None and self.num_speakers < 1:
             raise ValueError("num_speakers must be positive")
         if self.min_speakers is not None and self.min_speakers < 1:
@@ -93,9 +98,19 @@ class PipelineConfig:
         """Return an explicit ASR model or the selected backend's default model."""
         if self.asr_model:
             return self.asr_model
-        if self.asr_backend == "granite":
-            return self.granite_model
         return DEFAULT_ASR_MODELS[self.asr_backend]
+
+    @property
+    def resolved_chunk_duration(self) -> float:
+        """Return the validated backend-specific chunk duration."""
+        assert self.chunk_duration is not None
+        return self.chunk_duration
+
+    @property
+    def resolved_chunk_overlap(self) -> float:
+        """Return the validated backend-specific chunk overlap."""
+        assert self.chunk_overlap is not None
+        return self.chunk_overlap
 
     @classmethod
     def from_environment(
@@ -107,6 +122,8 @@ class PipelineConfig:
     ) -> PipelineConfig:
         """Create configuration using explicit values before environment values."""
         values = os.environ if env is None else env
+        if overrides.get("granite_model") is not None or "GRANITE_MODEL" in values:
+            raise ValueError("GRANITE_MODEL is no longer supported; use ASR_BACKEND=qwen instead")
 
         def choose(name: str, env_name: str, default: str) -> str:
             value = overrides.get(name)
@@ -146,7 +163,9 @@ class PipelineConfig:
                 if overrides.get("asr_model") is not None
                 else values.get("ASR_MODEL")
             ),
-            granite_model=choose("granite_model", "GRANITE_MODEL", DEFAULT_GRANITE_MODEL),
+            qwen_aligner_model=choose(
+                "qwen_aligner_model", "QWEN_ALIGNER_MODEL", DEFAULT_QWEN_ALIGNER_MODEL
+            ),
             pyannote_model=choose("pyannote_model", "PYANNOTE_MODEL", DEFAULT_PYANNOTE_MODEL),
             chunk_duration=choose_float(
                 "chunk_duration", "CHUNK_DURATION", default_chunk_duration

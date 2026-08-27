@@ -12,7 +12,7 @@ def test_one_speaker() -> None:
 
 def test_largest_overlap_wins_when_boundary_inside_word() -> None:
     result = OverlapSpeakerAligner().align(
-        [ASRWord("wechsel", 2.0, previous_boundary=1.0)],
+        [ASRWord("wechsel", 2.0, start=1.0)],
         [DiarizationSegment("SPEAKER_00", 0, 1.4), DiarizationSegment("SPEAKER_01", 1.4, 3)],
     )
     assert result[0].speaker == "SPEAKER_01"
@@ -21,10 +21,10 @@ def test_largest_overlap_wins_when_boundary_inside_word() -> None:
 def test_timestamp_tolerance_and_unknown_fallback() -> None:
     aligner = OverlapSpeakerAligner(tolerance_seconds=0.25)
     near = aligner.align(
-        [ASRWord("nah", 1.1, previous_boundary=1.1)], [DiarizationSegment("SPEAKER_00", 0, 1)]
+        [ASRWord("nah", 1.1, start=1.1)], [DiarizationSegment("SPEAKER_00", 0, 1)]
     )
     missing = aligner.align(
-        [ASRWord("fern", 5, previous_boundary=5)], [DiarizationSegment("SPEAKER_00", 0, 1)]
+        [ASRWord("fern", 5, start=5)], [DiarizationSegment("SPEAKER_00", 0, 1)]
     )
     assert near[0].speaker == "SPEAKER_00"
     assert missing[0].speaker == UNKNOWN_SPEAKER

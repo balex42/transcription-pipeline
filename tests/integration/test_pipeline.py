@@ -107,14 +107,33 @@ def test_comparison_prepares_once_and_separates_backend_outputs(tmp_path: Path) 
         return transcriber
 
     ASRComparisonRunner(pipeline, build_transcriber).run(
-        ["parakeet", "whisper"], config.output_directory
+        ["parakeet", "whisper", "qwen"], config.output_directory
     )
-    assert (preprocessor.calls, diarizer.calls, len(transcribers)) == (1, 1, 2)
+    assert (preprocessor.calls, diarizer.calls, len(transcribers)) == (1, 1, 3)
     assert (config.output_directory / "diarization.json").is_file()
     assert (config.output_directory / "metadata.json").is_file()
-    for backend in ("parakeet", "whisper"):
+    for backend in ("parakeet", "whisper", "qwen"):
         assert (config.output_directory / backend / "transcript.json").is_file()
         assert (config.output_directory / backend / "asr_words.json").is_file()
+    assert (config.output_directory / "qwen" / "metadata.json").is_file()
+
+
+def test_comparison_rejects_oversized_qwen_chunks(tmp_path: Path) -> None:
+    config = PipelineConfig(
+        tmp_path / "meeting.wav",
+        tmp_path / "comparison",
+        tmp_path / "work",
+        chunk_duration=301,
+    )
+    pipeline = MeetingTranscriptionPipeline(
+        config,
+        diarizer_factory=FakeDiarizer,
+        transcriber_factory=FakeTranscriber,
+        preprocessor=FakePreprocessor(),
+        chunker=FakeChunker(),
+    )
+    with pytest.raises(ValueError, match="forced-aligner limit"):
+        ASRComparisonRunner(pipeline).run(["qwen"], config.output_directory)
 
 
 @real_models_only
@@ -132,3 +151,5 @@ def test_real_model_pipeline(tmp_path: Path) -> None:
     )
     result = create_default_pipeline(config).run()
     assert (result.output_directory / "transcript.json").is_file()  # type: ignore[operator]
+    assert result.asr_words
+    assert all(word.start is not None and word.end >= word.start for word in result.asr_words)

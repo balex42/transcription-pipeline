@@ -64,10 +64,13 @@ class WhisperTranscriber(Transcriber):
             loaded_model = AutoModelForSpeechSeq2Seq.from_pretrained(
                 self.model_reference,
                 dtype=dtype,
+                trust_remote_code=False,
             )
             loaded_model.to(self.device)
             loaded_model.eval()
-            processor = AutoProcessor.from_pretrained(self.model_reference)  # type: ignore[no-untyped-call]
+            processor = AutoProcessor.from_pretrained(  # type: ignore[no-untyped-call]
+                self.model_reference, trust_remote_code=False
+            )
             device_index = 0 if self.device == "cuda" else -1
             asr_pipeline = cast(
                 _WhisperPipeline,

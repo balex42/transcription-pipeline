@@ -42,11 +42,6 @@ class ChunkMerger:
                     continue
                 if not is_last and absolute_end >= upper - self.boundary_tolerance:
                     continue
-                boundary = (
-                    word.previous_boundary + chunk.absolute_start
-                    if word.previous_boundary is not None
-                    else None
-                )
                 absolute_start = (
                     word.start + chunk.absolute_start if word.start is not None else None
                 )
@@ -56,7 +51,6 @@ class ChunkMerger:
                         end=absolute_end,
                         start=absolute_start,
                         chunk_id=chunk.chunk_id,
-                        previous_boundary=boundary,
                         confidence=word.confidence,
                     )
                 )

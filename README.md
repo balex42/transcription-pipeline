@@ -1,6 +1,6 @@
 # German Meeting Transcriber
 
-Local, batch-friendly German meeting transcription using pyannote Community-1 for anonymous speaker diarization and interchangeable Parakeet, Whisper, or Granite ASR. It intentionally contains no summarization, LLM post-processing, or API service.
+Local, batch-friendly German meeting transcription using pyannote Community-1 for anonymous speaker diarization and interchangeable Parakeet, Whisper, or Qwen ASR. It intentionally contains no summarization, LLM post-processing, API service, or remote inference.
 
 ## Architecture
 
@@ -11,46 +11,43 @@ flowchart TD
     diarize --> timeline[Exclusive speaker timeline]
     timeline --> release[Release diarization model]
     normalize --> chunk[AudioChunker\noverlapping ASR chunks]
-    release --> asr[Selected ASR backend\nParakeet, Whisper, or Granite]
-    chunk --> asr
-    asr --> words[Normalized ASR words]
+    release --> parakeet[Parakeet]
+    release --> whisper[Whisper]
+    release --> qwen_asr[Qwen3 ASR]
+    chunk --> parakeet
+    chunk --> whisper
+    chunk --> qwen_asr
+    qwen_asr --> qwen_align[Qwen3 Forced Aligner]
+    chunk --> qwen_align
+    parakeet --> words[Normalized ASR words]
+    whisper --> words
+    qwen_align --> words
     words --> merge[ChunkMerger]
     merge --> align[SpeakerAligner]
     timeline --> align
-    align --> attributed[Attributed words]
-    attributed --> turns[TurnBuilder]
-    turns --> transcript[Transcript]
-    transcript --> export[JSON and text exporters]
+    align --> turns[TurnBuilder]
+    turns --> export[Transcript JSON and text exporters]
 ```
 
-The orchestrator depends on small protocols (`Diarizer`, `Transcriber`, `SpeakerAligner`, and `TranscriptExporter`) and constructor injection. Future `PostProcessor`, `Summarizer`, `SpeakerIdentifier`, `ObjectStorage`, and `JobStatusReporter` contracts are declared in `extensions.py`, without implementations.
+Pyannote owns canonical speaker identity. No ASR backend speaker labels are used. Downstream components consume only the common `ASRWord` contract.
 
 ## ASR Backends
 
-- Parakeet: `nvidia/parakeet-tdt-0.6b-v3`. Multilingual (including German), native punctuation/capitalization, and start/end word timestamps. Loaded with native Transformers `AutoModelForTDT`.
-- Whisper: `openai/whisper-large-v3`. German transcription is explicitly requested, with punctuation/capitalization and Transformers word timestamps.
-- Granite: `ibm-granite/granite-speech-4.1-2b-plus`. Uses generated word-end tags and the project timestamp parser. It intentionally does not add ordinary punctuation/capitalization.
-- Diarization: `pyannote/speaker-diarization-community-1`, run locally through `pyannote.audio` over the full normalized meeting. The adapter uses `output.exclusive_speaker_diarization`.
+- Parakeet: `nvidia/parakeet-tdt-0.6b-v3`. Native Transformers TDT timestamps, punctuation, and capitalization.
+- Whisper: `openai/whisper-large-v3`. German transcription is explicitly requested with Transformers word timestamps.
+- Qwen: `Qwen/Qwen3-ASR-1.7B-hf` transcribes each chunk, then `Qwen/Qwen3-ForcedAligner-0.6B-hf` supplies native word start/end timing. The two models run sequentially: ASR is loaded once for all chunks and released before the aligner is loaded once.
+- Diarization: `pyannote/speaker-diarization-community-1` runs over the normalized full meeting and exposes its exclusive speaker timeline.
 
-All adapters use deterministic inference, `model.eval()`, and `torch.inference_mode()`. CUDA selects BF16 on capable GPUs and FP16 otherwise; CPU uses FP32. ASR speaker labels are never used: pyannote owns canonical speaker identity.
+All adapters use deterministic inference, `model.eval()`, `torch.inference_mode()`, and `trust_remote_code=False`. CUDA uses FP16 on Turing-class GPUs and BF16 only where PyTorch confirms support; CPU uses FP32.
 
 ## Prerequisites
 
 - Python 3.11
 - `ffmpeg` and `ffprobe` on `PATH`
-- sufficient RAM, or an NVIDIA GPU for practical production inference
-- a Hugging Face account and token for the gated pyannote model
-
-Before first pyannote download, accept the user conditions at [pyannote/speaker-diarization-community-1](https://huggingface.co/pyannote/speaker-diarization-community-1), then create a Hugging Face token. Export it only at runtime:
-
-```bash
-export HF_TOKEN=hf_...
-export HF_HOME=$PWD/cache/huggingface
-```
+- enough RAM, or an NVIDIA GPU for practical production inference
+- a Hugging Face token only when downloading the gated pyannote model
 
 ## Python Setup
-
-The exact runtime pins are:
 
 | Package | Version |
 | --- | --- |
@@ -58,13 +55,13 @@ The exact runtime pins are:
 | torch | `2.8.0` |
 | torchaudio | `2.8.0` |
 | torchcodec | `0.7.0` |
-| transformers | `5.9.0` |
+| transformers | `5.13.0` |
 | accelerate | `1.12.0` |
 | librosa | `0.11.0` |
 | pyannote.audio | `4.0.7` |
 | numpy | `2.2.6` |
 
-Install the appropriate PyTorch CPU/CUDA wheel for the target platform first if your package index requires it, then install the project:
+Install the appropriate PyTorch CPU/CUDA wheel first when required by the package index, then install the project:
 
 ```bash
 python3.11 -m venv .venv
@@ -72,131 +69,176 @@ python3.11 -m venv .venv
 .venv/bin/pip install -e '.[dev]'
 ```
 
-CPU example:
-
-```bash
-HF_TOKEN=hf_... python -m meeting_transcriber transcribe /data/meeting.m4a --asr parakeet \
-  --output /data/result --working-directory /data/work --device cpu
-```
-
-NVIDIA GPU example:
-
-```bash
-HF_TOKEN=hf_... python -m meeting_transcriber transcribe /data/meeting.m4a --asr parakeet \
-  --output /data/result --working-directory /data/work --device cuda
-```
-
 ## CLI
 
 ```bash
-python -m meeting_transcriber transcribe INPUT --output OUTPUT [options]
 meeting-transcriber transcribe INPUT --output OUTPUT [options]
+meeting-transcriber compare INPUT --output OUTPUT [options]
 ```
 
-Options include `--asr parakeet|whisper|granite`, `--asr-model`, `--device auto|cuda|cpu`, `--granite-model` (legacy Granite alias), `--pyannote-model`, `--chunk-duration`, `--chunk-overlap`, `--num-speakers`, `--min-speakers`, `--max-speakers`, `--working-directory`, `--keep-intermediate`, and `--log-level`. Parakeet and Whisper default to 180-second chunks with 15-second overlap; Granite defaults to 90-second chunks with 10-second overlap.
+Supported values for `--asr` and `--models` are `parakeet`, `whisper`, and `qwen`.
 
-Local runs use `./work` by default. The container sets `WORKING_DIRECTORY=/work`; supply `--working-directory` when using another mounted work volume.
+Options include `--asr-model`, `--qwen-aligner-model`, `--pyannote-model`, `--device auto|cuda|cpu`, `--chunk-duration`, `--chunk-overlap`, `--num-speakers`, `--min-speakers`, `--max-speakers`, `--working-directory`, `--keep-intermediate`, and `--log-level`.
 
-Precedence is CLI arguments, environment variables, then defaults. `ASR_BACKEND` defaults to `parakeet`; `ASR_MODEL` overrides its backend model default. `GRANITE_MODEL` remains a Granite-only compatibility alias. Other variables are `PYANNOTE_MODEL`, `DEVICE`, `WORKING_DIRECTORY`, `CHUNK_DURATION`, `CHUNK_OVERLAP`, `NUM_SPEAKERS`, `MIN_SPEAKERS`, `MAX_SPEAKERS`, `KEEP_INTERMEDIATE_FILES`, `LOG_LEVEL`, `HF_HOME`, and `HF_TOKEN`.
+Parakeet and Whisper default to 180-second chunks with 15-second overlap. Qwen defaults to 240-second chunks with 15-second overlap. The Qwen forced aligner accepts at most approximately five minutes, so Qwen rejects a chunk duration over 300 seconds before processing begins.
 
-Input formats are decoded by ffmpeg and include WAV, MP3, M4A, MP4, WebM, and OGG. Every source becomes a temporary PCM WAV at 16 kHz, mono, 16-bit. The original is never modified. Temporary files are removed after success unless `--keep-intermediate` is supplied.
+```bash
+meeting-transcriber transcribe meeting.m4a \
+  --asr parakeet --output ./result/parakeet --device cuda
 
-## Output Schema
+meeting-transcriber transcribe meeting.m4a \
+  --asr whisper --output ./result/whisper --device cuda
 
-`OUTPUT/transcript.json` is canonical and versioned (`"version": "1.0"`). It contains source metadata, backend/model metadata, anonymous `SPEAKER_XX` IDs, derived turns, and raw speaker-attributed words. `start_is_inferred: true` documents approximate Granite starts; Parakeet and Whisper retain native word starts. `OUTPUT/transcript.txt` is optimized for review with a timestamp/speaker header and unmodified turn text.
+meeting-transcriber transcribe meeting.m4a \
+  --asr qwen --output ./result/qwen --device cuda
 
-With `--keep-intermediate`, `OUTPUT/intermediate/diarization.json`, `asr_words.json`, and `attributed_words.json` are also written.
+meeting-transcriber transcribe meeting.m4a \
+  --asr qwen \
+  --asr-model /models/qwen3-asr-1.7b \
+  --qwen-aligner-model /models/qwen3-forced-aligner-0.6b \
+  --output ./result/qwen --device cuda
+```
 
-Chunks default to 180 seconds with 15 seconds overlap. The `ChunkMerger` owns the first half of an overlap from the earlier chunk and the second half from the later chunk, avoiding duplicated words deterministically.
+Configuration precedence is CLI arguments, environment variables, then defaults:
 
-## Offline Models
+```text
+ASR_BACKEND
+ASR_MODEL
+QWEN_ALIGNER_MODEL
+PYANNOTE_MODEL
+DEVICE
+WORKING_DIRECTORY
+CHUNK_DURATION
+CHUNK_OVERLAP
+NUM_SPEAKERS
+MIN_SPEAKERS
+MAX_SPEAKERS
+KEEP_INTERMEDIATE_FILES
+LOG_LEVEL
+HF_HOME
+HF_TOKEN
+```
 
-Populate the Hugging Face cache with:
+`ASR_BACKEND` defaults to `parakeet`. `ASR_MODEL` selects the ASR model or a local path; for Qwen, `QWEN_ALIGNER_MODEL` selects the second local model artifact.
+
+## Output and Provenance
+
+`OUTPUT/transcript.json` is canonical and versioned (`"version": "1.0"`). It contains source metadata, backend/model metadata, anonymous `SPEAKER_XX` IDs, derived turns, and speaker-attributed words. All normal backends provide native word starts and ends.
+
+With `--keep-intermediate`, `OUTPUT/intermediate/diarization.json`, `asr_words.json`, and `attributed_words.json` are retained. Qwen keeps recognized chunk text in memory only until forced alignment completes; it never leaks Qwen-specific data into the common downstream pipeline.
+
+Comparison metadata records backend/model references, configured chunking, dtype, PyTorch and Transformers versions, total time, RTF, peak CUDA memory, and Qwen phase timings. `comparison/qwen/metadata.json` additionally records the Qwen ASR and forced-aligner model references and their load, inference/alignment, and unload timings.
+
+For controlled air-gap imports, pin approved upstream revisions and record SHA256 checksums outside the runtime pipeline. The application does not hash multi-gigabyte model artifacts at transcription time and does not make metadata/version network calls.
+
+## Offline and Air-Gapped Models
+
+On a connected staging system, download approved model revisions through the organization’s approved process:
 
 ```bash
 HF_TOKEN=hf_... meeting-transcriber prefetch-models --asr parakeet
+HF_TOKEN=hf_... meeting-transcriber prefetch-models --asr whisper
+HF_TOKEN=hf_... meeting-transcriber prefetch-models --asr qwen
 ```
 
-For explicit local paths, obtain Granite with Hugging Face tooling and clone the accepted pyannote repository with Git LFS:
+Also obtain the accepted `pyannote/speaker-diarization-community-1` artifact through the approved process. Transfer approved model artifacts and their externally generated checksums through the organization’s air gap. A production model volume can contain:
+
+```text
+/models/
+├── pyannote-community-1/
+├── parakeet-tdt-0.6b-v3/
+├── whisper-large-v3/
+├── qwen3-asr-1.7b/
+└── qwen3-forced-aligner-0.6b/
+```
+
+Run from local paths with runtime network access disabled:
 
 ```bash
-git lfs install
-git clone https://huggingface.co/pyannote/speaker-diarization-community-1 /models/pyannote
+HF_HUB_OFFLINE=1 \
+TRANSFORMERS_OFFLINE=1 \
+ASR_BACKEND=qwen \
+ASR_MODEL=/models/qwen3-asr-1.7b \
+QWEN_ALIGNER_MODEL=/models/qwen3-forced-aligner-0.6b \
+PYANNOTE_MODEL=/models/pyannote-community-1 \
+meeting-transcriber transcribe /data/meeting.m4a --output /data/result --device cuda
 ```
 
-Then run entirely from mounted local models:
-
-```bash
-ASR_BACKEND=whisper ASR_MODEL=/models/whisper PYANNOTE_MODEL=/models/pyannote \
-  meeting-transcriber transcribe /data/meeting.m4a --output /data/result
-```
-
-The pipeline does not require internet after models are available locally. The pyannote repository must include its model artifacts as provided by the official offline distribution.
+After local model artifacts are available, production inference requires no network access and no Qwen/Alibaba API credential.
 
 ## Podman
 
-Build:
+Build the single common, non-root OpenShift-compatible image:
 
 ```bash
 podman build -t meeting-transcriber:local -f Containerfile .
 ```
 
-CPU run with mounted input, output, working space, and persistent model/cache volume:
-
-```bash
-podman run --rm \
-  -v $PWD/input:/input:ro,Z -v $PWD/result:/output:Z \
-  -v $PWD/cache:/cache:Z -v $PWD/work:/work:Z \
-  -e HF_TOKEN -e HF_HOME=/cache/huggingface \
-  meeting-transcriber:local transcribe /input/meeting.m4a --asr parakeet --output /output --device cpu
-```
-
-NVIDIA GPU run (with NVIDIA Container Toolkit configured for Podman):
+Run with locally mounted models in an air-gapped environment:
 
 ```bash
 podman run --rm --device nvidia.com/gpu=all \
-  -v $PWD/input:/input:ro,Z -v $PWD/result:/output:Z \
-  -v $PWD/cache:/cache:Z -v $PWD/work:/work:Z \
-  -e HF_TOKEN -e HF_HOME=/cache/huggingface \
-  meeting-transcriber:local transcribe /input/meeting.m4a --asr whisper --output /output --device cuda
+  --userns=keep-id --user "$(id -u):$(id -g)" \
+  -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 \
+  -e ASR_BACKEND=qwen \
+  -e ASR_MODEL=/models/qwen3-asr-1.7b \
+  -e QWEN_ALIGNER_MODEL=/models/qwen3-forced-aligner-0.6b \
+  -e PYANNOTE_MODEL=/models/pyannote-community-1 \
+  -v "$PWD/input:/input:ro,Z" -v "$PWD/result:/output:Z" \
+  -v "$PWD/work:/work:Z" -v "$PWD/models:/models:ro,Z" \
+  meeting-transcriber:local transcribe /input/meeting.m4a \
+  --output /output --working-directory /work --device cuda
 ```
 
-The image runs non-root, writes only to `/work`, `/cache`, mounted output, or mounted models, accepts an arbitrary OpenShift UID through root-group permissions, contains no token, and forwards SIGTERM to the Python process through its exec-form entrypoint.
+The image does not contain model weights, accepts an arbitrary OpenShift UID, and writes only to `/work`, `/cache`, or mounted output locations.
 
 ## OpenShift
 
-`deploy/openshift/job.example.yaml` is a minimal batch Job example with `restartPolicy: Never`, no privileged context, an arbitrary non-root UID-compatible image, mounted input/output/model volumes, secret-backed token injection, and an `nvidia.com/gpu` request. It deliberately leaves object storage and asynchronous orchestration outside this application.
+`deploy/openshift/job.example.yaml` requests one GPU and demonstrates mounted local Qwen, forced-aligner, and pyannote model paths with `HF_HUB_OFFLINE=1` and `TRANSFORMERS_OFFLINE=1`. It requires no network egress and leaves object storage and orchestration outside this application.
 
 ## Manual Comparison
 
-Run normalization and diarization once, then execute requested ASR models sequentially:
+Normalization and pyannote run once; ASR backends execute sequentially on the same prepared meeting:
 
 ```bash
-meeting-transcriber compare meeting01.m4a \
-  --models parakeet,whisper,granite \
-  --output ./comparison/meeting01 \
-  --device cuda
+meeting-transcriber compare meeting.m4a \
+  --models parakeet,whisper,qwen \
+  --output ./comparison --device cuda
 ```
 
-The result contains `diarization.json`, operational `metadata.json`, and one directory per backend with `transcript.json`, review-friendly `transcript.txt`, and `asr_words.json`. The metadata records model load/transcription duration, RTF, selected dtype, and CUDA peak memory. These are operational measurements, not quality scores.
+```text
+comparison/
+├── diarization.json
+├── metadata.json
+├── parakeet/
+│   ├── asr_words.json
+│   ├── transcript.json
+│   └── transcript.txt
+├── whisper/
+│   ├── asr_words.json
+│   ├── transcript.json
+│   └── transcript.txt
+└── qwen/
+    ├── asr_words.json
+    ├── metadata.json
+    ├── transcript.json
+    └── transcript.txt
+```
 
-Inspect several representative meetings: multiple and overlapping speakers, technical terms/names, room and video-conference microphones, background noise, and mixed German/English terminology. Do not treat any backend as objectively best without representative recordings.
+The shared comparison chunks use the command’s explicit settings or the regular 180-second/15-second defaults, which remain within Qwen’s forced-alignment limit.
 
 ## Limitations
 
-- Granite Plus does not add normal punctuation or capitalization; model text is preserved apart from safe whitespace normalization.
-- Granite timestamps are generated word-end timestamps, not measured word starts.
-- Parakeet native Transformers output is timestamped tokenizer pieces; the adapter groups them into words.
-- Whisper word timestamps are model-generated and can drift around rapid or overlapping speech.
-- ASR timestamps may contain timing error.
-- pyannote speaker IDs are anonymous voices, not real names.
-- Overlapping speech is inherently difficult.
-- Speaker assignment around boundaries may be imperfect.
-- German is the intended language for this application.
+- Qwen forced alignment is limited to approximately five-minute chunks and fails the Qwen backend rather than fabricating untimestamped words.
+- Parakeet native Transformers output is timestamped tokenizer pieces; its adapter groups them into words.
+- Whisper word timestamps can drift around rapid or overlapping speech.
+- ASR timestamps and pyannote speaker boundaries can still be imperfect around overlaps.
+- Speaker IDs are anonymous voices, not real identities.
+- German is the intended language.
 
 ## Verification
 
-Normal tests use no model downloads or GPU. Run:
+Normal tests download no models and require no GPU:
 
 ```bash
 pytest
@@ -204,4 +246,4 @@ ruff check .
 mypy src/meeting_transcriber
 ```
 
-An optional real-model smoke test needs predownloaded models, a German WAV, and `RUN_MODEL_TESTS=1 MODEL_TEST_BACKEND=parakeet MODEL_TEST_AUDIO=/path/to/audio.wav pytest tests/integration`.
+An optional real-model smoke test requires predownloaded local artifacts, a German WAV, and `RUN_MODEL_TESTS=1 MODEL_TEST_BACKEND=qwen MODEL_TEST_AUDIO=/path/to/audio.wav pytest tests/integration`.

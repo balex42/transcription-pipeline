@@ -26,20 +26,18 @@ spec:
           env:
             - name: HF_HOME
               value: /models/huggingface
-            - name: GRANITE_MODEL
-              value: /models/granite
             - name: ASR_BACKEND
-              value: parakeet
+              value: qwen
             - name: ASR_MODEL
-              value: /models/parakeet
+              value: /models/qwen3-asr-1.7b
+            - name: QWEN_ALIGNER_MODEL
+              value: /models/qwen3-forced-aligner-0.6b
             - name: PYANNOTE_MODEL
-              value: /models/pyannote
-            # Create this value from a Secret in a real deployment; never embed it in an image.
-            - name: HF_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: huggingface-token
-                  key: token
+              value: /models/pyannote-community-1
+            - name: HF_HUB_OFFLINE
+              value: "1"
+            - name: TRANSFORMERS_OFFLINE
+              value: "1"
           resources:
             limits:
               nvidia.com/gpu: "1"

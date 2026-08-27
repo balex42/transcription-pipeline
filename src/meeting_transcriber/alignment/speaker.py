@@ -1,4 +1,4 @@
-"""Speaker assignment from ASR word ends and exclusive diarization."""
+"""Speaker assignment from ASR word intervals and exclusive diarization."""
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ class OverlapSpeakerAligner:
     def align(
         self, words: list[ASRWord], diarization: list[DiarizationSegment]
     ) -> list[AttributedWord]:
-        """Attribute words without claiming Granite provides word start times."""
+        """Attribute words by native interval, with an end-time fallback."""
         segments = sorted(
             diarization, key=lambda segment: (segment.start, segment.end, segment.speaker)
         )
@@ -38,8 +38,6 @@ class OverlapSpeakerAligner:
             start = (
                 word.start
                 if word.start is not None
-                else word.previous_boundary
-                if word.previous_boundary is not None
                 else previous_end
             )
             start = min(max(start, 0.0), word.end)

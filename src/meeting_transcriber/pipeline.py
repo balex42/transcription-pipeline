@@ -8,6 +8,7 @@ import shutil
 import time
 from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Protocol
 
@@ -40,11 +41,19 @@ from meeting_transcriber.runtime.device import (
     resolve_device,
 )
 from meeting_transcriber.runtime.lifecycle import release_model
-from meeting_transcriber.transcription.base import Transcriber
+from meeting_transcriber.transcription.base import BatchTranscriber, Transcriber
 from meeting_transcriber.transcription.factory import create_transcriber
 from meeting_transcriber.turns.builder import TurnBuilder
 
 LOGGER = logging.getLogger(__name__)
+
+
+def _package_version(package: str) -> str:
+    """Return installed package provenance without contacting a registry."""
+    try:
+        return version(package)
+    except PackageNotFoundError:
+        return "unknown"
 
 
 class AudioNormalizer(Protocol):
@@ -90,7 +99,9 @@ class MeetingTranscriptionPipeline:
         self.diarizer_factory = diarizer_factory
         self.transcriber_factory = transcriber_factory
         self.preprocessor = preprocessor or AudioPreprocessor()
-        self.chunker = chunker or AudioChunker(config.chunk_duration, config.chunk_overlap)
+        self.chunker = chunker or AudioChunker(
+            config.resolved_chunk_duration, config.resolved_chunk_overlap
+        )
         self.merger = merger or ChunkMerger()
         self.aligner = aligner or OverlapSpeakerAligner(config.alignment_tolerance)
         self.turn_builder = turn_builder or TurnBuilder(config.turn_gap_seconds)
@@ -161,16 +172,19 @@ class MeetingTranscriptionPipeline:
         words_by_chunk: dict[int, list[ASRWord]] = {}
         transcription_started = time.monotonic()
         try:
-            for index, chunk in enumerate(prepared.chunks, start=1):
-                LOGGER.info(
-                    "transcribing chunk",
-                    extra={
-                        "backend": backend,
-                        "chunk": index,
-                        "total_chunks": len(prepared.chunks),
-                    },
-                )
-                words_by_chunk[chunk.chunk_id] = transcriber.transcribe(chunk)
+            if isinstance(transcriber, BatchTranscriber):
+                words_by_chunk = transcriber.transcribe_chunks(prepared.chunks)
+            else:
+                for index, chunk in enumerate(prepared.chunks, start=1):
+                    LOGGER.info(
+                        "transcribing chunk",
+                        extra={
+                            "backend": backend,
+                            "chunk": index,
+                            "total_chunks": len(prepared.chunks),
+                        },
+                    )
+                    words_by_chunk[chunk.chunk_id] = transcriber.transcribe(chunk)
             transcription_seconds = time.monotonic() - transcription_started
             allocated, reserved = peak_cuda_memory(
                 getattr(transcriber, "device", self.config.device)
@@ -207,14 +221,18 @@ class MeetingTranscriptionPipeline:
             device=getattr(transcriber, "device", self.config.device),
             dtype=transcriber.dtype_name,
             audio_duration_seconds=prepared.metadata.duration_seconds,
-            chunk_duration_seconds=self.config.chunk_duration,
-            chunk_overlap_seconds=self.config.chunk_overlap,
+            chunk_duration_seconds=self.config.resolved_chunk_duration,
+            chunk_overlap_seconds=self.config.resolved_chunk_overlap,
             model_load_seconds=load_seconds,
             transcription_seconds=transcription_seconds,
             total_asr_seconds=total_seconds,
             real_time_factor=total_seconds / prepared.metadata.duration_seconds,
             peak_cuda_memory_allocated_bytes=allocated,
             peak_cuda_memory_reserved_bytes=reserved,
+            transformers_version=_package_version("transformers"),
+            torch_version=_package_version("torch"),
+            backend_metrics=getattr(transcriber, "backend_metrics", {}),
+            backend_models=getattr(transcriber, "backend_models", {}),
         )
         LOGGER.info("ASR backend complete", extra=asdict(metrics))
         return result, metrics
