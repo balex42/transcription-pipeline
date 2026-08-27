@@ -57,12 +57,7 @@ class WhisperTranscriber(Transcriber):
                 return_timestamps="word",
                 chunk_length_s=self.chunk_length_seconds,
                 stride_length_s=(self.stride_length_seconds, self.stride_length_seconds),
-                generate_kwargs={
-                    "language": "german",
-                    "task": "transcribe",
-                    "do_sample": False,
-                    "num_beams": 1,
-                },
+                generate_kwargs={"language": "german", "task": "transcribe"},
             )
         return normalize_whisper_chunks(result.get("chunks", []))
 
@@ -91,7 +86,7 @@ class WhisperTranscriber(Transcriber):
                     model=loaded_model,
                     tokenizer=processor.tokenizer,
                     feature_extractor=processor.feature_extractor,
-                    torch_dtype=cast(Any, dtype),
+                    dtype=cast(Any, dtype),
                     device=device_index,
                 ),
             )
