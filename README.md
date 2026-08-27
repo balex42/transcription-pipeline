@@ -60,6 +60,7 @@ The exact runtime pins are:
 | torchcodec | `0.7.0` |
 | transformers | `5.9.0` |
 | accelerate | `1.12.0` |
+| librosa | `0.11.0` |
 | pyannote.audio | `4.0.7` |
 | numpy | `2.2.6` |
 

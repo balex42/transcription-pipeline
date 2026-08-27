@@ -4,6 +4,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     HF_HOME=/cache/huggingface \
     XDG_CACHE_HOME=/cache \
+    MPLCONFIGDIR=/cache/matplotlib \
     TRANSFORMERS_CACHE=/cache/huggingface/transformers \
     WORKING_DIRECTORY=/work
 
