@@ -62,10 +62,17 @@ class VoxtralTranscriber(Transcriber):
 
     capabilities = TranscriberCapabilities(False, True, True, True, streaming=True)
 
-    def __init__(self, model: str, device: str, delay_ms: int | None = None) -> None:
+    def __init__(
+        self,
+        model: str,
+        device: str,
+        delay_ms: int | None = None,
+        timestamp_offset_tokens: int | None = None,
+    ) -> None:
         self.model_reference = model
         self.device = device
         self.delay_ms = delay_ms
+        self.timestamp_offset_tokens = timestamp_offset_tokens
         _, self.dtype_name = inference_dtype(device)
         self._model: _VoxtralModel | None = None
         self._processor: _VoxtralProcessor | None = None
@@ -77,6 +84,7 @@ class VoxtralTranscriber(Transcriber):
             "timestamps": "streaming_word_end_proxy",
             "temperature": 0.0,
             "delay_ms": delay_ms,
+            "timestamp_offset_tokens": timestamp_offset_tokens,
         }
 
     def load(self) -> None:
@@ -127,6 +135,11 @@ class VoxtralTranscriber(Transcriber):
             seconds_per_token = (
                 _processor_int(processor, "raw_audio_length_per_tok") / audio.metadata.sample_rate
             )
+            timestamp_offset_tokens = (
+                _processor_int(processor, "num_delay_tokens", allow_zero=True)
+                if self.timestamp_offset_tokens is None
+                else self.timestamp_offset_tokens
+            )
             for name in (
                 "native_emission_groups",
                 "multi_word_emission_groups",
@@ -138,7 +151,7 @@ class VoxtralTranscriber(Transcriber):
                 generated,
                 pieces,
                 lambda ids: processor.decode(ids, skip_special_tokens=True),
-                _processor_int(processor, "num_delay_tokens", allow_zero=True),
+                timestamp_offset_tokens,
                 seconds_per_token,
                 audio.metadata.duration_seconds,
                 self.backend_metrics,
@@ -148,6 +161,7 @@ class VoxtralTranscriber(Transcriber):
             self.backend_configuration["num_delay_tokens"] = _processor_int(
                 processor, "num_delay_tokens", allow_zero=True
             )
+            self.backend_configuration["timestamp_offset_tokens"] = timestamp_offset_tokens
             self.backend_configuration["num_right_pad_tokens"] = _processor_int(
                 processor, "num_right_pad_tokens", allow_zero=True
             )

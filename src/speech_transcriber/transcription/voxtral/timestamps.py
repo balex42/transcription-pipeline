@@ -14,7 +14,7 @@ def parse_voxtral_words(
     token_ids: Sequence[int],
     token_pieces: Sequence[str],
     decode: Callable[[list[int]], object],
-    delay_tokens: int,
+    timestamp_offset_tokens: int,
     seconds_per_token: float,
     duration_seconds: float,
     metrics: dict[str, float] | None = None,
@@ -22,7 +22,7 @@ def parse_voxtral_words(
     """Timestamp groups closed by native markers, with a flagged EOF-tail fallback."""
     if len(token_ids) != len(token_pieces):
         raise VoxtralTimestampError("Voxtral raw token IDs and pieces have different lengths")
-    if delay_tokens < 0 or seconds_per_token <= 0 or duration_seconds < 0:
+    if timestamp_offset_tokens < 0 or seconds_per_token <= 0 or duration_seconds < 0:
         raise VoxtralTimestampError("Voxtral processor exposed invalid timestamp configuration")
 
     words: list[ASRWord] = []
@@ -60,7 +60,9 @@ def parse_voxtral_words(
         if piece != STREAMING_WORD:
             group.append(token_id)
             continue
-        marker_end = min(duration_seconds, max(0.0, (index - delay_tokens) * seconds_per_token))
+        marker_end = min(
+            duration_seconds, max(0.0, (index - timestamp_offset_tokens) * seconds_per_token)
+        )
         emit_native_group(marker_end)
         last_native_end = marker_end
 

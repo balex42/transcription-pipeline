@@ -8,6 +8,7 @@ from speech_transcriber.config import (
     DEFAULT_QWEN_MODEL,
     DEFAULT_VOXTRAL_DELAY_MS,
     DEFAULT_VOXTRAL_MODEL,
+    DEFAULT_VOXTRAL_TIMESTAMP_OFFSET_TOKENS,
     PipelineConfig,
 )
 from speech_transcriber.errors import UnsupportedASRBackendError
@@ -49,16 +50,23 @@ def test_factory_selects_adapter_and_default_model(
             False, True, True, True, streaming=True
         )
         assert transcriber.delay_ms == DEFAULT_VOXTRAL_DELAY_MS
+        assert transcriber.timestamp_offset_tokens == DEFAULT_VOXTRAL_TIMESTAMP_OFFSET_TOKENS
 
 
 def test_voxtral_delay_from_config_is_passed_to_adapter() -> None:
     transcriber = create_transcriber(
         PipelineConfig(
-            Path("in.wav"), Path("out"), Path("work"), asr_backend="voxtral", voxtral_delay_ms=1200
+            Path("in.wav"),
+            Path("out"),
+            Path("work"),
+            asr_backend="voxtral",
+            voxtral_delay_ms=1200,
+            voxtral_timestamp_offset_tokens=6,
         ),
         "cpu",
     )
     assert transcriber.delay_ms == 1200
+    assert transcriber.timestamp_offset_tokens == 6
 
 
 def test_explicit_model_overrides_backend_default() -> None:

@@ -64,6 +64,11 @@ def _add_runtime_options(parser: argparse.ArgumentParser, include_asr: bool) -> 
     parser.add_argument(
         "--voxtral-delay-ms", type=int, help="Voxtral streaming delay in ms (default: 2400)"
     )
+    parser.add_argument(
+        "--voxtral-timestamp-offset-tokens",
+        type=int,
+        help="Voxtral marker timestamp offset in tokens (default: 4)",
+    )
     parser.add_argument("--language", help="ASR language locale (default: de-DE)")
     parser.add_argument("--num-speakers", type=int)
     parser.add_argument("--min-speakers", type=int)
@@ -129,6 +134,7 @@ def _config_from_args(args: argparse.Namespace) -> PipelineConfig:
         "qwen_segment_overlap": args.qwen_segment_overlap,
         "nemotron_num_lookahead_tokens": args.nemotron_num_lookahead_tokens,
         "voxtral_delay_ms": args.voxtral_delay_ms,
+        "voxtral_timestamp_offset_tokens": args.voxtral_timestamp_offset_tokens,
         "language": args.language,
         "num_speakers": args.num_speakers,
         "min_speakers": args.min_speakers,

@@ -14,9 +14,11 @@ DEFAULT_NEMOTRON_MODEL = "nvidia/nemotron-3.5-asr-streaming-0.6b"
 DEFAULT_NEMOTRON_NUM_LOOKAHEAD_TOKENS = 13
 DEFAULT_VOXTRAL_MODEL = "mistralai/Voxtral-Mini-4B-Realtime-2602"
 DEFAULT_VOXTRAL_DELAY_MS = 2400
+DEFAULT_VOXTRAL_TIMESTAMP_OFFSET_TOKENS = 4
 VOXTRAL_MAX_DELAY_MS = 2400
 VOXTRAL_MIN_DELAY_MS = 80
 VOXTRAL_DELAY_STEP_MS = 80
+VOXTRAL_MAX_TIMESTAMP_OFFSET_TOKENS = 30
 DEFAULT_PYANNOTE_MODEL = "pyannote/speaker-diarization-community-1"
 ASR_BACKENDS = ("parakeet", "qwen", "nemotron", "voxtral")
 QWEN_MAX_ALIGNMENT_DURATION_SECONDS = 300.0
@@ -58,6 +60,15 @@ def validate_voxtral_delay(delay_ms: int) -> None:
         )
 
 
+def validate_voxtral_timestamp_offset(offset_tokens: int) -> None:
+    """Reject timestamp offsets outside Voxtral's 30-token delay horizon."""
+    if not 0 <= offset_tokens <= VOXTRAL_MAX_TIMESTAMP_OFFSET_TOKENS:
+        raise ValueError(
+            "Voxtral timestamp offset must be between 0 and "
+            f"{VOXTRAL_MAX_TIMESTAMP_OFFSET_TOKENS} tokens"
+        )
+
+
 def _env_int(env: Mapping[str, str], name: str) -> int | None:
     value = env.get(name)
     return int(value) if value else None
@@ -86,6 +97,7 @@ class PipelineConfig:
     qwen_segment_overlap: float = DEFAULT_QWEN_SEGMENT_OVERLAP
     nemotron_num_lookahead_tokens: int | None = DEFAULT_NEMOTRON_NUM_LOOKAHEAD_TOKENS
     voxtral_delay_ms: int = DEFAULT_VOXTRAL_DELAY_MS
+    voxtral_timestamp_offset_tokens: int = DEFAULT_VOXTRAL_TIMESTAMP_OFFSET_TOKENS
     language: str = "de-DE"
     num_speakers: int | None = None
     min_speakers: int | None = None
@@ -110,6 +122,7 @@ class PipelineConfig:
                 )
         validate_qwen_segment_duration(self.qwen_segment_duration)
         validate_voxtral_delay(self.voxtral_delay_ms)
+        validate_voxtral_timestamp_offset(self.voxtral_timestamp_offset_tokens)
         if not self.language:
             raise ValueError("language must not be empty")
         if self.num_speakers is not None and self.num_speakers < 1:
@@ -170,6 +183,9 @@ class PipelineConfig:
             "nemotron_num_lookahead_tokens", "NEMOTRON_NUM_LOOKAHEAD_TOKENS"
         )
         voxtral_delay = choose_int("voxtral_delay_ms", "VOXTRAL_DELAY_MS")
+        voxtral_timestamp_offset = choose_int(
+            "voxtral_timestamp_offset_tokens", "VOXTRAL_TIMESTAMP_OFFSET_TOKENS"
+        )
         return cls(
             input_path=input_path,
             output_directory=output_directory,
@@ -214,6 +230,11 @@ class PipelineConfig:
             ),
             voxtral_delay_ms=(
                 DEFAULT_VOXTRAL_DELAY_MS if voxtral_delay is None else voxtral_delay
+            ),
+            voxtral_timestamp_offset_tokens=(
+                DEFAULT_VOXTRAL_TIMESTAMP_OFFSET_TOKENS
+                if voxtral_timestamp_offset is None
+                else voxtral_timestamp_offset
             ),
             language=choose("language", "LANGUAGE", "de-DE"),
             num_speakers=choose_int("num_speakers", "NUM_SPEAKERS"),

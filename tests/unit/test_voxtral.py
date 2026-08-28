@@ -133,6 +133,26 @@ def test_voxtral_uses_one_continuous_generation_and_end_only_word_timestamps(
     assert transcriber.backend_metrics["inferred_final_emission_groups"] == 0.0
     assert transcriber.backend_configuration["num_right_pad_tokens"] == 1
     assert transcriber.backend_configuration["temperature"] == 0.0
+    assert transcriber.backend_configuration["timestamp_offset_tokens"] == 1
+
+
+def test_voxtral_uses_configured_timestamp_offset(
+    tmp_path: Path,
+) -> None:
+    processor = Processor()
+    processor.num_right_pad_tokens = lambda: 1  # type: ignore[method-assign]
+    model = Model()
+    transcriber = VoxtralTranscriber("/models/voxtral", "cpu", timestamp_offset_tokens=0)
+    transcriber._processor = processor
+    transcriber._model = model
+
+    words = transcriber.transcribe(audio(tmp_path))
+
+    assert [(word.text, word.end) for word in words] == [
+        ("Hallo", 0.0005),
+        ("Welt", 0.001),
+    ]
+    assert transcriber.backend_configuration["timestamp_offset_tokens"] == 0
 
 
 def test_voxtral_configures_audio_delay_from_request() -> None:

@@ -10,6 +10,7 @@ from speech_transcriber.config import (
     DEFAULT_QWEN_MODEL,
     DEFAULT_VOXTRAL_DELAY_MS,
     DEFAULT_VOXTRAL_MODEL,
+    DEFAULT_VOXTRAL_TIMESTAMP_OFFSET_TOKENS,
     PipelineConfig,
 )
 
@@ -45,6 +46,14 @@ def test_voxtral_delay_allows_a_lower_latency_override() -> None:
     assert make({}, {"VOXTRAL_DELAY_MS": "480"}).voxtral_delay_ms == 480
 
 
+def test_voxtral_uses_calibrated_timestamp_offset_by_default() -> None:
+    assert make({}).voxtral_timestamp_offset_tokens == DEFAULT_VOXTRAL_TIMESTAMP_OFFSET_TOKENS
+
+
+def test_voxtral_timestamp_offset_allows_an_override() -> None:
+    assert make({}, {"VOXTRAL_TIMESTAMP_OFFSET_TOKENS": "6"}).voxtral_timestamp_offset_tokens == 6
+
+
 def test_voxtral_rejects_delay_outside_supported_range() -> None:
     with pytest.raises(ValueError, match="Voxtral delay must be between"):
         make({}, {"VOXTRAL_DELAY_MS": "2401"})
@@ -58,6 +67,12 @@ def test_voxtral_rejects_delay_that_is_not_a_multiple_of_80ms() -> None:
 def test_voxtral_rejects_unsupported_delay_between_1200ms_and_2400ms() -> None:
     with pytest.raises(ValueError, match="up to 1200ms, or 2400ms"):
         make({}, {"VOXTRAL_DELAY_MS": "1280"})
+
+
+@pytest.mark.parametrize("offset", ["-1", "31"])
+def test_voxtral_rejects_timestamp_offset_outside_delay_horizon(offset: str) -> None:
+    with pytest.raises(ValueError, match="timestamp offset"):
+        make({}, {"VOXTRAL_TIMESTAMP_OFFSET_TOKENS": offset})
 
 
 def test_cli_backend_and_model_override_environment() -> None:
