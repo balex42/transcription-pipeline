@@ -11,6 +11,7 @@ from speech_transcriber.runtime.device import inference_dtype
 
 _TIMESTAMP_TOLERANCE_SECONDS = 0.25
 _TIMESTAMP_GRID_SECONDS = 0.08
+_TRAILING_BOUNDARY_WINDOW_SECONDS = 2.0
 
 
 class QwenForcedAligner:
@@ -77,9 +78,21 @@ class QwenForcedAligner:
             )
             if not isinstance(decoded, list) or len(decoded) != 1:
                 raise QwenAlignmentError("Qwen forced aligner returned an unexpected batch shape")
-            words, repaired_count = _normalize_qwen_alignment(decoded[0], segment)
+            words, repaired_count, boundary_metrics = _normalize_qwen_alignment(decoded[0], segment)
             self.alignment_metrics["interpolated_word_timestamps"] = (
                 self.alignment_metrics.get("interpolated_word_timestamps", 0.0) + repaired_count
+            )
+            self.alignment_metrics["boundary_overflow_words_clipped"] = (
+                self.alignment_metrics.get("boundary_overflow_words_clipped", 0.0)
+                + boundary_metrics["clipped"]
+            )
+            self.alignment_metrics["boundary_overflow_words_dropped"] = (
+                self.alignment_metrics.get("boundary_overflow_words_dropped", 0.0)
+                + boundary_metrics["dropped"]
+            )
+            self.alignment_metrics["max_boundary_overflow_seconds"] = max(
+                self.alignment_metrics.get("max_boundary_overflow_seconds", 0.0),
+                boundary_metrics["max_overflow_seconds"],
             )
             _validate_transcript_coverage(word_lists[0], words)
             return words
@@ -103,16 +116,23 @@ class QwenForcedAligner:
 
     def reset_alignment_metrics(self) -> None:
         """Clear per-recording alignment metrics before a new alignment pass."""
-        self.alignment_metrics = {}
+        self.alignment_metrics = {
+            "interpolated_word_timestamps": 0.0,
+            "boundary_overflow_words_clipped": 0.0,
+            "boundary_overflow_words_dropped": 0.0,
+            "max_boundary_overflow_seconds": 0.0,
+        }
 
 
 def normalize_qwen_alignment(entries: object, segment: AudioSegment) -> list[ASRWord]:
     """Validate native Qwen word boundaries and normalize them to ``ASRWord``."""
-    words, _ = _normalize_qwen_alignment(entries, segment)
+    words, _, _ = _normalize_qwen_alignment(entries, segment)
     return words
 
 
-def _normalize_qwen_alignment(entries: object, segment: AudioSegment) -> tuple[list[ASRWord], int]:
+def _normalize_qwen_alignment(
+    entries: object, segment: AudioSegment
+) -> tuple[list[ASRWord], int, dict[str, float]]:
     """Normalize boundaries and repair timestamp-grid collisions."""
     if not isinstance(entries, list) or not entries:
         raise QwenAlignmentError(
@@ -122,6 +142,7 @@ def _normalize_qwen_alignment(entries: object, segment: AudioSegment) -> tuple[l
     previous_start = -_TIMESTAMP_TOLERANCE_SECONDS
     previous_end = -_TIMESTAMP_TOLERANCE_SECONDS
     words: list[ASRWord] = []
+    boundary_metrics = {"clipped": 0.0, "dropped": 0.0, "max_overflow_seconds": 0.0}
     for entry in entries:
         if not isinstance(entry, dict):
             raise QwenAlignmentError("Qwen forced aligner returned a non-object word")
@@ -137,8 +158,26 @@ def _normalize_qwen_alignment(entries: object, segment: AudioSegment) -> tuple[l
             raise QwenAlignmentError("Qwen forced aligner returned non-finite word timing")
         if start < -_TIMESTAMP_TOLERANCE_SECONDS or end < start:
             raise QwenAlignmentError("Qwen forced aligner returned an invalid word interval")
-        if end > duration + _TIMESTAMP_TOLERANCE_SECONDS:
-            raise QwenAlignmentError("Qwen forced aligner returned timing beyond the audio chunk")
+        overflow = max(start, end) - duration
+        if start >= duration:
+            boundary_metrics["dropped"] += 1
+            boundary_metrics["max_overflow_seconds"] = max(
+                boundary_metrics["max_overflow_seconds"], overflow
+            )
+            continue
+        if end > duration:
+            trailing_window = min(_TRAILING_BOUNDARY_WINDOW_SECONDS, duration / 4)
+            if start < duration - trailing_window:
+                raise QwenAlignmentError(
+                    "Qwen forced aligner returned timing beyond the audio chunk"
+                )
+            # The classifier timestamp grid can place a trailing word past a hard
+            # segment boundary. The overlapping next segment owns its continuation.
+            boundary_metrics["clipped"] += 1
+            boundary_metrics["max_overflow_seconds"] = max(
+                boundary_metrics["max_overflow_seconds"], overflow
+            )
+            end = duration
         if start + _TIMESTAMP_TOLERANCE_SECONDS < previous_start or end < previous_end:
             raise QwenAlignmentError("Qwen forced aligner returned non-monotonic word timing")
         words.append(
@@ -149,7 +188,12 @@ def _normalize_qwen_alignment(entries: object, segment: AudioSegment) -> tuple[l
             )
         )
         previous_start, previous_end = start, end
-    return _repair_zero_duration_words(words, duration)
+    if not words:
+        raise QwenAlignmentError(
+            f"Qwen forced aligner returned no in-window words for segment {segment.index}"
+        )
+    repaired, repaired_count = _repair_zero_duration_words(words, duration)
+    return repaired, repaired_count, boundary_metrics
 
 
 def _repair_zero_duration_words(words: list[ASRWord], duration: float) -> tuple[list[ASRWord], int]:

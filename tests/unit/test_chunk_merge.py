@@ -41,3 +41,16 @@ def test_exact_half_overlap_boundary_belongs_to_later_chunk() -> None:
 def test_final_endpoint_is_retained() -> None:
     merged = reconcile_segment_words(segments(), {2: [ASRWord("end", 7)]})
     assert [(word.text, word.end) for word in merged] == [("end", 23)]
+
+
+def test_clipped_non_final_boundary_word_is_owned_by_the_next_segment() -> None:
+    merged = reconcile_segment_words(
+        segments()[:2],
+        {
+            0: [ASRWord("clipped", 10, start=9.8)],
+            1: [ASRWord("replacement", 2, start=1.8)],
+        },
+    )
+    assert [(word.text, word.start, word.end) for word in merged] == [
+        ("replacement", 9.8, 10),
+    ]
