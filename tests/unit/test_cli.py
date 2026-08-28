@@ -1,5 +1,57 @@
+import json
+from pathlib import Path
+
 from speech_transcriber import cli
 from speech_transcriber.config import DEFAULT_PYANNOTE_MODEL, DEFAULT_QWEN_ALIGNER_MODEL
+from speech_transcriber.models import ASRWord, AudioMetadata, DiarizationSegment, NormalizedAudio
+from speech_transcriber.pipeline import PreparedRecording, TranscriptionPipeline
+from speech_transcriber.prepared import write_prepared_recording
+from speech_transcriber.transcription.base import TranscriberCapabilities
+
+
+class FakePreprocessor:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def normalize(self, _: Path, destination: Path) -> AudioMetadata:
+        self.calls += 1
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(b"normalized audio")
+        return AudioMetadata("meeting.wav", 2.0)
+
+
+class FakeDiarizer:
+    def __init__(self) -> None:
+        self.calls = 0
+        self.released = False
+
+    def diarize(self, _: Path) -> list[DiarizationSegment]:
+        self.calls += 1
+        return [DiarizationSegment("SPEAKER_00", 0.0, 2.0)]
+
+    def release(self) -> None:
+        self.released = True
+
+
+class FakeTranscriber:
+    def __init__(self) -> None:
+        self.device = "cpu"
+        self.dtype_name = "float32"
+        self.model_reference = "fake/asr"
+        self.capabilities = TranscriberCapabilities(True, True, True, True)
+        self.loaded = False
+        self.load_calls = 0
+        self.released = False
+
+    def load(self) -> None:
+        self.loaded = True
+        self.load_calls += 1
+
+    def transcribe(self, _: NormalizedAudio) -> list[ASRWord]:
+        return [ASRWord("hallo", 0.5, start=0.0)]
+
+    def release(self) -> None:
+        self.released = True
 
 
 def test_prefetch_qwen_includes_the_forced_aligner(monkeypatch: object) -> None:
@@ -20,3 +72,126 @@ def test_compare_defaults_to_all_production_backends() -> None:
     parser = cli.build_parser()
     args = parser.parse_args(["compare", "input.wav", "--output", "output"])
     assert args.models == "parakeet,qwen,nemotron,voxtral"
+
+
+def test_prepare_command_writes_artifact_and_releases_diarizer(
+    tmp_path: Path, monkeypatch: object
+) -> None:
+    preprocessor = FakePreprocessor()
+    diarizer = FakeDiarizer()
+
+    def pipeline_factory(config: object) -> TranscriptionPipeline:
+        return TranscriptionPipeline(  # type: ignore[arg-type]
+            config,
+            diarizer_factory=lambda: diarizer,
+            transcriber_factory=FakeTranscriber,
+            preprocessor=preprocessor,
+        )
+
+    monkeypatch.setattr(cli, "create_default_pipeline", pipeline_factory)  # type: ignore[attr-defined]
+    output = tmp_path / "prepared"
+
+    assert (
+        cli.main(
+            [
+                "prepare",
+                str(tmp_path / "meeting.wav"),
+                "--output",
+                str(output),
+                "--working-directory",
+                str(tmp_path / "work"),
+            ]
+        )
+        == 0
+    )
+
+    assert (preprocessor.calls, diarizer.calls, diarizer.released) == (1, 1, True)
+    assert {path.name for path in output.iterdir()} == {
+        "normalized.wav",
+        "diarization.json",
+        "prepared.json",
+    }
+
+
+def test_transcribe_prepared_uses_only_asr_and_keeps_input_immutable(
+    tmp_path: Path, monkeypatch: object
+) -> None:
+    source = tmp_path / "normalized.wav"
+    source.write_bytes(b"normalized audio")
+    prepared_directory = tmp_path / "prepared"
+    write_prepared_recording(
+        PreparedRecording(
+            NormalizedAudio(source, AudioMetadata("meeting.wav", 2.0)),
+            [DiarizationSegment("SPEAKER_00", 0.0, 2.0)],
+            tmp_path,
+            diarization_model="pyannote/test",
+            language="de-DE",
+        ),
+        prepared_directory,
+    )
+    input_manifest = (prepared_directory / "prepared.json").read_bytes()
+    transcriber = FakeTranscriber()
+    preprocessor = FakePreprocessor()
+
+    def pipeline_factory(config: object) -> TranscriptionPipeline:
+        def unexpected_diarizer() -> FakeDiarizer:
+            raise AssertionError("transcribe-prepared must not construct a diarizer")
+
+        return TranscriptionPipeline(  # type: ignore[arg-type]
+            config,
+            diarizer_factory=unexpected_diarizer,
+            transcriber_factory=lambda: transcriber,
+            preprocessor=preprocessor,
+        )
+
+    monkeypatch.setattr(cli, "create_default_pipeline", pipeline_factory)  # type: ignore[attr-defined]
+    output = tmp_path / "result"
+
+    assert (
+        cli.main(
+            [
+                "transcribe-prepared",
+                "--prepared",
+                str(prepared_directory),
+                "--asr",
+                "parakeet",
+                "--output",
+                str(output),
+                "--working-directory",
+                str(tmp_path / "work"),
+            ]
+        )
+        == 0
+    )
+
+    assert preprocessor.calls == 0
+    assert transcriber.loaded and transcriber.load_calls == 1 and transcriber.released
+    assert (prepared_directory / "prepared.json").read_bytes() == input_manifest
+    assert {path.name for path in output.iterdir()} == {
+        "transcript.json",
+        "transcript.txt",
+        "asr_words.json",
+        "metadata.json",
+    }
+    assert json.loads((output / "transcript.json").read_text(encoding="utf-8"))["metadata"][
+        "diarization_model"
+    ] == "pyannote/test"
+
+
+def test_new_command_parsing() -> None:
+    parser = cli.build_parser()
+    prepare = parser.parse_args(["prepare", "input.wav", "--output", "/tmp/prepared"])
+    transcribe_prepared = parser.parse_args(
+        [
+            "transcribe-prepared",
+            "--prepared",
+            "/tmp/prepared",
+            "--asr",
+            "parakeet",
+            "--output",
+            "/tmp/result",
+        ]
+    )
+
+    assert prepare.input == Path("input.wav")
+    assert transcribe_prepared.prepared == Path("/tmp/prepared")

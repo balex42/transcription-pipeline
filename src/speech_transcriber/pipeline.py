@@ -68,6 +68,9 @@ class PreparedRecording:
     audio: NormalizedAudio
     diarization: list[DiarizationSegment]
     work_directory: Path
+    diarization_model: str | None = None
+    language: str | None = None
+    cleanup_enabled: bool = True
 
 
 class TranscriptionPipeline:
@@ -120,11 +123,21 @@ class TranscriptionPipeline:
             diarization = diarizer.diarize(normalized)
         finally:
             release_model(diarizer)
-        return PreparedRecording(NormalizedAudio(normalized, metadata), diarization, job_directory)
+        return PreparedRecording(
+            NormalizedAudio(normalized, metadata),
+            diarization,
+            job_directory,
+            diarization_model=self.config.pyannote_model,
+            language=self.config.language,
+        )
 
     def cleanup(self, prepared: PreparedRecording) -> None:
         """Remove temporary normalized audio unless debugging retained it."""
-        if not self.config.keep_intermediate_files and prepared.work_directory.exists():
+        if (
+            prepared.cleanup_enabled
+            and not self.config.keep_intermediate_files
+            and prepared.work_directory.exists()
+        ):
             shutil.rmtree(prepared.work_directory)
 
     def transcribe_prepared(
@@ -147,10 +160,10 @@ class TranscriptionPipeline:
                 "dtype": transcriber.dtype_name,
             },
         )
-        transcriber.load()
-        load_seconds = time.monotonic() - load_started
-        transcription_started = time.monotonic()
         try:
+            transcriber.load()
+            load_seconds = time.monotonic() - load_started
+            transcription_started = time.monotonic()
             words = transcriber.transcribe(prepared.audio)
             transcription_seconds = time.monotonic() - transcription_started
             allocated, reserved = peak_cuda_memory(
@@ -168,11 +181,11 @@ class TranscriptionPipeline:
             metadata=prepared.audio.metadata,
             asr_backend=backend,
             asr_model=transcriber.model_reference,
-            diarization_model=self.config.pyannote_model,
+            diarization_model=prepared.diarization_model or self.config.pyannote_model,
             speakers=speakers,
             words=attributed,
             turns=turns,
-            language=self.config.language,
+            language=prepared.language or self.config.language,
         )
         result = PipelineResult(
             transcript=transcript,
@@ -220,7 +233,14 @@ class TranscriptionPipeline:
         records: Iterable[DiarizationSegment | ASRWord | AttributedWord],
     ) -> None:
         path.write_text(
-            json.dumps([asdict(record) for record in records], indent=2) + "\n", encoding="utf-8"
+            json.dumps(
+                [asdict(record) for record in records],
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
         )
 
     @staticmethod

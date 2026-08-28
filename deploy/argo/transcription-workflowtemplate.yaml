@@ -1,0 +1,159 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: speech-transcription
+spec:
+  entrypoint: transcription
+  arguments:
+    parameters:
+      - name: image
+        value: ghcr.io/balex42/transcription-pipeline:latest
+    artifacts:
+      - name: recording
+  volumes:
+    - name: model-cache
+      persistentVolumeClaim:
+        claimName: speech-model-cache
+    - name: cache
+      emptyDir: {}
+    - name: work
+      emptyDir: {}
+  templates:
+    - name: transcription
+      dag:
+        tasks:
+          - name: prepare
+            template: prepare
+            arguments:
+              artifacts:
+                - name: recording
+                  from: "{{workflow.inputs.artifacts.recording}}"
+          - name: parakeet
+            dependencies: [prepare]
+            template: transcribe-prepared
+            arguments:
+              parameters:
+                - name: backend
+                  value: parakeet
+              artifacts:
+                - name: prepared
+                  from: "{{tasks.prepare.outputs.artifacts.prepared}}"
+          - name: qwen
+            dependencies: [prepare]
+            template: transcribe-prepared
+            arguments:
+              parameters:
+                - name: backend
+                  value: qwen
+              artifacts:
+                - name: prepared
+                  from: "{{tasks.prepare.outputs.artifacts.prepared}}"
+          - name: nemotron
+            dependencies: [prepare]
+            template: transcribe-prepared
+            arguments:
+              parameters:
+                - name: backend
+                  value: nemotron
+              artifacts:
+                - name: prepared
+                  from: "{{tasks.prepare.outputs.artifacts.prepared}}"
+          - name: voxtral
+            dependencies: [prepare]
+            template: transcribe-prepared
+            arguments:
+              parameters:
+                - name: backend
+                  value: voxtral
+              artifacts:
+                - name: prepared
+                  from: "{{tasks.prepare.outputs.artifacts.prepared}}"
+    - name: prepare
+      inputs:
+        artifacts:
+          - name: recording
+            path: /input/recording
+      outputs:
+        artifacts:
+          - name: prepared
+            path: /work/prepared
+            archive:
+              none: {}
+            s3:
+              key: runs/{{workflow.uid}}/prepared
+      container:
+        image: "{{workflow.parameters.image}}"
+        args:
+          - prepare
+          - /input/recording
+          - --output
+          - /work/prepared
+          - --working-directory
+          - /work/tmp
+          - --device
+          - cuda
+        env:
+          - name: HF_HOME
+            value: /models/huggingface
+          - name: HF_HUB_OFFLINE
+            value: "1"
+          - name: TRANSFORMERS_OFFLINE
+            value: "1"
+        resources:
+          limits:
+            nvidia.com/gpu: "1"
+        volumeMounts:
+          - name: model-cache
+            mountPath: /models
+            readOnly: true
+          - name: cache
+            mountPath: /cache
+          - name: work
+            mountPath: /work
+    - name: transcribe-prepared
+      inputs:
+        parameters:
+          - name: backend
+        artifacts:
+          - name: prepared
+            path: /work/prepared
+      outputs:
+        artifacts:
+          - name: result
+            path: /work/result
+            archive:
+              none: {}
+            s3:
+              key: runs/{{workflow.uid}}/{{inputs.parameters.backend}}
+      container:
+        image: "{{workflow.parameters.image}}"
+        args:
+          - transcribe-prepared
+          - --prepared
+          - /work/prepared
+          - --asr
+          - "{{inputs.parameters.backend}}"
+          - --output
+          - /work/result
+          - --working-directory
+          - /work/tmp
+          - --device
+          - cuda
+        env:
+          - name: HF_HOME
+            value: /models/huggingface
+          - name: HF_HUB_OFFLINE
+            value: "1"
+          - name: TRANSFORMERS_OFFLINE
+            value: "1"
+        resources:
+          limits:
+            nvidia.com/gpu: "1"
+        volumeMounts:
+          - name: model-cache
+            mountPath: /models
+            readOnly: true
+          - name: cache
+            mountPath: /cache
+          - name: work
+            mountPath: /work

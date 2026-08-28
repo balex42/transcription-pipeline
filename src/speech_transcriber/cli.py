@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import os
 import sys
+from dataclasses import asdict
 from pathlib import Path
 
 from speech_transcriber.comparison import ASRComparisonRunner
@@ -17,6 +19,7 @@ from speech_transcriber.config import (
 )
 from speech_transcriber.errors import TranscriberError
 from speech_transcriber.pipeline import create_default_pipeline
+from speech_transcriber.prepared import load_prepared_recording, write_prepared_recording
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -25,6 +28,14 @@ def build_parser() -> argparse.ArgumentParser:
     commands = parser.add_subparsers(dest="command", required=True)
     transcribe = commands.add_parser("transcribe", help="transcribe one audio recording")
     _add_runtime_options(transcribe, include_asr=True)
+    prepare = commands.add_parser(
+        "prepare", help="normalize and diarize a recording for independent ASR tasks"
+    )
+    _add_prepare_options(prepare)
+    transcribe_prepared = commands.add_parser(
+        "transcribe-prepared", help="transcribe a prepared recording with one ASR backend"
+    )
+    _add_transcribe_prepared_options(transcribe_prepared)
     compare = commands.add_parser(
         "compare", help="run several ASR backends against one prepared recording"
     )
@@ -79,6 +90,46 @@ def _add_runtime_options(parser: argparse.ArgumentParser, include_asr: bool) -> 
     parser.add_argument("--log-level", choices=["DEBUG", "INFO", "WARNING", "ERROR"])
 
 
+def _add_prepare_options(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("input", type=Path)
+    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--working-directory", type=Path)
+    parser.add_argument("--device", choices=["auto", "cuda", "cpu"])
+    parser.add_argument("--pyannote-model")
+    parser.add_argument("--language", help="recording language locale (default: de-DE)")
+    parser.add_argument("--num-speakers", type=int)
+    parser.add_argument("--min-speakers", type=int)
+    parser.add_argument("--max-speakers", type=int)
+    parser.add_argument("--log-level", choices=["DEBUG", "INFO", "WARNING", "ERROR"])
+
+
+def _add_transcribe_prepared_options(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--prepared", type=Path, required=True)
+    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--working-directory", type=Path)
+    parser.add_argument("--device", choices=["auto", "cuda", "cpu"])
+    parser.add_argument("--asr", choices=ASR_BACKENDS, required=True)
+    parser.add_argument("--asr-model", help="Hugging Face model ID or local model directory")
+    parser.add_argument("--qwen-aligner-model", help="Qwen forced-aligner model ID or local path")
+    parser.add_argument("--parakeet-segment-duration", type=float)
+    parser.add_argument("--parakeet-segment-overlap", type=float)
+    parser.add_argument("--qwen-segment-duration", type=float)
+    parser.add_argument("--qwen-segment-overlap", type=float)
+    parser.add_argument("--nemotron-num-lookahead-tokens", type=int)
+    parser.add_argument(
+        "--voxtral-delay-ms", type=int, help="Voxtral streaming delay in ms (default: 2400)"
+    )
+    parser.add_argument(
+        "--voxtral-timestamp-offset-tokens",
+        type=int,
+        help="Voxtral marker timestamp offset in tokens (default: 4)",
+    )
+    parser.add_argument(
+        "--language", help="ASR language locale (default: prepared artifact language)"
+    )
+    parser.add_argument("--log-level", choices=["DEBUG", "INFO", "WARNING", "ERROR"])
+
+
 def main(argv: list[str] | None = None) -> int:
     """Run the CLI and return a shell-compatible status code."""
     args = build_parser().parse_args(argv)
@@ -106,7 +157,15 @@ def main(argv: list[str] | None = None) -> int:
                 if args.asr == "qwen" else None,
             )
             return 0
-        config = _config_from_args(args)
+        if args.command == "transcribe-prepared":
+            prepared = load_prepared_recording(args.prepared)
+            config = _config_from_args(
+                args,
+                input_path=prepared.audio.path,
+                language=args.language or prepared.language,
+            )
+        else:
+            config = _config_from_args(args)
         logging.getLogger(__name__).setLevel(config.log_level)
         pipeline = create_default_pipeline(config)
         if args.command == "compare":
@@ -114,6 +173,24 @@ def main(argv: list[str] | None = None) -> int:
             if len(models) != len(set(models)):
                 raise ValueError("--models must not contain duplicate ASR backends")
             ASRComparisonRunner(pipeline).run(models, config.output_directory)
+        elif args.command == "prepare":
+            prepared = pipeline.prepare()
+            try:
+                write_prepared_recording(prepared, config.output_directory)
+            finally:
+                pipeline.cleanup(prepared)
+        elif args.command == "transcribe-prepared":
+            result, metrics = pipeline.transcribe_prepared(
+                prepared,
+                pipeline.transcriber_factory(),
+                config.asr_backend,
+                config.output_directory,
+            )
+            pipeline.write_records(config.output_directory / "asr_words.json", result.asr_words)
+            (config.output_directory / "metadata.json").write_text(
+                json.dumps(asdict(metrics), ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
         else:
             pipeline.run()
         return 0
@@ -122,29 +199,34 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
 
-def _config_from_args(args: argparse.Namespace) -> PipelineConfig:
+def _config_from_args(
+    args: argparse.Namespace,
+    *,
+    input_path: Path | None = None,
+    language: str | None = None,
+) -> PipelineConfig:
     overrides = {
         "working_directory": args.working_directory,
         "device": args.device,
         "asr_backend": getattr(args, "asr", None),
         "asr_model": getattr(args, "asr_model", None),
-        "qwen_aligner_model": args.qwen_aligner_model,
-        "pyannote_model": args.pyannote_model,
-        "parakeet_segment_duration": args.parakeet_segment_duration,
-        "parakeet_segment_overlap": args.parakeet_segment_overlap,
-        "qwen_segment_duration": args.qwen_segment_duration,
-        "qwen_segment_overlap": args.qwen_segment_overlap,
-        "nemotron_num_lookahead_tokens": args.nemotron_num_lookahead_tokens,
-        "voxtral_delay_ms": args.voxtral_delay_ms,
-        "voxtral_timestamp_offset_tokens": args.voxtral_timestamp_offset_tokens,
-        "language": args.language,
-        "num_speakers": args.num_speakers,
-        "min_speakers": args.min_speakers,
-        "max_speakers": args.max_speakers,
-        "keep_intermediate_files": args.keep_intermediate,
-        "log_level": args.log_level,
+        "qwen_aligner_model": getattr(args, "qwen_aligner_model", None),
+        "pyannote_model": getattr(args, "pyannote_model", None),
+        "parakeet_segment_duration": getattr(args, "parakeet_segment_duration", None),
+        "parakeet_segment_overlap": getattr(args, "parakeet_segment_overlap", None),
+        "qwen_segment_duration": getattr(args, "qwen_segment_duration", None),
+        "qwen_segment_overlap": getattr(args, "qwen_segment_overlap", None),
+        "nemotron_num_lookahead_tokens": getattr(args, "nemotron_num_lookahead_tokens", None),
+        "voxtral_delay_ms": getattr(args, "voxtral_delay_ms", None),
+        "voxtral_timestamp_offset_tokens": getattr(args, "voxtral_timestamp_offset_tokens", None),
+        "language": language if language is not None else getattr(args, "language", None),
+        "num_speakers": getattr(args, "num_speakers", None),
+        "min_speakers": getattr(args, "min_speakers", None),
+        "max_speakers": getattr(args, "max_speakers", None),
+        "keep_intermediate_files": getattr(args, "keep_intermediate", False),
+        "log_level": getattr(args, "log_level", None),
     }
-    return PipelineConfig.from_environment(args.input, args.output, overrides)
+    return PipelineConfig.from_environment(input_path or args.input, args.output, overrides)
 
 
 def _prefetch(asr_model: str, pyannote_model: str, qwen_aligner_model: str | None = None) -> None:

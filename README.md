@@ -76,6 +76,8 @@ python3.11 -m venv .venv
 
 ## Commands
 
+### Local
+
 ```bash
 speech-transcriber transcribe audio.m4a --asr parakeet --output ./result/parakeet --device cuda
 speech-transcriber transcribe audio.m4a --asr qwen --output ./result/qwen --device cuda
@@ -93,6 +95,33 @@ speech-transcriber compare audio.m4a \
 
 Comparison executes ASR backends sequentially and releases each model before loading the next one. It does not force common segments on models with incompatible long-form behavior.
 
+### Argo-Style Split Execution
+
+Prepare once on a writable work volume. This normalizes the input and runs pyannote exactly once:
+
+```bash
+speech-transcriber prepare meeting.wav \
+  --output /work/prepared \
+  --working-directory /work/tmp \
+  --device cuda
+```
+
+Run one independent ASR task for each backend using the prepared directory as a read-only input:
+
+```bash
+speech-transcriber transcribe-prepared \
+  --prepared /work/prepared \
+  --asr parakeet \
+  --output /work/parakeet \
+  --working-directory /work/tmp \
+  --device cuda
+```
+
+Repeat `transcribe-prepared` with `qwen`, `nemotron`, or `voxtral`. The command does not
+normalize audio or initialize pyannote, and it never removes or modifies the prepared input.
+Argo Workflows should transfer `/work/prepared` and each backend result through its configured
+artifact repository; the application only reads and writes local filesystem paths.
+
 ### Backend Configuration
 
 CLI values override environment values, which override defaults.
@@ -107,6 +136,8 @@ PARAKEET_SEGMENT_OVERLAP
 QWEN_SEGMENT_DURATION
 QWEN_SEGMENT_OVERLAP
 NEMOTRON_NUM_LOOKAHEAD_TOKENS
+VOXTRAL_DELAY_MS
+VOXTRAL_TIMESTAMP_OFFSET_TOKENS
 LANGUAGE
 DEVICE
 WORKING_DIRECTORY
@@ -146,6 +177,36 @@ comparison/
 Each backend metadata file records model/device/dtype, load time, ASR time, total backend time, RTF, peak CUDA memory, backend configuration, and backend-specific metrics. Forced-alignment backends record recognition, recognizer release, aligner load, alignment, and aligner release timings; Qwen also records interpolated timestamps plus clipped/dropped trailing-boundary words and their maximum overflow. Nemotron records language, lookahead, streaming latency, and `stream_buffers_processed`; Voxtral records native delay, right padding, stream buffer counts, and any `inferred_final_emission_groups` used for an unmarked EOF tail.
 
 With `--keep-intermediate`, generic diarization, ASR words, and attributed words are retained under `OUTPUT/intermediate`. Backend-specific state remains internal and is never added to the canonical transcript schema.
+
+### Worker Artifact Contracts
+
+`prepare` writes a versioned prepared artifact containing only these files:
+
+```text
+prepared/
+├── normalized.wav
+├── diarization.json
+└── prepared.json
+```
+
+`normalized.wav` is 16 kHz mono 16-bit PCM WAV. `diarization.json` contains the canonical
+`DiarizationSegment` records. `prepared.json` has `schema_version: 1`, relative filenames,
+normalized audio metadata, diarization model provenance, and language. It contains no absolute
+host paths.
+
+Each `transcribe-prepared` task writes exactly these durable result files:
+
+```text
+result/
+├── transcript.json
+├── transcript.txt
+├── asr_words.json
+└── metadata.json
+```
+
+`transcript.json` is the existing canonical transcript schema. `asr_words.json` contains the
+backend-neutral `ASRWord` records. `metadata.json` serializes the existing `ASRRunMetadata`,
+including timings, CUDA peak memory, package versions, and backend metrics/configuration.
 
 ## Offline and Air-Gapped Models
 
@@ -207,6 +268,12 @@ podman run --rm --device nvidia.com/gpu=all \
 ```
 
 `deploy/k8s/job.example.yaml` is a generic `batch/v1` Job that requests one GPU and demonstrates the same mounted-local-model offline mode on any Kubernetes cluster. No model weights or secrets are baked into the image.
+
+`deploy/argo/transcription-workflowtemplate.yaml` is an example Argo `WorkflowTemplate`. It uses
+a `prepare` DAG task followed by four GPU-limited `transcribe-prepared` tasks, with Argo artifact
+inputs/outputs and workflow-UID-scoped artifact keys. Configure the cluster artifact repository
+and the `speech-model-cache` PVC outside this repository; the template contains no object-storage
+credentials or storage commands.
 
 ## Verification
 

@@ -56,6 +56,8 @@ spec:
               mountPath: /models
             - name: work
               mountPath: /work
+            - name: cache
+              mountPath: /cache
       volumes:
         - name: input
           persistentVolumeClaim:
@@ -67,4 +69,6 @@ spec:
           persistentVolumeClaim:
             claimName: model-cache
         - name: work
+          emptyDir: {}
+        - name: cache
           emptyDir: {}
