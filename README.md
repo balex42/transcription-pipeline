@@ -2,6 +2,10 @@
 
 Local, batch-friendly speech transcription with anonymous pyannote Community-1 diarization. It has no summarization, API service, remote inference, NeMo, or vLLM dependency.
 
+## License
+
+This project is licensed under the [Apache License 2.0](LICENSE). Model weights are not distributed with this repository and remain subject to the licenses and terms of their respective providers.
+
 ## Architecture
 
 ```mermaid
