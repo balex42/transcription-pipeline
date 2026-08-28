@@ -104,6 +104,9 @@ def test_voxtral_uses_one_continuous_generation_and_end_only_word_timestamps(
     assert [call["is_first_audio_chunk"] for call in processor.calls] == [True, False, False, False]
     assert all(call["is_streaming"] is True for call in processor.calls)
     assert transcriber.backend_metrics["stream_buffers_processed"] == 4.0
+    assert transcriber.backend_metrics["native_emission_groups"] == 2.0
+    assert transcriber.backend_metrics["multi_word_emission_groups"] == 0.0
+    assert transcriber.backend_metrics["inferred_final_emission_groups"] == 0.0
     assert transcriber.backend_configuration["num_right_pad_tokens"] == 1
 
 
@@ -112,13 +115,65 @@ def test_voxtral_timestamp_parser_rejects_text_without_a_native_end_marker() -> 
         parse_voxtral_words([10], ["Hallo"], lambda _: "Hallo", 1, 0.08, 1.0)
 
 
-def test_voxtral_timestamp_parser_clamps_delayed_end_times_to_the_audio_timeline() -> None:
+def test_voxtral_timestamp_parser_infers_a_final_group_after_the_last_native_marker() -> None:
+    metrics: dict[str, float] = {}
     words = parse_voxtral_words(
-        [99, 10, 99],
-        ["[STREAMING_WORD]", "Hallo", "[STREAMING_WORD]"],
+        [99, 10],
+        ["[STREAMING_WORD]", "Hallo"],
         lambda _: "Hallo",
         6,
         0.08,
         1.0,
+        metrics,
     )
-    assert words == [type(words[0])("Hallo", 0.0)]
+    assert [(word.text, word.start, word.end) for word in words] == [("Hallo", None, 1.0)]
+    assert metrics == {
+        "inferred_final_emission_groups": 1.0,
+        "inferred_final_words": 1.0,
+    }
+
+
+def test_voxtral_timestamp_parser_distributes_a_multi_word_final_tail() -> None:
+    metrics: dict[str, float] = {}
+    words = parse_voxtral_words(
+        [99, 10],
+        ["[STREAMING_WORD]", "bis"],
+        lambda _: "bis morgen dann",
+        0,
+        0.08,
+        1.0,
+        metrics,
+    )
+    assert [(word.text, word.end) for word in words] == [
+        ("bis", 1 / 3),
+        ("morgen", 2 / 3),
+        ("dann", 1.0),
+    ]
+    assert metrics == {
+        "inferred_final_emission_groups": 1.0,
+        "inferred_final_words": 3.0,
+        "multi_word_emission_groups": 1.0,
+    }
+
+
+def test_voxtral_timestamp_parser_keeps_marker_closed_groups_and_clamps_them() -> None:
+    words = parse_voxtral_words(
+        [10, 99, 11, 99],
+        ["Hallo", "[STREAMING_WORD]", "Welt", "[STREAMING_WORD]"],
+        lambda ids: "Hallo" if ids == [10] else "Welt",
+        0,
+        0.8,
+        1.0,
+    )
+    assert [(word.text, word.end) for word in words] == [("Hallo", 0.8), ("Welt", 1.0)]
+
+
+def test_voxtral_timestamp_parser_ignores_special_tokens_after_a_marker() -> None:
+    assert parse_voxtral_words(
+        [99, 2],
+        ["[STREAMING_WORD]", "</s>"],
+        lambda _: "",
+        0,
+        0.08,
+        1.0,
+    ) == []

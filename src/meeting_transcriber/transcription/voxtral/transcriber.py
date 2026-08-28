@@ -119,6 +119,13 @@ class VoxtralTranscriber(Transcriber):
             seconds_per_token = (
                 _processor_int(processor, "raw_audio_length_per_tok") / audio.metadata.sample_rate
             )
+            for name in (
+                "native_emission_groups",
+                "multi_word_emission_groups",
+                "inferred_final_emission_groups",
+                "inferred_final_words",
+            ):
+                self.backend_metrics[name] = 0.0
             words = parse_voxtral_words(
                 generated,
                 pieces,
@@ -126,6 +133,7 @@ class VoxtralTranscriber(Transcriber):
                 _processor_int(processor, "num_delay_tokens", allow_zero=True),
                 seconds_per_token,
                 audio.metadata.duration_seconds,
+                self.backend_metrics,
             )
             self.backend_metrics["stream_buffers_processed"] = float(self._state.buffers_processed)
             self.backend_metrics["stream_samples_submitted"] = float(self._state.samples_submitted)
