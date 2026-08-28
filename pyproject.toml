@@ -3,9 +3,9 @@ requires = ["hatchling==1.27.0"]
 build-backend = "hatchling.build"
 
 [project]
-name = "meeting-transcriber"
+name = "speech-transcriber"
 version = "0.1.0"
-description = "Local, speaker-attributed German meeting transcription"
+description = "Local, speaker-attributed speech transcription"
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
 license = {text = "Apache-2.0"}
@@ -30,10 +30,10 @@ dev = [
 ]
 
 [project.scripts]
-meeting-transcriber = "meeting_transcriber.cli:main"
+speech-transcriber = "speech_transcriber.cli:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/meeting_transcriber"]
+packages = ["src/speech_transcriber"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -49,7 +49,7 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 [tool.mypy]
 python_version = "3.11"
 strict = true
-files = ["src/meeting_transcriber"]
+files = ["src/speech_transcriber"]
 exclude = ["tests"]
 
 [[tool.mypy.overrides]]

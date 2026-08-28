@@ -1,7 +1,7 @@
 import numpy as np
 
-from meeting_transcriber.models import ASRWord, AudioSegment
-from meeting_transcriber.transcription.segments import reconcile_segment_words
+from speech_transcriber.models import ASRWord, AudioSegment
+from speech_transcriber.transcription.segments import reconcile_segment_words
 
 
 def segments() -> list[AudioSegment]:

@@ -1,7 +1,7 @@
 import pytest
 
-from meeting_transcriber.errors import ASROutputError
-from meeting_transcriber.transcription.parakeet import normalize_parakeet_timestamps
+from speech_transcriber.errors import ASROutputError
+from speech_transcriber.transcription.parakeet import normalize_parakeet_timestamps
 
 
 def test_normalizes_word_timestamps_and_preserves_punctuation() -> None:

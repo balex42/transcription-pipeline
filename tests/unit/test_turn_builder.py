@@ -1,5 +1,5 @@
-from meeting_transcriber.models import AttributedWord
-from meeting_transcriber.turns.builder import TurnBuilder
+from speech_transcriber.models import AttributedWord
+from speech_transcriber.turns.builder import TurnBuilder
 
 
 def word(text: str, start: float, end: float, speaker: str) -> AttributedWord:

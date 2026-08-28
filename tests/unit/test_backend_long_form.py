@@ -6,8 +6,8 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from meeting_transcriber.models import AudioMetadata, NormalizedAudio
-from meeting_transcriber.transcription.parakeet import ParakeetTranscriber
+from speech_transcriber.models import AudioMetadata, NormalizedAudio
+from speech_transcriber.transcription.parakeet import ParakeetTranscriber
 
 
 class Inputs(dict[str, object]):
@@ -35,7 +35,7 @@ class ParakeetModel:
 
 
 def audio(tmp_path: Path) -> NormalizedAudio:
-    path = tmp_path / "meeting.wav"
+    path = tmp_path / "audio.wav"
     with wave.open(str(path), "wb") as wav:
         wav.setnchannels(1)
         wav.setsampwidth(2)

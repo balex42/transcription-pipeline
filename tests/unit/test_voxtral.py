@@ -6,10 +6,10 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from meeting_transcriber.errors import VoxtralTimestampError
-from meeting_transcriber.models import AudioMetadata, NormalizedAudio
-from meeting_transcriber.transcription.voxtral.timestamps import parse_voxtral_words
-from meeting_transcriber.transcription.voxtral.transcriber import VoxtralTranscriber
+from speech_transcriber.errors import VoxtralTimestampError
+from speech_transcriber.models import AudioMetadata, NormalizedAudio
+from speech_transcriber.transcription.voxtral.timestamps import parse_voxtral_words
+from speech_transcriber.transcription.voxtral.transcriber import VoxtralTranscriber
 
 
 class Inputs(dict[str, object]):
@@ -74,7 +74,7 @@ class Model:
 
 
 def audio(tmp_path: Path) -> NormalizedAudio:
-    path = tmp_path / "meeting.wav"
+    path = tmp_path / "audio.wav"
     with wave.open(str(path), "wb") as wav:
         wav.setnchannels(1)
         wav.setsampwidth(2)

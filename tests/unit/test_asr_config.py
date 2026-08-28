@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from meeting_transcriber.config import (
+from speech_transcriber.config import (
     DEFAULT_NEMOTRON_MODEL,
     DEFAULT_NEMOTRON_NUM_LOOKAHEAD_TOKENS,
     DEFAULT_PARAKEET_MODEL,

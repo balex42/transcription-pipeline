@@ -3,8 +3,8 @@ from pathlib import Path
 
 import numpy as np
 
-from meeting_transcriber.audio.segmenter import AudioSegmenter
-from meeting_transcriber.models import AudioMetadata, NormalizedAudio
+from speech_transcriber.audio.segmenter import AudioSegmenter
+from speech_transcriber.models import AudioMetadata, NormalizedAudio
 
 
 def write_wav(path: Path, seconds: float) -> None:

@@ -5,15 +5,15 @@ from pathlib import Path
 
 import pytest
 
-from meeting_transcriber.comparison import ASRComparisonRunner
-from meeting_transcriber.config import PipelineConfig
-from meeting_transcriber.models import ASRWord, AudioMetadata, DiarizationSegment, NormalizedAudio
-from meeting_transcriber.pipeline import MeetingTranscriptionPipeline, create_default_pipeline
-from meeting_transcriber.transcription.base import TranscriberCapabilities
+from speech_transcriber.comparison import ASRComparisonRunner
+from speech_transcriber.config import PipelineConfig
+from speech_transcriber.models import ASRWord, AudioMetadata, DiarizationSegment, NormalizedAudio
+from speech_transcriber.pipeline import TranscriptionPipeline, create_default_pipeline
+from speech_transcriber.transcription.base import TranscriberCapabilities
 
 real_models_only = pytest.mark.skipif(
     os.environ.get("RUN_MODEL_TESTS") != "1",
-    reason="set RUN_MODEL_TESTS=1 and MODEL_TEST_AUDIO=/path/to/German.wav to run real models",
+    reason="set RUN_MODEL_TESTS=1 and MODEL_TEST_AUDIO=/path/to/audio.wav to run real models",
 )
 
 
@@ -64,11 +64,11 @@ def test_pipeline_with_model_test_doubles(tmp_path: Path) -> None:
     diarizer = FakeDiarizer()
     transcriber = FakeTranscriber()
     config = PipelineConfig(
-        input_path=tmp_path / "meeting.wav",
+        input_path=tmp_path / "audio.wav",
         output_directory=tmp_path / "result",
         working_directory=tmp_path / "work",
     )
-    pipeline = MeetingTranscriptionPipeline(
+    pipeline = TranscriptionPipeline(
         config,
         diarizer_factory=lambda: diarizer,
         transcriber_factory=lambda: transcriber,
@@ -88,8 +88,8 @@ def test_comparison_prepares_once_and_separates_backend_outputs(tmp_path: Path) 
     preprocessor = FakePreprocessor()
     diarizer = FakeDiarizer()
     transcribers: list[FakeTranscriber] = []
-    config = PipelineConfig(tmp_path / "meeting.wav", tmp_path / "comparison", tmp_path / "work")
-    pipeline = MeetingTranscriptionPipeline(
+    config = PipelineConfig(tmp_path / "audio.wav", tmp_path / "comparison", tmp_path / "work")
+    pipeline = TranscriptionPipeline(
         config,
         diarizer_factory=lambda: diarizer,
         transcriber_factory=FakeTranscriber,

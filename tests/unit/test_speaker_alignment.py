@@ -1,5 +1,5 @@
-from meeting_transcriber.alignment.speaker import UNKNOWN_SPEAKER, OverlapSpeakerAligner
-from meeting_transcriber.models import ASRWord, DiarizationSegment
+from speech_transcriber.alignment.speaker import UNKNOWN_SPEAKER, OverlapSpeakerAligner
+from speech_transcriber.models import ASRWord, DiarizationSegment
 
 
 def test_one_speaker() -> None:

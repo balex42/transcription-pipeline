@@ -1,6 +1,6 @@
-# German Meeting Transcriber
+# Speech Transcription Pipeline
 
-Local, batch-friendly German meeting transcription with anonymous pyannote Community-1 diarization. It has no summarization, API service, remote inference, NeMo, or vLLM dependency.
+Local, batch-friendly speech transcription with anonymous pyannote Community-1 diarization. It has no summarization, API service, remote inference, NeMo, or vLLM dependency.
 
 ## Architecture
 
@@ -8,7 +8,7 @@ Local, batch-friendly German meeting transcription with anonymous pyannote Commu
 flowchart TD
     input[Input recording] --> normalize[AudioPreprocessor\nffmpeg: 16 kHz mono PCM WAV]
     normalize --> audio[NormalizedAudio]
-    audio --> diarize[Pyannote Community-1\nwhole-meeting diarization]
+    audio --> diarize[Pyannote Community-1\nwhole-recording diarization]
     diarize --> timeline[Global speaker timeline]
     timeline --> release[Release diarization model]
     audio --> transcriber[Selected Transcriber\nreceives whole recording]
@@ -33,13 +33,17 @@ Audio segmentation is not part of the generic pipeline. Each ASR backend owns it
 
 - `parakeet`: `nvidia/parakeet-tdt-0.6b-v3`. Native TDT word timestamps, punctuation, capitalization, and internal 180-second segments with 15-second overlap.
 - `qwen`: `Qwen/Qwen3-ASR-1.7B-hf` plus `Qwen/Qwen3-ForcedAligner-0.6B-hf`. Qwen recognizes bounded 240-second internal segments with 15-second overlap, releases ASR, aligns all recognized segments once, then reconciles them. Collapsed 80 ms-grid boundaries are interpolated and reported in metadata. The aligner limit is 300 seconds.
-- `nemotron`: `nvidia/nemotron-3.5-asr-streaming-0.6b`. Native Transformers RNNT cache-aware streaming, explicit `de-DE` conditioning, native token emission timestamps, and internal token-to-word aggregation. Batch transcription defaults to 13 lookahead tokens (1.12s latency) for the model's highest-accuracy streaming configuration. It does not issue independent ASR requests for long-form audio.
+- `nemotron`: `nvidia/nemotron-3.5-asr-streaming-0.6b`. Native Transformers RNNT cache-aware streaming, explicit language conditioning, native token emission timestamps, and internal token-to-word aggregation. Batch transcription defaults to 13 lookahead tokens (1.12s latency) for the model's highest-accuracy streaming configuration. It does not issue independent ASR requests for long-form audio.
 - `voxtral`: `mistralai/Voxtral-Mini-4B-Realtime-2602`. Native Transformers cache-aware streaming in one continuous `generate()` session using processor-defined buffers and EOF padding. `[STREAMING_WORD]` token positions provide approximate emission-group end times; starts remain unset for speaker alignment to infer.
-- Diarization: `pyannote/speaker-diarization-community-1` runs once over the normalized full meeting.
+- Diarization: `pyannote/speaker-diarization-community-1` runs once over the normalized full recording.
 
 Nemotron word intervals are aggregates of RNNT token emission times, not manually aligned acoustic boundaries. Leading-space tokenizer markers start words; trailing punctuation attaches to the preceding word; opening punctuation attaches to the following lexical token.
 
 All adapters use deterministic inference, `model.eval()`, `torch.inference_mode()`, and `trust_remote_code=False`. CUDA uses FP16 on Turing-class GPUs and BF16 only when PyTorch verifies support; CPU uses FP32.
+
+## Language
+
+The pipeline is language-agnostic. The default ASR language is `de-DE` and can be changed with the `LANGUAGE` environment variable or the `--language` CLI flag. Qwen and Nemotron accept a locale such as `de-DE`; the Qwen ASR and forced-aligner stages use the base language code (for example `de`).
 
 ## Dependencies
 
@@ -69,16 +73,16 @@ python3.11 -m venv .venv
 ## Commands
 
 ```bash
-meeting-transcriber transcribe meeting.m4a --asr parakeet --output ./result/parakeet --device cuda
-meeting-transcriber transcribe meeting.m4a --asr qwen --output ./result/qwen --device cuda
-meeting-transcriber transcribe meeting.m4a --asr nemotron --output ./result/nemotron --device cuda
-meeting-transcriber transcribe meeting.m4a --asr voxtral --output ./result/voxtral --device cuda
+speech-transcriber transcribe audio.m4a --asr parakeet --output ./result/parakeet --device cuda
+speech-transcriber transcribe audio.m4a --asr qwen --output ./result/qwen --device cuda
+speech-transcriber transcribe audio.m4a --asr nemotron --output ./result/nemotron --device cuda
+speech-transcriber transcribe audio.m4a --asr voxtral --output ./result/voxtral --device cuda
 ```
 
 Compare all production configurations with one normalization and one diarization pass:
 
 ```bash
-meeting-transcriber compare meeting.m4a \
+speech-transcriber compare audio.m4a \
   --models parakeet,qwen,nemotron,voxtral \
   --output ./comparison --device cuda
 ```
@@ -119,7 +123,7 @@ Voxtral derives its first/subsequent buffers, transcript delay, and right EOF pa
 
 ## Output and Metrics
 
-`OUTPUT/transcript.json` is the canonical versioned output. Its word timestamps are seconds from the beginning of the normalized meeting and are compatible with the pyannote timeline.
+`OUTPUT/transcript.json` is the canonical versioned output. Its word timestamps are seconds from the beginning of the normalized recording and are compatible with the pyannote timeline.
 
 ```text
 comparison/
@@ -144,10 +148,10 @@ With `--keep-intermediate`, generic diarization, ASR words, and attributed words
 On an approved connected staging system, prefetch artifacts:
 
 ```bash
-HF_TOKEN=hf_... meeting-transcriber prefetch-models --asr parakeet
-HF_TOKEN=hf_... meeting-transcriber prefetch-models --asr qwen
-HF_TOKEN=hf_... meeting-transcriber prefetch-models --asr nemotron
-HF_TOKEN=hf_... meeting-transcriber prefetch-models --asr voxtral
+HF_TOKEN=hf_... speech-transcriber prefetch-models --asr parakeet
+HF_TOKEN=hf_... speech-transcriber prefetch-models --asr qwen
+HF_TOKEN=hf_... speech-transcriber prefetch-models --asr nemotron
+HF_TOKEN=hf_... speech-transcriber prefetch-models --asr voxtral
 ```
 
 Qwen prefetch includes the configured Qwen forced-aligner artifact.
@@ -172,17 +176,17 @@ TRANSFORMERS_OFFLINE=1 \
 ASR_BACKEND=nemotron \
 ASR_MODEL=/models/nemotron-3.5-asr-streaming-0.6b \
 PYANNOTE_MODEL=/models/pyannote-community-1 \
-meeting-transcriber transcribe /data/meeting.m4a --output /data/result --device cuda
+speech-transcriber transcribe /data/audio.m4a --output /data/result --device cuda
 ```
 
 With all required artifacts mounted locally, inference performs no network access, telemetry, NVIDIA API calls, or remote-code loading.
 
-## Podman and OpenShift
+## Podman and Kubernetes
 
 Build the single non-root, arbitrary-UID compatible image:
 
 ```bash
-podman build -t meeting-transcriber:local -f Containerfile .
+podman build -t speech-transcriber:local -f Containerfile .
 ```
 
 ```bash
@@ -194,11 +198,11 @@ podman run --rm --device nvidia.com/gpu=all \
   -e PYANNOTE_MODEL=/models/pyannote-community-1 \
   -v "$PWD/input:/input:ro,Z" -v "$PWD/result:/output:Z" \
   -v "$PWD/work:/work:Z" -v "$PWD/models:/models:ro,Z" \
-  meeting-transcriber:local transcribe /input/meeting.m4a \
+  speech-transcriber:local transcribe /input/audio.m4a \
   --output /output --working-directory /work --device cuda
 ```
 
-`deploy/openshift/job.example.yaml` requests one GPU and demonstrates the same mounted-local-model offline model. No model weights or secrets are baked into the image.
+`deploy/k8s/job.example.yaml` is a generic `batch/v1` Job that requests one GPU and demonstrates the same mounted-local-model offline mode on any Kubernetes cluster. No model weights or secrets are baked into the image.
 
 ## Verification
 
@@ -207,7 +211,7 @@ Normal tests download no models and require no GPU:
 ```bash
 uv run pytest
 uv run ruff check .
-uv run mypy src/meeting_transcriber
+uv run mypy src/speech_transcriber
 ```
 
-An optional real-model smoke test requires predownloaded local artifacts, a German WAV, and `RUN_MODEL_TESTS=1 MODEL_TEST_BACKEND=nemotron MODEL_TEST_AUDIO=/path/to/audio.wav uv run pytest tests/integration`.
+An optional real-model smoke test requires predownloaded local artifacts, a WAV, and `RUN_MODEL_TESTS=1 MODEL_TEST_BACKEND=nemotron MODEL_TEST_AUDIO=/path/to/audio.wav uv run pytest tests/integration`.

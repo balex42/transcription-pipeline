@@ -5,9 +5,9 @@ from pathlib import Path
 
 import numpy as np
 
-from meeting_transcriber.models import ASRWord, AudioMetadata, AudioSegment, NormalizedAudio
-from meeting_transcriber.transcription.base import TranscriberCapabilities
-from meeting_transcriber.transcription.forced_alignment import ForcedAlignmentTranscriber
+from speech_transcriber.models import ASRWord, AudioMetadata, AudioSegment, NormalizedAudio
+from speech_transcriber.transcription.base import TranscriberCapabilities
+from speech_transcriber.transcription.forced_alignment import ForcedAlignmentTranscriber
 
 
 class Recognizer:
@@ -48,7 +48,7 @@ class Aligner:
 
 
 def audio(tmp_path: Path) -> NormalizedAudio:
-    path = tmp_path / "meeting.wav"
+    path = tmp_path / "audio.wav"
     with wave.open(str(path), "wb") as wav:
         wav.setnchannels(1)
         wav.setsampwidth(2)

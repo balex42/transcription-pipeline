@@ -2,20 +2,20 @@ from pathlib import Path
 
 import pytest
 
-from meeting_transcriber.config import (
+from speech_transcriber.config import (
     DEFAULT_NEMOTRON_MODEL,
     DEFAULT_PARAKEET_MODEL,
     DEFAULT_QWEN_MODEL,
     DEFAULT_VOXTRAL_MODEL,
     PipelineConfig,
 )
-from meeting_transcriber.errors import UnsupportedASRBackendError
-from meeting_transcriber.transcription.base import TranscriberCapabilities
-from meeting_transcriber.transcription.factory import create_transcriber
-from meeting_transcriber.transcription.nemotron import NemotronTranscriber
-from meeting_transcriber.transcription.parakeet import ParakeetTranscriber
-from meeting_transcriber.transcription.qwen import QwenTranscriber
-from meeting_transcriber.transcription.voxtral import VoxtralTranscriber
+from speech_transcriber.errors import UnsupportedASRBackendError
+from speech_transcriber.transcription.base import TranscriberCapabilities
+from speech_transcriber.transcription.factory import create_transcriber
+from speech_transcriber.transcription.nemotron import NemotronTranscriber
+from speech_transcriber.transcription.parakeet import ParakeetTranscriber
+from speech_transcriber.transcription.qwen import QwenTranscriber
+from speech_transcriber.transcription.voxtral import VoxtralTranscriber
 
 
 def config(backend: str, model: str | None = None) -> PipelineConfig:

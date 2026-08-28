@@ -22,7 +22,7 @@ RUN python -m pip install --no-cache-dir uv==0.11.32 \
     && UV_CACHE_DIR=/tmp/uv-cache uv sync --frozen --no-dev \
     && rm -rf /tmp/uv-cache
 
-# OpenShift assigns an arbitrary UID that is normally a member of group 0.
+# The container runs as an arbitrary non-root UID that is normally a member of group 0.
 USER 1001
-ENTRYPOINT ["/app/.venv/bin/python", "-m", "meeting_transcriber"]
+ENTRYPOINT ["/app/.venv/bin/python", "-m", "speech_transcriber"]
 CMD ["--help"]

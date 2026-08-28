@@ -6,9 +6,9 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from meeting_transcriber.errors import NemotronStreamingError
-from meeting_transcriber.models import AudioMetadata, NormalizedAudio
-from meeting_transcriber.transcription.nemotron import (
+from speech_transcriber.errors import NemotronStreamingError
+from speech_transcriber.models import AudioMetadata, NormalizedAudio
+from speech_transcriber.transcription.nemotron import (
     NemotronTranscriber,
     aggregate_nemotron_tokens,
 )
@@ -74,7 +74,7 @@ class Model:
 
 
 def audio(tmp_path: Path) -> NormalizedAudio:
-    path = tmp_path / "meeting.wav"
+    path = tmp_path / "audio.wav"
     with wave.open(str(path), "wb") as wav:
         wav.setnchannels(1)
         wav.setsampwidth(2)
@@ -106,7 +106,7 @@ def test_nemotron_uses_one_cache_aware_generation_for_all_stream_buffers(tmp_pat
     assert transcriber.backend_metrics["stream_buffers_processed"] == 3.0
 
 
-def test_nemotron_resets_streaming_state_for_each_meeting(tmp_path: Path) -> None:
+def test_nemotron_resets_streaming_state_for_each_recording(tmp_path: Path) -> None:
     transcriber = NemotronTranscriber("/models/nemotron", "cpu")
     transcriber._processor = Processor()
     transcriber._model = Model()

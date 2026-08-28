@@ -4,13 +4,13 @@ import numpy as np
 import pytest
 import torch
 
-from meeting_transcriber.errors import QwenAlignmentError
-from meeting_transcriber.models import AudioSegment
-from meeting_transcriber.transcription.qwen.forced_aligner import (
+from speech_transcriber.errors import QwenAlignmentError
+from speech_transcriber.models import AudioSegment
+from speech_transcriber.transcription.qwen.forced_aligner import (
     QwenForcedAligner,
     normalize_qwen_alignment,
 )
-from meeting_transcriber.transcription.segments import reconcile_segment_words
+from speech_transcriber.transcription.segments import reconcile_segment_words
 
 
 class Inputs(dict[str, object]):
@@ -63,6 +63,16 @@ def test_forced_aligner_normalizes_native_word_boundaries() -> None:
     assert processor.request["language"] == "de"
 
 
+def test_forced_aligner_reduces_locale_to_base_language_code() -> None:
+    aligner = QwenForcedAligner("/models/aligner", "cpu", language="fr-FR")
+    processor = Processor()
+    aligner._processor = processor
+    aligner._model = Model()
+    aligner.align(segment(), "Guten Morgen")
+    assert processor.request is not None
+    assert processor.request["language"] == "fr"
+
+
 def test_forced_aligner_rejects_material_transcript_divergence() -> None:
     aligner = QwenForcedAligner("/models/aligner", "cpu")
     aligner._processor = Processor()
@@ -71,7 +81,7 @@ def test_forced_aligner_rejects_material_transcript_divergence() -> None:
         aligner.align(segment(), "eins zwei drei vier fünf sechs sieben acht neun zehn")
 
 
-def test_qwen_reconciler_converts_segment_boundaries_to_meeting_offsets() -> None:
+def test_qwen_reconciler_converts_segment_boundaries_to_recording_offsets() -> None:
     words = normalize_qwen_alignment(
         [{"text": "Wort", "start_time": 0.2, "end_time": 0.6}], segment()
     )

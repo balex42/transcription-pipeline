@@ -1,5 +1,5 @@
-from meeting_transcriber import cli
-from meeting_transcriber.config import DEFAULT_PYANNOTE_MODEL, DEFAULT_QWEN_ALIGNER_MODEL
+from speech_transcriber import cli
+from speech_transcriber.config import DEFAULT_PYANNOTE_MODEL, DEFAULT_QWEN_ALIGNER_MODEL
 
 
 def test_prefetch_qwen_includes_the_forced_aligner(monkeypatch: object) -> None:
