@@ -13,7 +13,6 @@ DEFAULT_QWEN_MODEL = "Qwen/Qwen3-ASR-1.7B-hf"
 DEFAULT_NEMOTRON_MODEL = "nvidia/nemotron-3.5-asr-streaming-0.6b"
 DEFAULT_NEMOTRON_NUM_LOOKAHEAD_TOKENS = 13
 DEFAULT_VOXTRAL_MODEL = "mistralai/Voxtral-Mini-4B-Realtime-2602"
-DEFAULT_COHERE_MODEL = "CohereLabs/cohere-transcribe-03-2026"
 DEFAULT_VOXTRAL_DELAY_MS = 2400
 DEFAULT_VOXTRAL_TIMESTAMP_OFFSET_TOKENS = 4
 VOXTRAL_MAX_DELAY_MS = 2400
@@ -21,21 +20,17 @@ VOXTRAL_MIN_DELAY_MS = 80
 VOXTRAL_DELAY_STEP_MS = 80
 VOXTRAL_MAX_TIMESTAMP_OFFSET_TOKENS = 30
 DEFAULT_PYANNOTE_MODEL = "pyannote/speaker-diarization-community-1"
-ASR_BACKENDS = ("parakeet", "qwen", "nemotron", "voxtral", "cohere")
+ASR_BACKENDS = ("parakeet", "qwen", "nemotron", "voxtral")
 QWEN_MAX_ALIGNMENT_DURATION_SECONDS = 300.0
 DEFAULT_PARAKEET_SEGMENT_DURATION = 180.0
 DEFAULT_PARAKEET_SEGMENT_OVERLAP = 15.0
 DEFAULT_QWEN_SEGMENT_DURATION = 240.0
 DEFAULT_QWEN_SEGMENT_OVERLAP = 15.0
-DEFAULT_COHERE_SEGMENT_DURATION = 30.0
-DEFAULT_COHERE_SEGMENT_OVERLAP = 5.0
-COHERE_ALIGNED_LANGUAGE_CODES = frozenset({"de", "en", "es", "fr", "it", "ja", "ko", "pt", "zh"})
 DEFAULT_ASR_MODELS = {
     "parakeet": DEFAULT_PARAKEET_MODEL,
     "qwen": DEFAULT_QWEN_MODEL,
     "nemotron": DEFAULT_NEMOTRON_MODEL,
     "voxtral": DEFAULT_VOXTRAL_MODEL,
-    "cohere": DEFAULT_COHERE_MODEL,
 }
 
 
@@ -45,26 +40,6 @@ def validate_qwen_segment_duration(duration: float) -> None:
         raise ValueError(
             "Qwen segment duration cannot exceed "
             f"{QWEN_MAX_ALIGNMENT_DURATION_SECONDS:g} seconds, the forced-aligner limit"
-        )
-
-
-def validate_cohere_segment_duration(duration: float) -> None:
-    """Reject Cohere segments that exceed the shared forced-aligner limit."""
-    if duration > QWEN_MAX_ALIGNMENT_DURATION_SECONDS:
-        raise ValueError(
-            "Cohere segment duration cannot exceed "
-            f"{QWEN_MAX_ALIGNMENT_DURATION_SECONDS:g} seconds, the forced-aligner limit"
-        )
-
-
-def validate_cohere_language(language: str) -> None:
-    """Require a language supported by both Cohere and the forced aligner."""
-    language_code = language.split("-", 1)[0].lower()
-    if language_code not in COHERE_ALIGNED_LANGUAGE_CODES:
-        supported = ", ".join(sorted(COHERE_ALIGNED_LANGUAGE_CODES))
-        raise ValueError(
-            "Cohere requires word timestamps from the Qwen forced aligner; "
-            f"language '{language_code}' is unsupported. Supported languages: {supported}"
         )
 
 
@@ -120,8 +95,6 @@ class PipelineConfig:
     parakeet_segment_overlap: float = DEFAULT_PARAKEET_SEGMENT_OVERLAP
     qwen_segment_duration: float = DEFAULT_QWEN_SEGMENT_DURATION
     qwen_segment_overlap: float = DEFAULT_QWEN_SEGMENT_OVERLAP
-    cohere_segment_duration: float = DEFAULT_COHERE_SEGMENT_DURATION
-    cohere_segment_overlap: float = DEFAULT_COHERE_SEGMENT_OVERLAP
     nemotron_num_lookahead_tokens: int | None = DEFAULT_NEMOTRON_NUM_LOOKAHEAD_TOKENS
     voxtral_delay_ms: int = DEFAULT_VOXTRAL_DELAY_MS
     voxtral_timestamp_offset_tokens: int = DEFAULT_VOXTRAL_TIMESTAMP_OFFSET_TOKENS
@@ -142,20 +115,16 @@ class PipelineConfig:
         for name, duration, overlap in (
             ("parakeet", self.parakeet_segment_duration, self.parakeet_segment_overlap),
             ("qwen", self.qwen_segment_duration, self.qwen_segment_overlap),
-            ("cohere", self.cohere_segment_duration, self.cohere_segment_overlap),
         ):
             if duration <= 0 or not 0 <= overlap < duration:
                 raise ValueError(
                     f"{name} segment overlap must be non-negative and shorter than its duration"
                 )
         validate_qwen_segment_duration(self.qwen_segment_duration)
-        validate_cohere_segment_duration(self.cohere_segment_duration)
         validate_voxtral_delay(self.voxtral_delay_ms)
         validate_voxtral_timestamp_offset(self.voxtral_timestamp_offset_tokens)
         if not self.language:
             raise ValueError("language must not be empty")
-        if self.asr_backend == "cohere":
-            validate_cohere_language(self.language)
         if self.num_speakers is not None and self.num_speakers < 1:
             raise ValueError("num_speakers must be positive")
         if self.min_speakers is not None and self.min_speakers < 1:
@@ -253,16 +222,6 @@ class PipelineConfig:
                 "qwen_segment_overlap",
                 "QWEN_SEGMENT_OVERLAP",
                 DEFAULT_QWEN_SEGMENT_OVERLAP,
-            ),
-            cohere_segment_duration=choose_float(
-                "cohere_segment_duration",
-                "COHERE_SEGMENT_DURATION",
-                DEFAULT_COHERE_SEGMENT_DURATION,
-            ),
-            cohere_segment_overlap=choose_float(
-                "cohere_segment_overlap",
-                "COHERE_SEGMENT_OVERLAP",
-                DEFAULT_COHERE_SEGMENT_OVERLAP,
             ),
             nemotron_num_lookahead_tokens=(
                 DEFAULT_NEMOTRON_NUM_LOOKAHEAD_TOKENS

@@ -175,8 +175,8 @@ def test_normalizer_interpolates_collapsed_word_timestamp_runs() -> None:
 
     assert [(word.text, word.start, word.end) for word in words] == [
         ("eins", 0.0, 0.4),
-        ("zwei", 0.42, 0.5),
-        ("drei", 0.5, 0.58),
+        ("zwei", 0.4, 0.5),
+        ("drei", 0.5, 0.6),
         ("vier", 0.6, 0.9),
     ]
 
@@ -193,54 +193,9 @@ def test_normalizer_repairs_collapsed_word_without_anchor_space() -> None:
 
     assert [(word.text, word.start, word.end) for word in words] == [
         ("eins", 0.0, 0.5),
-        ("zwei", 0.5, 0.5),
+        ("zwei", 0.46, 0.54),
         ("drei", 0.5, 0.8),
     ]
-
-
-def test_normalizer_keeps_collapsed_words_near_their_native_timestamp() -> None:
-    words = normalize_qwen_alignment(
-        [
-            {"text": "anchor", "start_time": 0.0, "end_time": 0.4},
-            {"text": "one", "start_time": 0.5, "end_time": 0.5},
-            {"text": "two", "start_time": 0.5, "end_time": 0.5},
-            {"text": "three", "start_time": 0.5, "end_time": 0.5},
-            {"text": "four", "start_time": 0.5, "end_time": 0.5},
-            {"text": "later", "start_time": 1.8, "end_time": 1.9},
-        ],
-        segment(),
-    )
-    assert [(word.text, word.start, word.end) for word in words] == [
-        ("anchor", 0.0, 0.4),
-        ("one", 0.4, 0.48),
-        ("two", 0.48, 0.56),
-        ("three", 0.56, 0.64),
-        ("four", 0.64, 0.72),
-        ("later", 1.8, 1.9),
-    ]
-
-
-def test_forced_aligner_records_capped_interpolation_metrics() -> None:
-    aligner = QwenForcedAligner("/models/aligner", "cpu")
-    aligner._processor = Processor(
-        [
-            {"text": "anchor", "start_time": 0.0, "end_time": 0.4},
-            {"text": "one", "start_time": 0.5, "end_time": 0.5},
-            {"text": "two", "start_time": 0.5, "end_time": 0.5},
-            {"text": "three", "start_time": 0.5, "end_time": 0.5},
-            {"text": "four", "start_time": 0.5, "end_time": 0.5},
-            {"text": "later", "start_time": 1.8, "end_time": 1.9},
-        ]
-    )
-    aligner._model = Model()
-    aligner.reset_alignment_metrics()
-
-    aligner.align(segment(), "anchor one two three four later")
-    assert aligner.alignment_metrics["interpolated_word_timestamps"] == 4.0
-    assert aligner.alignment_metrics["interpolated_timestamp_runs"] == 1.0
-    assert aligner.alignment_metrics["capped_interpolation_runs"] == 1.0
-    assert aligner.alignment_metrics["unrepaired_zero_duration_words"] == 0.0
-    assert aligner.alignment_metrics["max_interpolation_anchor_gap_seconds"] == pytest.approx(1.4)
 
 
 @pytest.mark.parametrize(

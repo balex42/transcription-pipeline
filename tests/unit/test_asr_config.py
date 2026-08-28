@@ -3,7 +3,6 @@ from pathlib import Path
 import pytest
 
 from speech_transcriber.config import (
-    DEFAULT_COHERE_MODEL,
     DEFAULT_NEMOTRON_MODEL,
     DEFAULT_NEMOTRON_NUM_LOOKAHEAD_TOKENS,
     DEFAULT_PARAKEET_MODEL,
@@ -29,7 +28,6 @@ def test_default_backend_is_parakeet() -> None:
 def test_environment_backend_and_default_model_mapping() -> None:
     assert make({}, {"ASR_BACKEND": "nemotron"}).resolved_asr_model == DEFAULT_NEMOTRON_MODEL
     assert make({}, {"ASR_BACKEND": "voxtral"}).resolved_asr_model == DEFAULT_VOXTRAL_MODEL
-    assert make({}, {"ASR_BACKEND": "cohere"}).resolved_asr_model == DEFAULT_COHERE_MODEL
 
 
 def test_nemotron_uses_highest_accuracy_lookahead_by_default() -> None:
@@ -125,22 +123,6 @@ def test_explicit_segment_settings_override_qwen_defaults() -> None:
 def test_qwen_rejects_segments_above_forced_alignment_limit() -> None:
     with pytest.raises(ValueError, match="forced-aligner limit"):
         make({"asr_backend": "qwen", "qwen_segment_duration": 301})
-
-
-def test_cohere_uses_forced_alignment_segment_defaults() -> None:
-    config = make({"asr_backend": "cohere"})
-    assert config.resolved_asr_model == DEFAULT_COHERE_MODEL
-    assert (config.cohere_segment_duration, config.cohere_segment_overlap) == (30.0, 5.0)
-
-
-def test_cohere_allows_a_supported_forced_alignment_language() -> None:
-    assert make({"asr_backend": "cohere", "language": "ja-JP"}).language == "ja-JP"
-
-
-@pytest.mark.parametrize("language", ["ar", "el-GR", "nl-NL", "pl", "vi-VN"])
-def test_cohere_rejects_language_not_supported_by_the_forced_aligner(language: str) -> None:
-    with pytest.raises(ValueError, match="requires word timestamps"):
-        make({"asr_backend": "cohere", "language": language})
 
 
 def test_obsolete_granite_configuration_fails_clearly() -> None:

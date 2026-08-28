@@ -25,10 +25,6 @@ class QwenRecognitionError(TranscriberError):
     """Raised when Qwen ASR cannot produce an internal segment transcript."""
 
 
-class CohereRecognitionError(TranscriberError):
-    """Raised when Cohere ASR cannot produce an internal segment transcript."""
-
-
 class QwenAlignmentError(TranscriberError):
     """Raised when Qwen forced alignment cannot produce valid word timing."""
 

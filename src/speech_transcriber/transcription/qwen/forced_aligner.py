@@ -11,7 +11,6 @@ from speech_transcriber.runtime.device import inference_dtype
 
 _TIMESTAMP_TOLERANCE_SECONDS = 0.25
 _TIMESTAMP_GRID_SECONDS = 0.08
-_MAX_INTERPOLATED_RUN_SPAN_SECONDS = 0.8
 _TRAILING_BOUNDARY_WINDOW_SECONDS = 2.0
 
 
@@ -79,12 +78,7 @@ class QwenForcedAligner:
             )
             if not isinstance(decoded, list) or len(decoded) != 1:
                 raise QwenAlignmentError("Qwen forced aligner returned an unexpected batch shape")
-            (
-                words,
-                repaired_count,
-                boundary_metrics,
-                interpolation_metrics,
-            ) = _normalize_qwen_alignment(decoded[0], segment)
+            words, repaired_count, boundary_metrics = _normalize_qwen_alignment(decoded[0], segment)
             self.alignment_metrics["interpolated_word_timestamps"] = (
                 self.alignment_metrics.get("interpolated_word_timestamps", 0.0) + repaired_count
             )
@@ -99,22 +93,6 @@ class QwenForcedAligner:
             self.alignment_metrics["max_boundary_overflow_seconds"] = max(
                 self.alignment_metrics.get("max_boundary_overflow_seconds", 0.0),
                 boundary_metrics["max_overflow_seconds"],
-            )
-            self.alignment_metrics["interpolated_timestamp_runs"] = (
-                self.alignment_metrics.get("interpolated_timestamp_runs", 0.0)
-                + interpolation_metrics["runs"]
-            )
-            self.alignment_metrics["capped_interpolation_runs"] = (
-                self.alignment_metrics.get("capped_interpolation_runs", 0.0)
-                + interpolation_metrics["capped_runs"]
-            )
-            self.alignment_metrics["unrepaired_zero_duration_words"] = (
-                self.alignment_metrics.get("unrepaired_zero_duration_words", 0.0)
-                + interpolation_metrics["unrepaired_words"]
-            )
-            self.alignment_metrics["max_interpolation_anchor_gap_seconds"] = max(
-                self.alignment_metrics.get("max_interpolation_anchor_gap_seconds", 0.0),
-                interpolation_metrics["max_anchor_gap_seconds"],
             )
             _validate_transcript_coverage(word_lists[0], words)
             return words
@@ -143,22 +121,18 @@ class QwenForcedAligner:
             "boundary_overflow_words_clipped": 0.0,
             "boundary_overflow_words_dropped": 0.0,
             "max_boundary_overflow_seconds": 0.0,
-            "interpolated_timestamp_runs": 0.0,
-            "capped_interpolation_runs": 0.0,
-            "unrepaired_zero_duration_words": 0.0,
-            "max_interpolation_anchor_gap_seconds": 0.0,
         }
 
 
 def normalize_qwen_alignment(entries: object, segment: AudioSegment) -> list[ASRWord]:
     """Validate native Qwen word boundaries and normalize them to ``ASRWord``."""
-    words, _, _, _ = _normalize_qwen_alignment(entries, segment)
+    words, _, _ = _normalize_qwen_alignment(entries, segment)
     return words
 
 
 def _normalize_qwen_alignment(
     entries: object, segment: AudioSegment
-) -> tuple[list[ASRWord], int, dict[str, float], dict[str, float]]:
+) -> tuple[list[ASRWord], int, dict[str, float]]:
     """Normalize boundaries and repair timestamp-grid collisions."""
     if not isinstance(entries, list) or not entries:
         raise QwenAlignmentError(
@@ -218,66 +192,43 @@ def _normalize_qwen_alignment(
         raise QwenAlignmentError(
             f"Qwen forced aligner returned no in-window words for segment {segment.index}"
         )
-    repaired, repaired_count, interpolation_metrics = _repair_zero_duration_words(words, duration)
-    return repaired, repaired_count, boundary_metrics, interpolation_metrics
+    repaired, repaired_count = _repair_zero_duration_words(words, duration)
+    return repaired, repaired_count, boundary_metrics
 
 
-def _repair_zero_duration_words(
-    words: list[ASRWord], duration: float
-) -> tuple[list[ASRWord], int, dict[str, float]]:
-    """Localize words collapsed onto one Qwen timestamp-grid position.
+def _repair_zero_duration_words(words: list[ASRWord], duration: float) -> tuple[list[ASRWord], int]:
+    """Distribute words collapsed onto one Qwen timestamp-grid position.
 
-    Qwen's 80 ms grid can assign the same start/end position to several words.
-    Do not spread them through a long gap to the next acoustic anchor: missing
-    transcript text would turn that fabricated span into wrong speaker labels.
+    Qwen's 80 ms timestamp grid can assign identical start/end positions to
+    adjacent short words. Prefer the span bounded by neighbouring non-collapsed
+    words; only synthesize one grid-width span when those anchors coincide.
     """
     repaired = list(words)
     repaired_count = 0
-    interpolation_metrics = {
-        "runs": 0.0,
-        "capped_runs": 0.0,
-        "unrepaired_words": 0.0,
-        "max_anchor_gap_seconds": 0.0,
-    }
     index = 0
     while index < len(repaired):
         word = repaired[index]
         if word.start is None or word.end != word.start:
             index += 1
             continue
-        center = word.start
         run_end = index + 1
         while run_end < len(repaired):
             candidate = repaired[run_end]
-            if (
-                candidate.start is None
-                or candidate.end != candidate.start
-                or candidate.start != center
-            ):
+            if candidate.start is None or candidate.end != candidate.start:
                 break
             run_end += 1
         count = run_end - index
         left = repaired[index - 1].end if index else 0.0
         right = repaired[run_end].start if run_end < len(repaired) else duration
         assert left is not None and right is not None
-        available_span = max(right - left, 0.0)
-        natural_span = min(
-            _TIMESTAMP_GRID_SECONDS * count,
-            _MAX_INTERPOLATED_RUN_SPAN_SECONDS,
-        )
-        interpolation_metrics["runs"] += 1
-        interpolation_metrics["max_anchor_gap_seconds"] = max(
-            interpolation_metrics["max_anchor_gap_seconds"], available_span
-        )
-        if available_span <= 0.0:
-            interpolation_metrics["unrepaired_words"] += count
-            index = run_end
-            continue
-        span = min(natural_span, available_span)
-        if span < available_span:
-            interpolation_metrics["capped_runs"] += 1
-        start = min(max(center - span / 2, left), right - span)
-        end = start + span
+        if right - left >= _TIMESTAMP_GRID_SECONDS:
+            start, end = left, right
+        else:
+            center = repaired[index].start
+            assert center is not None
+            span = min(_TIMESTAMP_GRID_SECONDS, duration)
+            start = min(max(center - span / 2, 0.0), duration - span)
+            end = start + span
         interval = (end - start) / count
         for offset in range(count):
             original = repaired[index + offset]
@@ -289,7 +240,7 @@ def _repair_zero_duration_words(
             )
         repaired_count += count
         index = run_end
-    return repaired, repaired_count, interpolation_metrics
+    return repaired, repaired_count
 
 
 def _validate_transcript_coverage(expected_words: list[str], words: list[ASRWord]) -> None:

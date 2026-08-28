@@ -3,7 +3,6 @@ from pathlib import Path
 import pytest
 
 from speech_transcriber.config import (
-    DEFAULT_COHERE_MODEL,
     DEFAULT_NEMOTRON_MODEL,
     DEFAULT_PARAKEET_MODEL,
     DEFAULT_QWEN_MODEL,
@@ -14,7 +13,6 @@ from speech_transcriber.config import (
 )
 from speech_transcriber.errors import UnsupportedASRBackendError
 from speech_transcriber.transcription.base import TranscriberCapabilities
-from speech_transcriber.transcription.cohere import CohereTranscriber
 from speech_transcriber.transcription.factory import create_transcriber
 from speech_transcriber.transcription.nemotron import NemotronTranscriber
 from speech_transcriber.transcription.parakeet import ParakeetTranscriber
@@ -35,7 +33,6 @@ def config(backend: str, model: str | None = None) -> PipelineConfig:
         ("qwen", QwenTranscriber, DEFAULT_QWEN_MODEL),
         ("nemotron", NemotronTranscriber, DEFAULT_NEMOTRON_MODEL),
         ("voxtral", VoxtralTranscriber, DEFAULT_VOXTRAL_MODEL),
-        ("cohere", CohereTranscriber, DEFAULT_COHERE_MODEL),
     ],
 )
 def test_factory_selects_adapter_and_default_model(
@@ -45,8 +42,6 @@ def test_factory_selects_adapter_and_default_model(
     assert isinstance(transcriber, adapter)
     assert transcriber.model_reference == model
     if backend == "qwen":
-        assert transcriber.capabilities.requires_forced_alignment is True
-    if backend == "cohere":
         assert transcriber.capabilities.requires_forced_alignment is True
     if backend == "nemotron":
         assert transcriber.capabilities.streaming is True

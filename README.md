@@ -17,12 +17,10 @@ flowchart TD
     transcriber --> qwen[Qwen\ninternal segments plus aligner]
     transcriber --> nemotron[Nemotron\ncache-aware streaming]
     transcriber --> voxtral[Voxtral\nnative streaming]
-    transcriber --> cohere[Cohere\ninternal segments plus aligner]
     parakeet --> words[Global ASRWord list]
     qwen --> words
     nemotron --> words
     voxtral --> words
-    cohere --> words
     words --> align[SpeakerAligner]
     timeline --> align
     align --> turns[TurnBuilder]
@@ -37,7 +35,6 @@ Audio segmentation is not part of the generic pipeline. Each ASR backend owns it
 - `qwen`: `Qwen/Qwen3-ASR-1.7B-hf` plus `Qwen/Qwen3-ForcedAligner-0.6B-hf`. Qwen recognizes bounded 240-second internal segments with 15-second overlap, releases ASR, aligns all recognized segments once, then reconciles them. Collapsed 80 ms-grid boundaries are interpolated and reported in metadata. The aligner limit is 300 seconds.
 - `nemotron`: `nvidia/nemotron-3.5-asr-streaming-0.6b`. Native Transformers RNNT cache-aware streaming, explicit language conditioning, native token emission timestamps, and internal token-to-word aggregation. Batch transcription defaults to 13 lookahead tokens (1.12s latency) for the model's highest-accuracy streaming configuration. It does not issue independent ASR requests for long-form audio.
 - `voxtral`: `mistralai/Voxtral-Mini-4B-Realtime-2602`. Native Transformers cache-aware streaming in one continuous `generate()` session using processor-defined buffers and EOF padding. `[STREAMING_WORD]` token positions provide approximate emission-group end times; starts remain unset for speaker alignment to infer.
-- `cohere`: `CohereLabs/cohere-transcribe-03-2026` plus `Qwen/Qwen3-ForcedAligner-0.6B-hf`. Cohere recognizes 30-second internal segments with 5-second overlap, releases ASR, aligns all recognized segments once, then reconciles them. Cohere supplies text only; the Qwen aligner supplies word timestamps.
 - Diarization: `pyannote/speaker-diarization-community-1` runs once over the normalized full recording.
 
 Nemotron word intervals are aggregates of RNNT token emission times, not manually aligned acoustic boundaries. Leading-space tokenizer markers start words; trailing punctuation attaches to the preceding word; opening punctuation attaches to the following lexical token.
@@ -46,7 +43,7 @@ All adapters use deterministic inference, `model.eval()`, `torch.inference_mode(
 
 ## Language
 
-The pipeline is language-agnostic. The default ASR language is `de-DE` and can be changed with the `LANGUAGE` environment variable or the `--language` CLI flag. Qwen and Nemotron accept a locale such as `de-DE`; the Qwen ASR and forced-aligner stages use the base language code (for example `de`). Cohere is initially available for the nine languages supported by both Cohere and the required forced aligner: `de`, `en`, `es`, `fr`, `it`, `ja`, `ko`, `pt`, and `zh`.
+The pipeline is language-agnostic. The default ASR language is `de-DE` and can be changed with the `LANGUAGE` environment variable or the `--language` CLI flag. Qwen and Nemotron accept a locale such as `de-DE`; the Qwen ASR and forced-aligner stages use the base language code (for example `de`).
 
 ## Dependencies
 
@@ -62,10 +59,6 @@ The pipeline is language-agnostic. The default ASR language is `de-DE` and can b
 | mistral-common | `1.10.0` with `audio` extra |
 | pyannote.audio | `4.0.7` |
 | numpy | `2.2.6` |
-| sentencepiece | `0.2.1` |
-| protobuf | `7.36.0` |
-| nagisa | `0.2.11` |
-| soynlp | `0.0.493` |
 
 Install the appropriate PyTorch CPU/CUDA wheel first when required, then install the project:
 
@@ -84,14 +77,13 @@ speech-transcriber transcribe audio.m4a --asr parakeet --output ./result/parakee
 speech-transcriber transcribe audio.m4a --asr qwen --output ./result/qwen --device cuda
 speech-transcriber transcribe audio.m4a --asr nemotron --output ./result/nemotron --device cuda
 speech-transcriber transcribe audio.m4a --asr voxtral --output ./result/voxtral --device cuda
-speech-transcriber transcribe audio.m4a --asr cohere --output ./result/cohere --device cuda
 ```
 
 Compare all production configurations with one normalization and one diarization pass:
 
 ```bash
 speech-transcriber compare audio.m4a \
-  --models parakeet,qwen,nemotron,voxtral,cohere \
+  --models parakeet,qwen,nemotron,voxtral \
   --output ./comparison --device cuda
 ```
 
@@ -110,8 +102,6 @@ PARAKEET_SEGMENT_DURATION
 PARAKEET_SEGMENT_OVERLAP
 QWEN_SEGMENT_DURATION
 QWEN_SEGMENT_OVERLAP
-COHERE_SEGMENT_DURATION
-COHERE_SEGMENT_OVERLAP
 NEMOTRON_NUM_LOOKAHEAD_TOKENS
 LANGUAGE
 DEVICE
@@ -125,13 +115,11 @@ HF_HOME
 HF_TOKEN
 ```
 
-Equivalent CLI flags include `--parakeet-segment-duration`, `--qwen-segment-duration`, `--cohere-segment-duration`, and `--nemotron-num-lookahead-tokens`. There is intentionally no global `--chunk-duration` or `CHUNK_DURATION`: those old settings were removed because they incorrectly coupled backend implementations.
+Equivalent CLI flags include `--parakeet-segment-duration`, `--qwen-segment-duration`, and `--nemotron-num-lookahead-tokens`. There is intentionally no global `--chunk-duration` or `CHUNK_DURATION`: those old settings were removed because they incorrectly coupled backend implementations.
 
 Nemotron validates an explicit lookahead through the loaded processor. Batch transcription defaults to 13 lookahead tokens; set `NEMOTRON_NUM_LOOKAHEAD_TOKENS` or `--nemotron-num-lookahead-tokens` to select another supported latency/accuracy trade-off. The checkpoint derives its first/subsequent streaming buffer sizes and latency from model/processor configuration.
 
 Voxtral derives its first/subsequent buffers, transcript delay, and right EOF padding from the loaded processor. Its marker-derived end times are approximate, and multiple lexical words may share one native emission-group end time.
-
-Cohere requires an explicit single language and does not supply timestamps or speaker labels. The Qwen forced aligner supplies its word intervals and pyannote supplies speaker attribution. Cohere access is gated by Hugging Face and requires accepting its contact-sharing conditions before prefetching. Like other encoder-decoder ASR models, Cohere may transcribe silence or low-volume noise; use speech-containing recordings for production runs until a VAD stage is added.
 
 ## Output and Metrics
 
@@ -148,11 +136,10 @@ comparison/
 │   └── transcript.txt
 ├── qwen/
 ├── nemotron/
-├── voxtral/
-└── cohere/
+└── voxtral/
 ```
 
-Each backend metadata file records model/device/dtype, load time, ASR time, total backend time, RTF, peak CUDA memory, backend configuration, and backend-specific metrics. Forced-alignment backends record recognition, recognizer release, aligner load, alignment, and aligner release timings; Qwen also records interpolated timestamps, interpolation run/cap diagnostics, and clipped/dropped trailing-boundary words with their maximum overflow. Cohere also records its language, punctuation setting, and generation limit. Nemotron records language, lookahead, streaming latency, and `stream_buffers_processed`; Voxtral records native delay, right padding, stream buffer counts, and any `inferred_final_emission_groups` used for an unmarked EOF tail.
+Each backend metadata file records model/device/dtype, load time, ASR time, total backend time, RTF, peak CUDA memory, backend configuration, and backend-specific metrics. Forced-alignment backends record recognition, recognizer release, aligner load, alignment, and aligner release timings; Qwen also records interpolated timestamps plus clipped/dropped trailing-boundary words and their maximum overflow. Nemotron records language, lookahead, streaming latency, and `stream_buffers_processed`; Voxtral records native delay, right padding, stream buffer counts, and any `inferred_final_emission_groups` used for an unmarked EOF tail.
 
 With `--keep-intermediate`, generic diarization, ASR words, and attributed words are retained under `OUTPUT/intermediate`. Backend-specific state remains internal and is never added to the canonical transcript schema.
 
@@ -165,10 +152,9 @@ HF_TOKEN=hf_... speech-transcriber prefetch-models --asr parakeet
 HF_TOKEN=hf_... speech-transcriber prefetch-models --asr qwen
 HF_TOKEN=hf_... speech-transcriber prefetch-models --asr nemotron
 HF_TOKEN=hf_... speech-transcriber prefetch-models --asr voxtral
-HF_TOKEN=hf_... speech-transcriber prefetch-models --asr cohere
 ```
 
-Qwen and Cohere prefetch include the configured Qwen forced-aligner artifact. Cohere requires accepting its gated-model access conditions first.
+Qwen prefetch includes the configured Qwen forced-aligner artifact.
 
 Also obtain the accepted pyannote artifact through the approved process. Transfer approved artifacts and externally generated checksums through the air gap. A production volume can use:
 
@@ -179,8 +165,7 @@ Also obtain the accepted pyannote artifact through the approved process. Transfe
 ├── qwen3-asr-1.7b/
 ├── qwen3-forced-aligner-0.6b/
 ├── nemotron-3.5-asr-streaming-0.6b/
-├── voxtral-mini-4b-realtime-2602/
-└── cohere-transcribe-03-2026/
+└── voxtral-mini-4b-realtime-2602/
 ```
 
 Run with mounted local paths and no runtime network access:
