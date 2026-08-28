@@ -101,6 +101,7 @@ def test_voxtral_uses_one_continuous_generation_and_end_only_word_timestamps(
     ]
     assert len(model.calls) == 1
     assert model.calls[0]["input_features"] == ["feature-1", "feature-2", "feature-3", "feature-4"]
+    assert model.calls[0]["do_sample"] is False
     assert [call["is_first_audio_chunk"] for call in processor.calls] == [True, False, False, False]
     assert all(call["is_streaming"] is True for call in processor.calls)
     assert transcriber.backend_metrics["stream_buffers_processed"] == 4.0
@@ -108,6 +109,7 @@ def test_voxtral_uses_one_continuous_generation_and_end_only_word_timestamps(
     assert transcriber.backend_metrics["multi_word_emission_groups"] == 0.0
     assert transcriber.backend_metrics["inferred_final_emission_groups"] == 0.0
     assert transcriber.backend_configuration["num_right_pad_tokens"] == 1
+    assert transcriber.backend_configuration["temperature"] == 0.0
 
 
 def test_voxtral_timestamp_parser_rejects_text_without_a_native_end_marker() -> None:

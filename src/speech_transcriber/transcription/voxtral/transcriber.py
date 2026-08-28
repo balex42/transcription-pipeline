@@ -71,6 +71,7 @@ class VoxtralTranscriber(Transcriber):
         self.backend_configuration: dict[str, str | int | float | bool | None] = {
             "streaming": True,
             "timestamps": "streaming_word_end_proxy",
+            "temperature": 0.0,
         }
 
     def load(self) -> None:
@@ -110,6 +111,8 @@ class VoxtralTranscriber(Transcriber):
                     input_features=self._stream_features(
                         processor, padded, first_size, first_features, audio.metadata.sample_rate
                     ),
+                    # Transformers represents temperature zero as greedy decoding.
+                    do_sample=False,
                     return_dict_in_generate=True,
                 )
             generated = _generated_tokens(output, prompt_ids)
