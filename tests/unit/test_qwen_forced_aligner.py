@@ -8,6 +8,7 @@ from speech_transcriber.errors import QwenAlignmentError
 from speech_transcriber.models import AudioSegment
 from speech_transcriber.transcription.qwen.forced_aligner import (
     QwenForcedAligner,
+    _validate_transcript_coverage,
     normalize_qwen_alignment,
 )
 from speech_transcriber.transcription.segments import reconcile_segment_words
@@ -24,7 +25,9 @@ class Processor:
 
     def prepare_forced_aligner_inputs(self, **kwargs: object) -> tuple[Inputs, list[list[str]]]:
         self.request = kwargs
-        return Inputs(input_ids=torch.tensor([[1, 2]])), [["Guten", "Morgen"]]
+        transcript = kwargs["transcript"]
+        assert isinstance(transcript, str)
+        return Inputs(input_ids=torch.tensor([[1, 2]])), [transcript.split()]
 
     def decode_forced_alignment(self, **kwargs: object) -> list[list[dict[str, object]]]:
         assert kwargs["timestamp_token_id"] == 9
@@ -79,6 +82,18 @@ def test_forced_aligner_rejects_material_transcript_divergence() -> None:
     aligner._model = Model()
     with pytest.raises(QwenAlignmentError, match="materially diverges"):
         aligner.align(segment(), "eins zwei drei vier fünf sechs sieben acht neun zehn")
+
+
+def test_coverage_uses_aligner_tokens_for_a_no_space_language() -> None:
+    expected = ["你", "好", "世", "界"]
+    words = [
+        normalize_qwen_alignment(
+            [{"text": token, "start_time": index * 0.2, "end_time": (index + 1) * 0.2}],
+            segment(),
+        )[0]
+        for index, token in enumerate(expected)
+    ]
+    _validate_transcript_coverage(expected, words)
 
 
 def test_qwen_reconciler_converts_segment_boundaries_to_recording_offsets() -> None:

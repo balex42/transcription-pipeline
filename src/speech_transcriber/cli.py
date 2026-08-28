@@ -31,8 +31,8 @@ def build_parser() -> argparse.ArgumentParser:
     _add_runtime_options(compare, include_asr=False)
     compare.add_argument(
         "--models",
-        default="parakeet,qwen,nemotron,voxtral",
-        help="comma-separated ASR backends: parakeet, qwen, nemotron, voxtral",
+        default="parakeet,qwen,nemotron,voxtral,cohere",
+        help="comma-separated ASR backends: parakeet, qwen, nemotron, voxtral, cohere",
     )
     prefetch = commands.add_parser(
         "prefetch-models", help="download models into configured Hugging Face cache"
@@ -51,7 +51,9 @@ def _add_runtime_options(parser: argparse.ArgumentParser, include_asr: bool) -> 
     parser.add_argument("--device", choices=["auto", "cuda", "cpu"])
     if include_asr:
         parser.add_argument(
-            "--asr", choices=ASR_BACKENDS, help="ASR backend: parakeet, qwen, nemotron, voxtral"
+            "--asr",
+            choices=ASR_BACKENDS,
+            help="ASR backend: parakeet, qwen, nemotron, voxtral, cohere",
         )
         parser.add_argument("--asr-model", help="Hugging Face model ID or local model directory")
     parser.add_argument("--qwen-aligner-model", help="Qwen forced-aligner model ID or local path")
@@ -60,6 +62,8 @@ def _add_runtime_options(parser: argparse.ArgumentParser, include_asr: bool) -> 
     parser.add_argument("--parakeet-segment-overlap", type=float)
     parser.add_argument("--qwen-segment-duration", type=float)
     parser.add_argument("--qwen-segment-overlap", type=float)
+    parser.add_argument("--cohere-segment-duration", type=float)
+    parser.add_argument("--cohere-segment-overlap", type=float)
     parser.add_argument("--nemotron-num-lookahead-tokens", type=int)
     parser.add_argument(
         "--voxtral-delay-ms", type=int, help="Voxtral streaming delay in ms (default: 2400)"
@@ -101,7 +105,7 @@ def main(argv: list[str] | None = None) -> int:
                 prefetch_config.resolved_asr_model,
                 args.pyannote_model,
                 prefetch_config.qwen_aligner_model
-                if args.asr == "qwen" else None,
+                if args.asr in {"qwen", "cohere"} else None,
             )
             return 0
         config = _config_from_args(args)
@@ -132,6 +136,8 @@ def _config_from_args(args: argparse.Namespace) -> PipelineConfig:
         "parakeet_segment_overlap": args.parakeet_segment_overlap,
         "qwen_segment_duration": args.qwen_segment_duration,
         "qwen_segment_overlap": args.qwen_segment_overlap,
+        "cohere_segment_duration": args.cohere_segment_duration,
+        "cohere_segment_overlap": args.cohere_segment_overlap,
         "nemotron_num_lookahead_tokens": args.nemotron_num_lookahead_tokens,
         "voxtral_delay_ms": args.voxtral_delay_ms,
         "voxtral_timestamp_offset_tokens": args.voxtral_timestamp_offset_tokens,

@@ -75,7 +75,7 @@ class ForcedAlignmentTranscriber:
         self.backend_models = {"forced_aligner_model": aligner.model_reference}
         self._recognizer_loaded = False
         self._segmenter = AudioSegmenter(segment_duration, segment_overlap)
-        self.backend_configuration = {
+        self.backend_configuration: dict[str, object] = {
             "segment_duration_seconds": segment_duration,
             "segment_overlap_seconds": segment_overlap,
             "forced_aligner_max_segment_seconds": aligner.max_segment_duration,

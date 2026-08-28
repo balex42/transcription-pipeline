@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import math
-import re
 from typing import Any
 
 from speech_transcriber.errors import ModelLoadError, QwenAlignmentError
@@ -82,7 +81,7 @@ class QwenForcedAligner:
             self.alignment_metrics["interpolated_word_timestamps"] = (
                 self.alignment_metrics.get("interpolated_word_timestamps", 0.0) + repaired_count
             )
-            _validate_transcript_coverage(transcript, words)
+            _validate_transcript_coverage(word_lists[0], words)
             return words
         except QwenAlignmentError as error:
             raise QwenAlignmentError(
@@ -200,9 +199,9 @@ def _repair_zero_duration_words(words: list[ASRWord], duration: float) -> tuple[
     return repaired, repaired_count
 
 
-def _validate_transcript_coverage(transcript: str, words: list[ASRWord]) -> None:
+def _validate_transcript_coverage(expected_words: list[str], words: list[ASRWord]) -> None:
     """Reject alignments that omit a material portion of the recognized text."""
-    expected_count = len(re.findall(r"\S+", transcript))
+    expected_count = len(expected_words)
     allowed_difference = max(2, round(expected_count * 0.2))
     if abs(expected_count - len(words)) > allowed_difference:
         raise QwenAlignmentError(

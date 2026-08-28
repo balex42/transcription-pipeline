@@ -5,6 +5,7 @@ from __future__ import annotations
 from speech_transcriber.config import PipelineConfig
 from speech_transcriber.errors import UnsupportedASRBackendError
 from speech_transcriber.transcription.base import Transcriber
+from speech_transcriber.transcription.cohere import CohereRecognizer, CohereTranscriber
 from speech_transcriber.transcription.nemotron import NemotronTranscriber
 from speech_transcriber.transcription.parakeet import ParakeetTranscriber
 from speech_transcriber.transcription.qwen import (
@@ -17,10 +18,10 @@ from speech_transcriber.transcription.voxtral import VoxtralTranscriber
 
 def create_transcriber(config: PipelineConfig, device: str) -> Transcriber:
     """Create the selected ASR adapter without loading its model yet."""
-    if config.asr_backend not in {"parakeet", "qwen", "nemotron", "voxtral"}:
+    if config.asr_backend not in {"parakeet", "qwen", "nemotron", "voxtral", "cohere"}:
         raise UnsupportedASRBackendError(
             f"Unsupported ASR backend '{config.asr_backend}'. "
-            "Supported backends: parakeet, qwen, nemotron, voxtral."
+            "Supported backends: parakeet, qwen, nemotron, voxtral, cohere."
         )
     model = config.resolved_asr_model
     if config.asr_backend == "parakeet":
@@ -47,5 +48,13 @@ def create_transcriber(config: PipelineConfig, device: str) -> Transcriber:
             device,
             config.voxtral_delay_ms,
             config.voxtral_timestamp_offset_tokens,
+        )
+    if config.asr_backend == "cohere":
+        return CohereTranscriber(
+            CohereRecognizer(model, device, config.language),
+            QwenForcedAligner(config.qwen_aligner_model, device, config.language),
+            config.cohere_segment_duration,
+            config.cohere_segment_overlap,
+            config.language,
         )
     raise AssertionError("validated backend did not match a registered adapter")
