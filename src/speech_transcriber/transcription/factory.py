@@ -42,5 +42,5 @@ def create_transcriber(config: PipelineConfig, device: str) -> Transcriber:
             model, device, config.language, config.nemotron_num_lookahead_tokens
         )
     if config.asr_backend == "voxtral":
-        return VoxtralTranscriber(model, device)
+        return VoxtralTranscriber(model, device, config.voxtral_delay_ms)
     raise AssertionError("validated backend did not match a registered adapter")

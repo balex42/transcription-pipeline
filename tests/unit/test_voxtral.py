@@ -19,6 +19,25 @@ class Inputs(dict[str, object]):
         return self
 
 
+class AudioConfig:
+    def __init__(self) -> None:
+        self.transcription_delay_ms: float | None = None
+
+
+class AudioEncoder:
+    def __init__(self) -> None:
+        self.audio_config = AudioConfig()
+
+
+class InstructTokenizer:
+    def __init__(self) -> None:
+        self.audio_encoder = AudioEncoder()
+
+
+class MistralBackend:
+    pass
+
+
 class Tokenizer:
     pieces = {
         1: "[TRANSCRIBE]",
@@ -27,6 +46,10 @@ class Tokenizer:
         11: "Welt",
         99: "[STREAMING_WORD]",
     }
+
+    def __init__(self) -> None:
+        self.tokenizer = MistralBackend()
+        self.tokenizer.instruct_tokenizer = InstructTokenizer()
 
     def convert_ids_to_tokens(self, ids: list[int], skip_special_tokens: bool = False) -> list[str]:
         return [self.pieces[token] for token in ids]
@@ -40,7 +63,6 @@ class Processor:
     num_mel_frames_first_audio_chunk = 2
     audio_length_per_tok = 1
     num_delay_tokens = 1
-    tokenizer = Tokenizer()
 
     class FeatureExtractor:
         hop_length = 4
@@ -50,6 +72,7 @@ class Processor:
 
     def __init__(self) -> None:
         self.calls: list[dict[str, object]] = []
+        self.tokenizer = Tokenizer()
 
     def __call__(self, audio: object, **kwargs: object) -> Inputs:
         self.calls.append({"audio": audio, **kwargs})
@@ -110,6 +133,22 @@ def test_voxtral_uses_one_continuous_generation_and_end_only_word_timestamps(
     assert transcriber.backend_metrics["inferred_final_emission_groups"] == 0.0
     assert transcriber.backend_configuration["num_right_pad_tokens"] == 1
     assert transcriber.backend_configuration["temperature"] == 0.0
+
+
+def test_voxtral_configures_audio_delay_from_request() -> None:
+    processor = Processor()
+    transcriber = VoxtralTranscriber("/models/voxtral", "cpu", delay_ms=2400)
+    transcriber._configure_delay(processor)
+    audio_config = transcriber._audio_config(processor)
+    assert audio_config.transcription_delay_ms == 2400.0
+
+
+def test_voxtral_leaves_delay_untouched_when_not_requested() -> None:
+    processor = Processor()
+    transcriber = VoxtralTranscriber("/models/voxtral", "cpu", delay_ms=None)
+    transcriber._configure_delay(processor)
+    audio_config = transcriber._audio_config(processor)
+    assert audio_config.transcription_delay_ms is None
 
 
 def test_voxtral_timestamp_parser_rejects_text_without_a_native_end_marker() -> None:

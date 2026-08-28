@@ -22,6 +22,10 @@ class _VoxtralTokenizer(Protocol):
     ) -> list[str]: ...
 
 
+class _VoxtralAudioConfig(Protocol):
+    transcription_delay_ms: float | None
+
+
 class _VoxtralProcessor(Protocol):
     num_right_pad_tokens: int
     raw_audio_length_per_tok: int
@@ -32,7 +36,6 @@ class _VoxtralProcessor(Protocol):
     num_delay_tokens: int
     feature_extractor: object
     tokenizer: _VoxtralTokenizer
-
     def __call__(self, audio: object, **kwargs: object) -> Any: ...
 
     def decode(self, token_ids: list[int], **kwargs: object) -> object: ...
@@ -59,9 +62,10 @@ class VoxtralTranscriber(Transcriber):
 
     capabilities = TranscriberCapabilities(False, True, True, True, streaming=True)
 
-    def __init__(self, model: str, device: str) -> None:
+    def __init__(self, model: str, device: str, delay_ms: int | None = None) -> None:
         self.model_reference = model
         self.device = device
+        self.delay_ms = delay_ms
         _, self.dtype_name = inference_dtype(device)
         self._model: _VoxtralModel | None = None
         self._processor: _VoxtralProcessor | None = None
@@ -72,6 +76,7 @@ class VoxtralTranscriber(Transcriber):
             "streaming": True,
             "timestamps": "streaming_word_end_proxy",
             "temperature": 0.0,
+            "delay_ms": delay_ms,
         }
 
     def load(self) -> None:
@@ -217,6 +222,7 @@ class VoxtralTranscriber(Transcriber):
                     self.model_reference, trust_remote_code=False
                 ),
             )
+            self._configure_delay(processor)
             model = cast(
                 _VoxtralModel,
                 VoxtralRealtimeForConditionalGeneration.from_pretrained(
@@ -231,6 +237,28 @@ class VoxtralTranscriber(Transcriber):
             raise ModelLoadError(
                 f"could not load Voxtral model {self.model_reference}: {error}"
             ) from error
+
+    def _configure_delay(self, processor: _VoxtralProcessor) -> None:
+        """Apply the requested streaming delay before any transport sizing is read.
+
+        Voxtral derives its prefill size, right padding, and marker positions from
+        the tokenizer's audio config, so the delay must be set before the first
+        processor call. A None delay leaves the model's default untouched.
+        """
+        if self.delay_ms is None:
+            return
+        audio_config = self._audio_config(processor)
+        audio_config.transcription_delay_ms = float(self.delay_ms)
+
+    @staticmethod
+    def _audio_config(processor: _VoxtralProcessor) -> _VoxtralAudioConfig:
+        backend = getattr(processor.tokenizer, "tokenizer", None)
+        instruct = getattr(backend, "instruct_tokenizer", None)
+        audio_encoder = getattr(instruct, "audio_encoder", None)
+        audio_config = getattr(audio_encoder, "audio_config", None)
+        if audio_config is None or not hasattr(audio_config, "transcription_delay_ms"):
+            raise VoxtralStreamingError("Voxtral processor did not expose an audio config")
+        return cast(_VoxtralAudioConfig, audio_config)
 
     def release(self) -> None:
         """Drop model state so one GPU can serve the next backend safely."""

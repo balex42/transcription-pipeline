@@ -13,6 +13,10 @@ DEFAULT_QWEN_MODEL = "Qwen/Qwen3-ASR-1.7B-hf"
 DEFAULT_NEMOTRON_MODEL = "nvidia/nemotron-3.5-asr-streaming-0.6b"
 DEFAULT_NEMOTRON_NUM_LOOKAHEAD_TOKENS = 13
 DEFAULT_VOXTRAL_MODEL = "mistralai/Voxtral-Mini-4B-Realtime-2602"
+DEFAULT_VOXTRAL_DELAY_MS = 2400
+VOXTRAL_MAX_DELAY_MS = 2400
+VOXTRAL_MIN_DELAY_MS = 80
+VOXTRAL_DELAY_STEP_MS = 80
 DEFAULT_PYANNOTE_MODEL = "pyannote/speaker-diarization-community-1"
 ASR_BACKENDS = ("parakeet", "qwen", "nemotron", "voxtral")
 QWEN_MAX_ALIGNMENT_DURATION_SECONDS = 300.0
@@ -34,6 +38,23 @@ def validate_qwen_segment_duration(duration: float) -> None:
         raise ValueError(
             "Qwen segment duration cannot exceed "
             f"{QWEN_MAX_ALIGNMENT_DURATION_SECONDS:g} seconds, the forced-aligner limit"
+        )
+
+
+def validate_voxtral_delay(delay_ms: int) -> None:
+    """Reject delays outside Voxtral's documented streaming presets."""
+    if delay_ms < VOXTRAL_MIN_DELAY_MS or delay_ms > VOXTRAL_MAX_DELAY_MS:
+        raise ValueError(
+            "Voxtral delay must be between "
+            f"{VOXTRAL_MIN_DELAY_MS}ms and {VOXTRAL_MAX_DELAY_MS}ms"
+        )
+    if (
+        (delay_ms > 1200 and delay_ms != VOXTRAL_MAX_DELAY_MS)
+        or delay_ms % VOXTRAL_DELAY_STEP_MS != 0
+    ):
+        raise ValueError(
+            "Voxtral delay must be a multiple of "
+            f"{VOXTRAL_DELAY_STEP_MS}ms up to 1200ms, or {VOXTRAL_MAX_DELAY_MS}ms"
         )
 
 
@@ -64,6 +85,7 @@ class PipelineConfig:
     qwen_segment_duration: float = DEFAULT_QWEN_SEGMENT_DURATION
     qwen_segment_overlap: float = DEFAULT_QWEN_SEGMENT_OVERLAP
     nemotron_num_lookahead_tokens: int | None = DEFAULT_NEMOTRON_NUM_LOOKAHEAD_TOKENS
+    voxtral_delay_ms: int = DEFAULT_VOXTRAL_DELAY_MS
     language: str = "de-DE"
     num_speakers: int | None = None
     min_speakers: int | None = None
@@ -87,6 +109,7 @@ class PipelineConfig:
                     f"{name} segment overlap must be non-negative and shorter than its duration"
                 )
         validate_qwen_segment_duration(self.qwen_segment_duration)
+        validate_voxtral_delay(self.voxtral_delay_ms)
         if not self.language:
             raise ValueError("language must not be empty")
         if self.num_speakers is not None and self.num_speakers < 1:
@@ -146,6 +169,7 @@ class PipelineConfig:
         nemotron_lookahead = choose_int(
             "nemotron_num_lookahead_tokens", "NEMOTRON_NUM_LOOKAHEAD_TOKENS"
         )
+        voxtral_delay = choose_int("voxtral_delay_ms", "VOXTRAL_DELAY_MS")
         return cls(
             input_path=input_path,
             output_directory=output_directory,
@@ -187,6 +211,9 @@ class PipelineConfig:
                 DEFAULT_NEMOTRON_NUM_LOOKAHEAD_TOKENS
                 if nemotron_lookahead is None
                 else nemotron_lookahead
+            ),
+            voxtral_delay_ms=(
+                DEFAULT_VOXTRAL_DELAY_MS if voxtral_delay is None else voxtral_delay
             ),
             language=choose("language", "LANGUAGE", "de-DE"),
             num_speakers=choose_int("num_speakers", "NUM_SPEAKERS"),

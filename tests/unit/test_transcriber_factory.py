@@ -6,6 +6,7 @@ from speech_transcriber.config import (
     DEFAULT_NEMOTRON_MODEL,
     DEFAULT_PARAKEET_MODEL,
     DEFAULT_QWEN_MODEL,
+    DEFAULT_VOXTRAL_DELAY_MS,
     DEFAULT_VOXTRAL_MODEL,
     PipelineConfig,
 )
@@ -47,6 +48,17 @@ def test_factory_selects_adapter_and_default_model(
         assert transcriber.capabilities == TranscriberCapabilities(
             False, True, True, True, streaming=True
         )
+        assert transcriber.delay_ms == DEFAULT_VOXTRAL_DELAY_MS
+
+
+def test_voxtral_delay_from_config_is_passed_to_adapter() -> None:
+    transcriber = create_transcriber(
+        PipelineConfig(
+            Path("in.wav"), Path("out"), Path("work"), asr_backend="voxtral", voxtral_delay_ms=1200
+        ),
+        "cpu",
+    )
+    assert transcriber.delay_ms == 1200
 
 
 def test_explicit_model_overrides_backend_default() -> None:

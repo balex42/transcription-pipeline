@@ -8,6 +8,7 @@ from speech_transcriber.config import (
     DEFAULT_PARAKEET_MODEL,
     DEFAULT_QWEN_ALIGNER_MODEL,
     DEFAULT_QWEN_MODEL,
+    DEFAULT_VOXTRAL_DELAY_MS,
     DEFAULT_VOXTRAL_MODEL,
     PipelineConfig,
 )
@@ -34,6 +35,29 @@ def test_nemotron_uses_highest_accuracy_lookahead_by_default() -> None:
 
 def test_nemotron_lookahead_allows_a_low_latency_override() -> None:
     assert make({}, {"NEMOTRON_NUM_LOOKAHEAD_TOKENS": "0"}).nemotron_num_lookahead_tokens == 0
+
+
+def test_voxtral_uses_highest_accuracy_delay_by_default() -> None:
+    assert make({}).voxtral_delay_ms == DEFAULT_VOXTRAL_DELAY_MS
+
+
+def test_voxtral_delay_allows_a_lower_latency_override() -> None:
+    assert make({}, {"VOXTRAL_DELAY_MS": "480"}).voxtral_delay_ms == 480
+
+
+def test_voxtral_rejects_delay_outside_supported_range() -> None:
+    with pytest.raises(ValueError, match="Voxtral delay must be between"):
+        make({}, {"VOXTRAL_DELAY_MS": "2401"})
+
+
+def test_voxtral_rejects_delay_that_is_not_a_multiple_of_80ms() -> None:
+    with pytest.raises(ValueError, match="multiple of 80ms"):
+        make({}, {"VOXTRAL_DELAY_MS": "500"})
+
+
+def test_voxtral_rejects_unsupported_delay_between_1200ms_and_2400ms() -> None:
+    with pytest.raises(ValueError, match="up to 1200ms, or 2400ms"):
+        make({}, {"VOXTRAL_DELAY_MS": "1280"})
 
 
 def test_cli_backend_and_model_override_environment() -> None:
