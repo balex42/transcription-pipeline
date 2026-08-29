@@ -100,10 +100,33 @@ def test_prefetch_canary_uses_only_its_model_repository(monkeypatch: object) -> 
     assert downloads == ["nvidia/canary-1b-v2", DEFAULT_PYANNOTE_MODEL]
 
 
-def test_compare_defaults_to_all_production_backends() -> None:
+def test_compare_defaults_to_generic_runtime_backends() -> None:
     parser = cli.build_parser()
     args = parser.parse_args(["compare", "input.wav", "--output", "output"])
-    assert args.models == "parakeet,qwen,nemotron,voxtral,faster-whisper,canary"
+    assert args.models == "parakeet,qwen,nemotron,voxtral"
+
+
+def test_compare_rejects_heterogeneous_backends_before_creating_pipeline(
+    monkeypatch: object,
+) -> None:
+    def unexpected_pipeline(_: object) -> object:
+        raise AssertionError("heterogeneous compare must fail before creating the generic pipeline")
+
+    monkeypatch.setattr(cli, "create_default_pipeline", unexpected_pipeline)  # type: ignore[attr-defined]
+
+    assert (
+        cli.main(
+            [
+                "compare",
+                "input.wav",
+                "--models",
+                "faster-whisper,canary",
+                "--output",
+                "output",
+            ]
+        )
+        == 1
+    )
 
 
 def test_prepare_command_writes_artifact_and_releases_diarizer(

@@ -62,9 +62,9 @@ class CanaryTranscriber(Transcriber):
         self.requested_language = language
         self.source_language = canary_language(language)
         self.target_language = self.source_language
-        # Canary's documented inference path restores its checkpoint at its
-        # saved precision; do not force an unverified dtype conversion.
-        self.dtype_name = "float32"
+        # The checkpoint controls its precision; do not infer one from the
+        # process-wide PyTorch default or force a conversion.
+        self.dtype_name = "checkpoint-default"
         self._model: Any | None = None
         self.backend_metrics: dict[str, float] = {}
         self.backend_models: dict[str, str] = {}

@@ -25,6 +25,7 @@ FASTER_WHISPER_COMPUTE_TYPES = ("float16", "bfloat16", "float32", "int8", "int8_
 DEFAULT_CANARY_MODEL = "nvidia/canary-1b-v2"
 DEFAULT_PYANNOTE_MODEL = "pyannote/speaker-diarization-community-1"
 ASR_BACKENDS = ("parakeet", "qwen", "nemotron", "voxtral", "faster-whisper", "canary")
+COMPARE_BACKENDS = ("parakeet", "qwen", "nemotron", "voxtral")
 QWEN_MAX_ALIGNMENT_DURATION_SECONDS = 300.0
 DEFAULT_PARAKEET_SEGMENT_DURATION = 180.0
 DEFAULT_PARAKEET_SEGMENT_OVERLAP = 15.0

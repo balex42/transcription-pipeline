@@ -9,7 +9,7 @@ from dataclasses import asdict, replace
 from pathlib import Path
 
 from speech_transcriber.asr_artifact import write_asr_result_files
-from speech_transcriber.config import ASR_BACKENDS, PipelineConfig
+from speech_transcriber.config import COMPARE_BACKENDS, PipelineConfig
 from speech_transcriber.errors import UnsupportedASRBackendError
 from speech_transcriber.pipeline import TranscriptionPipeline
 from speech_transcriber.runtime.device import resolve_device
@@ -32,9 +32,11 @@ class ASRComparisonRunner:
 
     def run(self, backends: list[str], output_directory: Path) -> None:
         """Write side-by-side backend transcripts and operational metadata."""
-        invalid = sorted(set(backends) - set(ASR_BACKENDS))
+        invalid = sorted(set(backends) - set(COMPARE_BACKENDS))
         if invalid:
-            raise UnsupportedASRBackendError(f"unsupported ASR backend(s): {', '.join(invalid)}")
+            raise UnsupportedASRBackendError(
+                "comparison requires the generic runtime; use Argo for: " + ", ".join(invalid)
+            )
         if not backends:
             raise ValueError("at least one ASR backend is required")
         output_directory.mkdir(parents=True, exist_ok=True)

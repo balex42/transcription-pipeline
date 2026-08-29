@@ -47,6 +47,7 @@ def test_capabilities_declare_native_timestamps_and_no_forced_alignment() -> Non
     assert transcriber.capabilities == TranscriberCapabilities(True, True, True, True)
     assert transcriber.capabilities.streaming is False
     assert transcriber.capabilities.requires_forced_alignment is False
+    assert transcriber.dtype_name == "checkpoint-default"
 
 
 def test_transcribe_uses_german_asr_with_native_word_timestamps(tmp_path: Path) -> None:

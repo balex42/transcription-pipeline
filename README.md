@@ -69,9 +69,9 @@ The pipeline is language-agnostic. The default ASR language is `de-DE` and can b
 | mistral-common | `1.10.0` with `audio` extra |
 | pyannote.audio | `4.0.7` |
 | numpy | `2.2.6` |
-| faster-whisper | `1.2.1` (dedicated `faster-whisper-runtime` extra) |
-| ctranslate2 | `4.8.1` (dedicated `faster-whisper-runtime` extra) |
-| NVIDIA NeMo Speech | `3.0.0` (dedicated `canary-runtime` extra) |
+| faster-whisper | `1.2.1` (`runtimes/faster-whisper/uv.lock`) |
+| ctranslate2 | `4.8.1` (`runtimes/faster-whisper/uv.lock`) |
+| NVIDIA NeMo Speech | `3.0.0` with the `asr` extra (`runtimes/canary/uv.lock`) |
 | Canary PyTorch/CUDA image | `torch==2.12.0+cu132`, CUDA `13.2`, cuDNN `9` |
 
 Install the appropriate PyTorch CPU/CUDA wheel first when required, then install the project:
@@ -84,13 +84,15 @@ python3.11 -m venv .venv
 
 `ffmpeg` and `ffprobe` must be on `PATH`.
 
-The base package contains the artifact and CPU finalization path only. Install `.[runtime]` for
-preparation/recognition, `.[faster-whisper-runtime]` for the dedicated faster-whisper/CTranslate2
-recognition image, `.[canary-runtime]` for the dedicated NeMo/Canary recognition image, or `.[dev]`
-for the generic runtime and test tools. The Canary image uses Python 3.12 from the verified
-`pytorch/pytorch:2.12.0-cuda13.2-cudnn9-runtime` base, a supported Python version for released NeMo
-Speech 3.0.0 and its CUDA 13.2 Blackwell-capable PyTorch build. This released NeMo version includes
-Canary timestamp support; the model card's historical instruction to install NeMo from `main` is not used.
+The root project and `uv.lock` own the generic runtime and development tools. The dedicated
+`runtimes/faster-whisper/` and `runtimes/canary/` projects each own only their backend's third-party
+lock; both images install the shared `speech-transcriber` source separately with `--no-deps`.
+The Canary image uses Python 3.12 from the verified `pytorch/pytorch:2.12.0-cuda13.2-cudnn9-runtime`
+base, which owns PyTorch `2.12.0+cu132`, CUDA 13.2, and cuDNN 9. Its runtime lock uses released
+`nemo-toolkit[asr]==3.0.0`, not the `cu13` extra; the image prunes Torch and its CUDA-library
+subtree from the exported NeMo requirements rather than replacing the base runtime. This released
+NeMo version includes Canary timestamp support; the model card's historical instruction to install
+NeMo from `main` is not used.
 
 ## Commands
 
@@ -105,15 +107,15 @@ speech-transcriber transcribe audio.m4a --asr faster-whisper --output ./result/f
 speech-transcriber transcribe audio.m4a --asr canary --output ./result/canary --device cuda
 ```
 
-Compare all production configurations with one normalization and one diarization pass:
+Compare the four backends installed in the generic runtime with one normalization and one diarization pass:
 
 ```bash
 speech-transcriber compare audio.m4a \
-  --models parakeet,qwen,nemotron,voxtral,faster-whisper,canary \
+  --models parakeet,qwen,nemotron,voxtral \
   --output ./comparison --device cuda
 ```
 
-Comparison executes ASR backends sequentially and releases each model before loading the next one. It does not force common segments on models with incompatible long-form behavior.
+Comparison executes ASR backends sequentially and releases each model before loading the next one. It does not force common segments on models with incompatible long-form behavior. Use the Argo fan-out for heterogeneous comparisons involving faster-whisper or Canary; no one local Python environment is expected to import all runtime stacks.
 
 ### Argo-Style Split Execution
 
@@ -381,7 +383,7 @@ podman build -t speech-transcriber-canary:local -f Containerfile.canary .
 ```
 
 The faster-whisper image is materially independent of the Transformers ASR stack: it installs
-only the `faster-whisper-runtime` dependency set and the backend-neutral artifact code, and it
+only the `runtimes/faster-whisper/uv.lock` dependency set and the backend-neutral artifact code, and it
 bases on `nvidia/cuda:12.6.3-cudnn-runtime-ubuntu24.04` because CTranslate2 GPU wheels require
 CUDA 12 and cuDNN 9 at runtime. It supports the same `/models`, `/cache`, and `/work` mounts and
 the same arbitrary-UID execution model as the main image.
@@ -389,10 +391,14 @@ the same arbitrary-UID execution model as the main image.
 The Canary image uses the verified
 `pytorch/pytorch:2.12.0-cuda13.2-cudnn9-runtime` base (Python 3.12, PyTorch
 `2.12.0+cu132`, CUDA 13.2, cuDNN 9) and installs only the locked
-`canary-runtime` NeMo ASR stack plus backend-neutral artifact code. The base
-tag exists on Docker Hub and CUDA 13.2/PyTorch 2.12 is NeMo Speech 3.0.0's
-tested Blackwell-capable configuration. It does not contain pyannote,
-faster-whisper, or CTranslate2.
+`runtimes/canary` NeMo ASR stack plus backend-neutral artifact code. The base
+owns Torch/CUDA/cuDNN; the build prunes the lock's transitive Torch wheel and
+its CUDA-library subtree before installing the remaining hash-locked NeMo
+requirements. A no-model build smoke test imports Torch, NeMo ASR, and the
+application, and verifies the expected Torch/CUDA family. The base tag exists
+on Docker Hub and CUDA 13.2/PyTorch 2.12 is NeMo Speech 3.0.0's tested
+Blackwell-capable configuration. It does not contain pyannote, faster-whisper,
+or CTranslate2.
 
 Smoke test Canary against a short prepared artifact after prefetching the
 model into the mounted read-only cache:
@@ -511,13 +517,12 @@ for JSON validation and file-copy tasks. Production or air-gapped deployments sh
 that utility image in their internal registry.
 
 The container GitHub Actions workflow uses an explicit application-input allowlist. Changes limited to
-Markdown or deployment manifests, including `deploy/argo/**`, do not build an image. Changes to
-`src/**`, `Containerfile`, `Containerfile.faster-whisper`, `.containerignore`, `pyproject.toml`,
-`uv.lock`, or the container workflow
-do. Version-tag pushes and manual dispatch remain build triggers, so an image-tag-only Argo update
-does not create a follow-up image build. The workflow builds three images: the generic application
-image, the dedicated `-faster-whisper` image, and the dedicated `-canary` image, each with its own
-immutable `sha-<commit>` tag namespace.
+Markdown or deployment manifests, including `deploy/argo/**`, do not build an image. Shared source
+or root package metadata changes build all compatible images. Generic `Containerfile`/root-lock changes
+build only the generic image; `Containerfile.faster-whisper` or `runtimes/faster-whisper/**` changes
+build only faster-whisper; `Containerfile.canary` or `runtimes/canary/**` changes build only Canary.
+Version-tag pushes and manual dispatch remain full build triggers, so an image-tag-only Argo update does
+not create a follow-up image build. Each image has its own immutable `sha-<commit>` tag namespace.
 
 Only `prepare` and the six recognition templates declare and mount `speech-model-cache` read-only
 at `/models`; validation, finalization, and publication pods do not depend on model storage.

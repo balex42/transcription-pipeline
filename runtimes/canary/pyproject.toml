@@ -1,0 +1,8 @@
+[project]
+name = "speech-transcriber-canary-runtime"
+version = "0.0.0"
+description = "Locked third-party dependencies for Canary recognition"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "nemo-toolkit[asr]==3.0.0",
+]

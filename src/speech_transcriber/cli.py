@@ -16,6 +16,7 @@ from speech_transcriber.asr_artifact import (
 )
 from speech_transcriber.config import (
     ASR_BACKENDS,
+    COMPARE_BACKENDS,
     DEFAULT_PYANNOTE_MODEL,
     DEFAULT_QWEN_ALIGNER_MODEL,
     FASTER_WHISPER_COMPUTE_TYPES,
@@ -67,10 +68,10 @@ def build_parser() -> argparse.ArgumentParser:
     _add_runtime_options(compare, include_asr=False)
     compare.add_argument(
         "--models",
-        default="parakeet,qwen,nemotron,voxtral,faster-whisper,canary",
+        default=",".join(COMPARE_BACKENDS),
         help=(
-            "comma-separated ASR backends: parakeet, qwen, nemotron, voxtral, "
-            "faster-whisper, canary"
+            "comma-separated generic-runtime ASR backends: parakeet, qwen, nemotron, voxtral; "
+            "use Argo for heterogeneous runtime comparisons"
         ),
     )
     prefetch = commands.add_parser(
@@ -244,30 +245,40 @@ def main(argv: list[str] | None = None) -> int:
             write_asr_recognition(recognition, config.output_directory)
             return 0
 
-        pipeline = create_default_pipeline(config)
         if args.command == "compare":
             from speech_transcriber.comparison import ASRComparisonRunner
 
             models = [model.strip() for model in args.models.split(",") if model.strip()]
             if len(models) != len(set(models)):
                 raise ValueError("--models must not contain duplicate ASR backends")
+            unsupported = sorted(set(models) - set(COMPARE_BACKENDS))
+            if unsupported:
+                raise ValueError(
+                    "--models only supports the generic runtime; use Argo for: "
+                    + ", ".join(unsupported)
+                )
+            pipeline = create_default_pipeline(config)
             ASRComparisonRunner(pipeline).run(models, config.output_directory)
-        elif args.command == "prepare":
-            prepared = pipeline.prepare()
-            try:
-                write_prepared_recording(prepared, config.output_directory)
-            finally:
-                pipeline.cleanup(prepared)
-        elif args.command == "transcribe-prepared":
-            recognition = pipeline.recognize_prepared(
-                prepared,
-                pipeline.transcriber_factory(),
-                config.asr_backend,
-            )
-            result = pipeline.finalize_prepared(prepared, recognition, config.output_directory)
-            write_asr_result_files(recognition, result.output_directory or config.output_directory)
         else:
-            pipeline.run()
+            pipeline = create_default_pipeline(config)
+            if args.command == "prepare":
+                prepared = pipeline.prepare()
+                try:
+                    write_prepared_recording(prepared, config.output_directory)
+                finally:
+                    pipeline.cleanup(prepared)
+            elif args.command == "transcribe-prepared":
+                recognition = pipeline.recognize_prepared(
+                    prepared,
+                    pipeline.transcriber_factory(),
+                    config.asr_backend,
+                )
+                result = pipeline.finalize_prepared(prepared, recognition, config.output_directory)
+                write_asr_result_files(
+                    recognition, result.output_directory or config.output_directory
+                )
+            else:
+                pipeline.run()
         return 0
     except (TranscriberError, OSError, RuntimeError, ValueError) as error:
         logging.getLogger(__name__).error("pipeline failed: %s", error)
