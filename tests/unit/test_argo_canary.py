@@ -12,7 +12,7 @@ def test_canary_argo_branch_uses_dedicated_gpu_recognition_and_common_finalizer(
         for parameter in document["spec"]["arguments"]["parameters"]
     }
 
-    assert parameters["canary_image"] == "ghcr.io/balex42/transcription-pipeline-canary:sha-21bdf50"
+    assert parameters["canary_image"] == "ghcr.io/balex42/transcription-pipeline-canary:sha-736019a"
 
     validator = templates["validate-backends"]
     output_paths = {
