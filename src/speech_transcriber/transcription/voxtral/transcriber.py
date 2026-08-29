@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Protocol, cast
 
 import numpy as np
@@ -10,10 +12,13 @@ from numpy.typing import NDArray
 
 from speech_transcriber.audio.segmenter import load_normalized_samples
 from speech_transcriber.errors import ModelLoadError, VoxtralStreamingError, VoxtralTimestampError
+from speech_transcriber.model_cache import resolve_hf_snapshot, snapshot_revision
 from speech_transcriber.models import ASRWord, NormalizedAudio
 from speech_transcriber.runtime.device import inference_dtype
 from speech_transcriber.transcription.base import Transcriber, TranscriberCapabilities
 from speech_transcriber.transcription.voxtral.timestamps import parse_voxtral_words
+
+LOGGER = logging.getLogger(__name__)
 
 
 class _VoxtralTokenizer(Protocol):
@@ -224,28 +229,39 @@ class VoxtralTranscriber(Transcriber):
             mel_frame_index += _processor_int(processor, "audio_length_per_tok")
 
     def _load(self) -> tuple[_VoxtralModel, _VoxtralProcessor]:
+        """Load processor and model from one resolved local snapshot path.
+
+        The Hub ID is resolved to a cached snapshot directory before any
+        Transformers call, so air-gapped runs never trigger a Hub API lookup
+        and processor and model always read the very same files.
+        """
         if self._model is not None and self._processor is not None:
             return self._model, self._processor
         try:
-            from transformers import AutoProcessor, VoxtralRealtimeForConditionalGeneration
-
+            auto_processor, model_class = _transformers_voxtral_classes()
+            model_path = resolve_voxtral_model_path(self.model_reference)
+            revision = snapshot_revision(Path(model_path))
+            LOGGER.info(
+                "loading Voxtral from cached snapshot revision %.12s", revision or "unknown"
+            )
             dtype, _ = inference_dtype(self.device)
             processor = cast(
                 _VoxtralProcessor,
-                AutoProcessor.from_pretrained(  # type: ignore[no-untyped-call]
-                    self.model_reference, trust_remote_code=False
+                auto_processor.from_pretrained(  # type: ignore[attr-defined]
+                    str(model_path), local_files_only=True, trust_remote_code=False
                 ),
             )
             self._configure_delay(processor)
             model = cast(
                 _VoxtralModel,
-                VoxtralRealtimeForConditionalGeneration.from_pretrained(
-                    self.model_reference, dtype=dtype, trust_remote_code=False
+                model_class.from_pretrained(  # type: ignore[attr-defined]
+                    str(model_path), dtype=dtype, local_files_only=True, trust_remote_code=False
                 ),
             )
             model.to(self.device)
             model.eval()
             self._model, self._processor = model, processor
+            self.backend_models["model_snapshot"] = revision or "unknown"
             return model, processor
         except Exception as error:
             raise ModelLoadError(
@@ -279,6 +295,29 @@ class VoxtralTranscriber(Transcriber):
         self._model = None
         self._processor = None
         self._state = VoxtralStreamingState()
+
+
+def _transformers_voxtral_classes() -> tuple[type[object], type[object]]:
+    """Import the two Transformers factories lazily for offline Voxtral use."""
+    from transformers import AutoProcessor, VoxtralRealtimeForConditionalGeneration
+
+    return AutoProcessor, VoxtralRealtimeForConditionalGeneration
+
+
+def resolve_voxtral_model_path(model_reference: str) -> str:
+    """Resolve the configured reference to one local Voxtral snapshot directory.
+
+    An existing absolute local directory is used directly for mirrored
+    deployments. A repository ID resolves through the shared Hugging Face
+    cache helper, which honors ``refs/main`` and fails instead of guessing
+    when the cache is ambiguous or absent.
+    """
+    if model_reference.startswith("/"):
+        local = Path(model_reference)
+        if local.is_dir():
+            return str(local)
+        raise ModelLoadError(f"configured Voxtral model path {model_reference!r} does not exist")
+    return str(resolve_hf_snapshot(model_reference))
 
 
 def _generated_tokens(output: object, prompt_ids: list[int]) -> list[int]:

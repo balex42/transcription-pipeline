@@ -8,13 +8,13 @@ backend.
 
 from __future__ import annotations
 
-import os
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any, Protocol, cast
 
 from speech_transcriber.errors import ASROutputError, ModelLoadError
 from speech_transcriber.language import normalize_language
+from speech_transcriber.model_cache import resolve_hf_snapshot
 from speech_transcriber.models import ASRWord, NormalizedAudio, RuntimeProvenance
 from speech_transcriber.transcription.base import Transcriber, TranscriberCapabilities
 
@@ -179,48 +179,17 @@ def resolve_model_path(model: str) -> str:
 
     Hugging Face stores branch refs such as ``main`` under ``refs/`` and model
     contents under commit-named ``snapshots/`` directories. Resolve that ref
-    explicitly so a cache with multiple historical snapshots remains
-    deterministic in air-gapped operation. If no usable snapshot can be found
-    while offline, fail instead of passing a repository-cache root to
-    CTranslate2.
+    explicitly through the shared cache helper so a cache with multiple
+    historical snapshots remains deterministic in air-gapped operation. When
+    online, an unresolvable reference falls back to the repository ID so
+    ``WhisperModel`` can use hub machinery as before; offline, resolution
+    fails instead of passing a repository-cache root to CTranslate2.
     """
-    if Path(model).is_absolute():
-        return model
-
-    cache_root = os.environ.get("HF_HOME")
-    if not cache_root:
-        return model
-
-    repo_dir = Path(cache_root) / "hub" / f"models--{model.replace('/', '--')}"
-    offline = os.environ.get("HF_HUB_OFFLINE") == "1"
-    if not repo_dir.is_dir():
-        if offline:
-            raise ModelLoadError(
-                f"required faster-whisper model {model!r} is not present in the offline cache "
-                f"under {repo_dir}"
-            )
-        return model
-
-    snapshots = repo_dir / "snapshots"
-    ref = repo_dir / "refs" / "main"
-    if ref.is_file():
-        revision = ref.read_text(encoding="utf-8").strip()
-        if revision and Path(revision).name == revision:
-            snapshot = snapshots / revision
-            if snapshot.is_dir():
-                return str(snapshot)
-
-    if snapshots.is_dir():
-        revisions = sorted(path for path in snapshots.iterdir() if path.is_dir())
-        if len(revisions) == 1:
-            return str(revisions[0])
-
-    if offline:
-        raise ModelLoadError(
-            f"required faster-whisper model {model!r} has no resolvable cached snapshot "
-            f"under {repo_dir}"
+    return str(
+        resolve_hf_snapshot(
+            model, fallback_to_reference=True, subject="faster-whisper model"
         )
-    return model
+    )
 
 
 def flatten_segment_words(segments: list[Any]) -> list[ASRWord]:

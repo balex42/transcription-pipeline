@@ -300,7 +300,7 @@ def test_resolve_model_path_fails_clearly_on_offline_cache_miss(
     monkeypatch.setenv("HF_HOME", str(tmp_path / "cache"))
     monkeypatch.setenv("HF_HUB_OFFLINE", "1")
 
-    with pytest.raises(ModelLoadError, match="not present in the offline cache"):
+    with pytest.raises(ModelLoadError, match="not present in the offline model cache"):
         resolve_model_path("Systran/faster-whisper-large-v3")
 
 

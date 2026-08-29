@@ -1,15 +1,19 @@
 from __future__ import annotations
 
+import builtins
 import wave
 from pathlib import Path
 
 import numpy as np
 import pytest
 
-from speech_transcriber.errors import VoxtralTimestampError
+from speech_transcriber.errors import ModelLoadError, VoxtralTimestampError
 from speech_transcriber.models import AudioMetadata, NormalizedAudio
 from speech_transcriber.transcription.voxtral.timestamps import parse_voxtral_words
-from speech_transcriber.transcription.voxtral.transcriber import VoxtralTranscriber
+from speech_transcriber.transcription.voxtral.transcriber import (
+    VoxtralTranscriber,
+    resolve_voxtral_model_path,
+)
 
 
 class Inputs(dict[str, object]):
@@ -238,3 +242,149 @@ def test_voxtral_timestamp_parser_ignores_special_tokens_after_a_marker() -> Non
         0.08,
         1.0,
     ) == []
+
+
+def fake_cache(tmp_path: Path) -> Path:
+    """Build a prefetched single-revision HF cache for the Voxtral model."""
+    repository = "models--mistralai--Voxtral-Mini-4B-Realtime-2602"
+    snapshot = tmp_path / "hub" / repository / "snapshots" / "abc123"
+    snapshot.mkdir(parents=True)
+    refs = tmp_path / "hub" / repository / "refs"
+    refs.mkdir(parents=True)
+    (refs / "main").write_text("abc123\n", encoding="utf-8")
+    return snapshot
+
+
+def test_load_passes_one_resolved_local_snapshot_to_processor_and_model(
+    tmp_path: Path, monkeypatch: object
+) -> None:
+    snapshot = fake_cache(tmp_path)
+    monkeypatch.setenv("HF_HOME", str(tmp_path))  # type: ignore[attr-defined]
+    monkeypatch.setenv("HF_HUB_OFFLINE", "1")  # type: ignore[attr-defined]
+    calls: list[tuple[str, str, dict[str, object]]] = []
+
+    class FakeProcessor:
+        @classmethod
+        def from_pretrained(cls, path: str, **kwargs: object) -> FakeProcessor:
+            calls.append(("processor", path, kwargs))
+            return cls()
+
+    class FakeModel:
+        @classmethod
+        def from_pretrained(cls, path: str, **kwargs: object) -> FakeModel:
+            calls.append(("model", path, kwargs))
+            return cls()
+
+        def to(self, _: str) -> FakeModel:
+            return self
+
+        def eval(self) -> FakeModel:
+            return self
+
+    import speech_transcriber.transcription.voxtral.transcriber as module
+
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        module,
+        "_transformers_voxtral_classes",
+        lambda: (FakeProcessor, FakeModel),
+    )
+    transcriber = VoxtralTranscriber("mistralai/Voxtral-Mini-4B-Realtime-2602", "cpu")
+    transcriber.load()
+
+    expected = str(snapshot)
+    assert [kind for kind, _, _ in calls] == ["processor", "model"]
+    for _, path, kwargs in calls:
+        assert path == expected
+        assert path.startswith(str(tmp_path))
+        assert "models--mistralai--Voxtral-Mini-4B-Realtime-2602" in path
+        assert kwargs.get("trust_remote_code") is False
+    assert transcriber.backend_models["model_snapshot"] == "abc123"
+
+
+def test_resolver_prefers_an_existing_absolute_local_directory(tmp_path: Path) -> None:
+    local = tmp_path / "voxtral"
+    local.mkdir()
+
+    assert resolve_voxtral_model_path(str(local)) == str(local)
+
+
+def test_resolver_does_not_reinterpret_relative_names(tmp_path: Path) -> None:
+    (tmp_path / "voxtral-mini").mkdir()
+
+    with pytest.raises(ModelLoadError, match="offline model cache"):
+        resolve_voxtral_model_path("voxtral-mini")
+
+
+def test_resolver_rejects_missing_absolute_directory(tmp_path: Path) -> None:
+    with pytest.raises(ModelLoadError, match="does not exist"):
+        resolve_voxtral_model_path(str(tmp_path / "missing"))
+
+def test_offline_load_never_contacts_the_hugging_face_hub(
+    tmp_path: Path, monkeypatch: object
+) -> None:
+    """Regression for the real Argo failure: cached snapshot, no Hub access.
+
+    Simulates the production env (``HF_HUB_OFFLINE=1``,
+    ``TRANSFORMERS_OFFLINE=1``) and installs an import guard that rejects any
+    network-facing hub or transports, then proves that processor and model
+    loading happens through the resolved local snapshot path only.
+    """
+    snapshot = fake_cache(tmp_path)
+    monkeypatch.setenv("HF_HOME", str(tmp_path))
+    monkeypatch.setenv("HF_HUB_OFFLINE", "1")
+    monkeypatch.setenv("TRANSFORMERS_OFFLINE", "1")
+    calls: list[tuple[str, str, dict[str, object]]] = []
+
+    class LocalOnlyProcessor:
+        @classmethod
+        def from_pretrained(cls, path: str, **kwargs: object) -> LocalOnlyProcessor:
+            assert Path(path).is_absolute() and Path(path) == snapshot
+            assert kwargs.get("trust_remote_code") is False
+            calls.append(("processor", path, kwargs))
+            return cls()
+
+    class LocalOnlyModel:
+        @classmethod
+        def from_pretrained(cls, path: str, **kwargs: object) -> LocalOnlyModel:
+            assert Path(path).is_absolute() and Path(path) == snapshot
+            assert kwargs.get("trust_remote_code") is False
+            calls.append(("model", path, kwargs))
+            return cls()
+
+        def to(self, _: str) -> LocalOnlyModel:
+            return self
+
+        def eval(self) -> LocalOnlyModel:
+            return self
+
+    real_import = builtins.__import__
+    guarded = (
+        "huggingface_hub",
+        "requests",
+        "httpx",
+        "urllib.request",
+        "http.client",
+        "socket",
+    )
+
+    def blocked(name: str, *args: object, **kwargs: object) -> object:
+        if any(name == prefix or name.startswith(prefix + ".") for prefix in guarded):
+            raise ImportError(f"network access blocked in offline test: {name}")
+        return real_import(name, *args, **kwargs)  # type: ignore[arg-type]
+
+    import speech_transcriber.transcription.voxtral.transcriber as module
+
+    monkeypatch.setattr(
+        module,
+        "_transformers_voxtral_classes",
+        lambda: (LocalOnlyProcessor, LocalOnlyModel),
+    )
+    monkeypatch.setattr(builtins, "__import__", blocked)  # type: ignore[assignment]
+    transcriber = VoxtralTranscriber("mistralai/Voxtral-Mini-4B-Realtime-2602", "cpu")
+    transcriber.load()
+
+    expected = str(snapshot)
+    assert [kind for kind, _, _ in calls] == ["processor", "model"]
+    for _, path, _ in calls:
+        assert path == expected
+    assert transcriber.backend_models["model_snapshot"] == "abc123"

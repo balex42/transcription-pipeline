@@ -337,6 +337,16 @@ Canary prefetches only `nvidia/canary-1b-v2`; its repository contains the requir
 `canary-1b-v2.nemo` checkpoint, including NeMo's timestamp alignment component. Do not strip
 timestamp files from the checkpoint: they are required for native word timestamps.
 
+All repository-based backends resolve their model through the shared offline snapshot resolver
+before loading. A repository ID is resolved to the cached snapshot selected by `refs/main`
+(``$HF_HOME/hub/models--<org>--<name>/refs/main`` → ``snapshots/<revision>/``); if the ref is
+missing, exactly one cached snapshot is used deterministically, and ambiguous or missing caches
+fail instead of triggering an online lookup. Air-gapped success therefore requires the full
+prefetched repository: Voxtral's snapshot must contain everything `AutoProcessor` and
+`VoxtralRealtimeForConditionalGeneration` read. An absolute path to an existing local model
+directory or file (for example `/models/voxtral-mini-4b-realtime-2602`) is always used directly
+and bypasses the cache layout entirely.
+
 Also obtain the accepted pyannote artifact through the approved process. Transfer approved artifacts and externally generated checksums through the air gap. A production volume can use:
 
 ```text

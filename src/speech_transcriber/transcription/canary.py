@@ -15,7 +15,6 @@ short chunk through the identical machinery.
 from __future__ import annotations
 
 import logging
-import os
 import tempfile
 import time
 import wave
@@ -27,6 +26,7 @@ from typing import Any
 
 from speech_transcriber.errors import ASROutputError, ModelLoadError
 from speech_transcriber.language import normalize_language
+from speech_transcriber.model_cache import resolve_hf_snapshot
 from speech_transcriber.models import ASRWord, NormalizedAudio, RuntimeProvenance
 from speech_transcriber.transcription.base import Transcriber, TranscriberCapabilities
 
@@ -225,49 +225,19 @@ def resolve_canary_model_path(model: str) -> str:
     """Find Canary's ``.nemo`` checkpoint without a runtime Hub lookup.
 
     A configured local file or directory takes precedence. Repository IDs are
-    resolved from the active Hugging Face cache via ``refs/main`` so multiple
-    historical snapshots remain deterministic. Runtime model downloading is
-    intentionally unsupported; prefetch the repository before air-gapped use.
+    resolved from the active Hugging Face cache through the shared snapshot
+    helper via ``refs/main`` so multiple historical snapshots remain
+    deterministic. Resolution is always strict: runtime model downloading is
+    intentionally unsupported, so a missing or ambiguous cache fails instead
+    of returning a Hub repository ID; prefetch the repository before
+    air-gapped use.
     """
     configured = Path(model).expanduser()
     if configured.is_absolute() or configured.exists():
         return _canary_model_file(configured)
 
-    cache_root = os.environ.get("HF_HOME")
-    repo_dir = (
-        Path(cache_root) / "hub" / f"models--{model.replace('/', '--')}"
-        if cache_root
-        else None
-    )
-    if repo_dir is None or not repo_dir.is_dir():
-        location = str(repo_dir) if repo_dir is not None else "the configured HF_HOME cache"
-        raise ModelLoadError(
-            f"required Canary model {model!r} is not present in the offline model cache "
-            f"under {location}"
-        )
-
-    snapshots = repo_dir / "snapshots"
-    ref = repo_dir / "refs" / "main"
-    if ref.is_file():
-        revision = ref.read_text(encoding="utf-8").strip()
-        if revision and Path(revision).name == revision:
-            snapshot = snapshots / revision
-            if snapshot.is_dir():
-                return _canary_model_file(snapshot)
-
-    revisions = (
-        sorted(path for path in snapshots.iterdir() if path.is_dir()) if snapshots.is_dir() else []
-    )
-    if len(revisions) == 1:
-        return _canary_model_file(revisions[0])
-    if not revisions:
-        raise ModelLoadError(
-            f"required Canary model {model!r} is not present in the offline model cache "
-            f"under {repo_dir}"
-        )
-    raise ModelLoadError(
-        f"required Canary model {model!r} has no resolvable cached snapshot under {repo_dir}"
-    )
+    snapshot = resolve_hf_snapshot(model, subject="Canary model")
+    return _canary_model_file(snapshot)
 
 
 def flatten_canary_words(outputs: Sequence[Any], *, offset_seconds: float = 0.0) -> list[ASRWord]:
