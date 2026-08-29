@@ -296,11 +296,12 @@ argo submit --from workflowtemplate/speech-transcription --namespace argo \
 ```
 
 The topology is `validate-backends`, then `prepare` once and `publish-source` once, then one
-independent transcription and publication path per selected backend. Each transcription task
-requests one GPU and invokes its fixed backend name, so with two available GPUs two ASR tasks can
-run concurrently while additional selected backends wait for Kubernetes scheduling. The workflow
-adds no inter-backend dependencies, mutexes, semaphores, or parallelism limits. No pod loads
-multiple ASR models.
+independent transcription and publication path per selected backend. `publish-source` is CPU-only,
+does not need prepared audio, and intentionally runs in parallel with `prepare` after validation.
+Each transcription task requests one GPU and invokes its fixed backend name, so with two available
+GPUs two ASR tasks can run concurrently while additional selected backends wait for Kubernetes
+scheduling. The workflow adds no inter-backend dependencies, mutexes, semaphores, or parallelism
+limits. No pod loads multiple ASR models.
 
 The default Argo artifact repository stores temporary prepared and ASR artifacts in the
 `argo-artifacts` bucket at `runs/<workflow-uid>/...`. Durable outputs explicitly use the separate
@@ -325,12 +326,13 @@ the RustFS service endpoint and the existing `rustfs-s3` Secret, rather than inh
 for JSON validation and file-copy tasks. Production or air-gapped deployments should mirror and pin
 that utility image in their internal registry.
 
-All GPU tasks mount `speech-model-cache` read-only at `/models`. A ReadWriteOnce PVC can be mounted
-by multiple pods on the same node, so it does not require serializing backend GPU pods. If selected
-backend pods must run on different nodes, an RWO volume may prevent multi-node cache attachment;
-use RWX or per-node caches if that becomes a scheduling constraint. The PVC and its storage class
-are configured outside this repository. Retention of durable prefixes is controlled by the RustFS
-bucket lifecycle policy.
+Only `prepare` and the four ASR templates declare and mount `speech-model-cache` read-only at
+`/models`; validation and publication pods do not depend on model storage. A ReadWriteOnce PVC can
+be mounted by multiple pods on the same node, so it does not require serializing backend GPU pods.
+If selected backend pods must run on different nodes, an RWO volume may prevent multi-node cache
+attachment; use RWX or per-node caches if that becomes a scheduling constraint. The PVC and its
+storage class are configured outside this repository. Retention of durable prefixes is controlled
+by the RustFS bucket lifecycle policy.
 
 ## Verification
 

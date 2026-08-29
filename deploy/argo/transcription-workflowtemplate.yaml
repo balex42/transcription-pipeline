@@ -30,10 +30,6 @@ spec:
       - name: recording
 
   volumes:
-    - name: model-cache
-      persistentVolumeClaim:
-        claimName: speech-model-cache
-
     - name: cache
       emptyDir: {}
 
@@ -65,6 +61,7 @@ spec:
                   from: "{{inputs.artifacts.recording}}"
 
           - name: publish-source
+            # Source publication is CPU-only and intentionally overlaps prepare after validation.
             dependencies:
               - validate-backends
             template: publish-source
@@ -101,6 +98,11 @@ spec:
               none: {}
             s3:
               key: runs/{{workflow.uid}}/prepared/
+
+      volumes:
+        - name: model-cache
+          persistentVolumeClaim:
+            claimName: speech-model-cache
 
       container:
         image: "{{workflow.parameters.application_image}}"
@@ -412,6 +414,11 @@ spec:
             s3:
               key: runs/{{workflow.uid}}/parakeet/
 
+      volumes:
+        - name: model-cache
+          persistentVolumeClaim:
+            claimName: speech-model-cache
+
       container:
         image: "{{workflow.parameters.parakeet_image}}"
 
@@ -469,6 +476,11 @@ spec:
               none: {}
             s3:
               key: runs/{{workflow.uid}}/qwen/
+
+      volumes:
+        - name: model-cache
+          persistentVolumeClaim:
+            claimName: speech-model-cache
 
       container:
         image: "{{workflow.parameters.qwen_image}}"
@@ -528,6 +540,11 @@ spec:
             s3:
               key: runs/{{workflow.uid}}/nemotron/
 
+      volumes:
+        - name: model-cache
+          persistentVolumeClaim:
+            claimName: speech-model-cache
+
       container:
         image: "{{workflow.parameters.nemotron_image}}"
 
@@ -585,6 +602,11 @@ spec:
               none: {}
             s3:
               key: runs/{{workflow.uid}}/voxtral/
+
+      volumes:
+        - name: model-cache
+          persistentVolumeClaim:
+            claimName: speech-model-cache
 
       container:
         image: "{{workflow.parameters.voxtral_image}}"
