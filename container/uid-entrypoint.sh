@@ -11,12 +11,13 @@ set -eu
 uid="$(id -u)"
 gid="$(id -g)"
 
-passwd_file="${TMPDIR:-/tmp}/passwd"
-group_file="${TMPDIR:-/tmp}/group"
-
 if ! getent passwd "$uid" >/dev/null 2>&1 || ! getent group "$gid" >/dev/null 2>&1; then
-    cp /etc/passwd "$passwd_file"
-    cp /etc/group "$group_file"
+    tmpdir="${TMPDIR:-/tmp}"
+    passwd_file="$(mktemp "$tmpdir/nss-passwd.XXXXXX")"
+    group_file="$(mktemp "$tmpdir/nss-group.XXXXXX")"
+
+    cat /etc/passwd > "$passwd_file"
+    cat /etc/group > "$group_file"
 
     if ! getent passwd "$uid" >/dev/null 2>&1; then
         printf 'speech-transcriber:x:%s:%s:Speech Transcriber:%s:/sbin/nologin\n' \

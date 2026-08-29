@@ -67,11 +67,21 @@ def test_uid_entrypoint_handles_unknown_and_existing_uids() -> None:
     assert "NSS_WRAPPER_GROUP" in entrypoint
     assert "LD_PRELOAD" in entrypoint
     assert "libnss_wrapper.so" in entrypoint
-    assert "exec \"$@\"" in entrypoint
-    assert "cp /etc/passwd" in entrypoint
-    assert "cp /etc/group" in entrypoint
+    assert 'exec "$@"' in entrypoint
+    assert "cat /etc/passwd" in entrypoint
+    assert "cat /etc/group" in entrypoint
     assert "TMPDIR:-/tmp" in entrypoint
     assert "HOME:-/cache/home" in entrypoint
+
+
+def test_uid_entrypoint_uses_unique_temporary_identity_files() -> None:
+    entrypoint = (ROOT / "container/uid-entrypoint.sh").read_text(encoding="utf-8")
+    assert 'mktemp "$tmpdir/nss-passwd.XXXXXX"' in entrypoint
+    assert 'mktemp "$tmpdir/nss-group.XXXXXX"' in entrypoint
+    assert "${TMPDIR:-/tmp}/passwd" not in entrypoint
+    assert "${TMPDIR:-/tmp}/group" not in entrypoint
+    assert "cp /etc/passwd" not in entrypoint
+    assert "cp /etc/group" not in entrypoint
 
 
 def test_ci_smoke_tests_arbitrary_uid() -> None:
