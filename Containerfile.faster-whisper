@@ -30,8 +30,13 @@ RUN apt-get update \
 WORKDIR /app
 COPY pyproject.toml uv.lock README.md LICENSE ./
 COPY src ./src
-RUN python3 -m pip install --no-cache-dir uv==0.11.32 \
-    && UV_CACHE_DIR=/tmp/uv-cache uv sync --frozen --no-dev --extra faster-whisper-runtime \
+
+# Ubuntu 24.04 marks its system Python as externally managed (PEP 668), so
+# bootstrap uv in an isolated virtual environment instead of modifying the
+# distribution-managed Python installation.
+RUN python3 -m venv /opt/uv \
+    && /opt/uv/bin/pip install --no-cache-dir uv==0.11.32 \
+    && UV_CACHE_DIR=/tmp/uv-cache /opt/uv/bin/uv sync --frozen --no-dev --extra faster-whisper-runtime \
     && rm -rf /tmp/uv-cache
 
 # The container runs as an arbitrary non-root UID that is normally a member of group 0.

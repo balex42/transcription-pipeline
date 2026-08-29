@@ -195,8 +195,11 @@ def test_load_resolves_cached_snapshot_and_records_provenance(
     tmp_path: Path, monkeypatch: object
 ) -> None:
     cache = tmp_path / "cache"
-    snapshot = cache / "hub" / "models--Systran--faster-whisper-large-v3" / "snapshots" / "main"
+    repo = cache / "hub" / "models--Systran--faster-whisper-large-v3"
+    snapshot = repo / "snapshots" / "abc123"
     snapshot.mkdir(parents=True)
+    (repo / "refs").mkdir()
+    (repo / "refs" / "main").write_text("abc123\n", encoding="utf-8")
     monkeypatch.setenv("HF_HOME", str(cache))
     monkeypatch.setenv("HF_HUB_OFFLINE", "1")
 
@@ -238,17 +241,33 @@ def test_load_uses_absolute_model_path_directly(tmp_path: Path, monkeypatch: obj
     assert transcriber._model.model_path == str(local)
 
 
-def test_resolve_model_path_uses_cached_snapshot_when_present(
+def test_resolve_model_path_uses_cached_main_ref(tmp_path: Path, monkeypatch: object) -> None:
+    cache = tmp_path / "cache"
+    repo = cache / "hub" / "models--Systran--faster-whisper-large-v3"
+    snapshot = repo / "snapshots" / "abc123"
+    snapshot.mkdir(parents=True)
+    (repo / "refs").mkdir()
+    (repo / "refs" / "main").write_text("abc123\n", encoding="utf-8")
+    monkeypatch.setenv("HF_HOME", str(cache))
+
+    assert resolve_model_path("Systran/faster-whisper-large-v3") == str(snapshot)
+
+
+def test_resolve_model_path_uses_main_ref_with_multiple_snapshots(
     tmp_path: Path, monkeypatch: object
 ) -> None:
     cache = tmp_path / "cache"
-    snapshot = cache / "hub" / "models--Systran--faster-whisper-large-v3" / "snapshots" / "main"
-    snapshot.mkdir(parents=True)
+    repo = cache / "hub" / "models--Systran--faster-whisper-large-v3"
+    old_snapshot = repo / "snapshots" / "old123"
+    active_snapshot = repo / "snapshots" / "new456"
+    old_snapshot.mkdir(parents=True)
+    active_snapshot.mkdir(parents=True)
+    (repo / "refs").mkdir()
+    (repo / "refs" / "main").write_text("new456\n", encoding="utf-8")
     monkeypatch.setenv("HF_HOME", str(cache))
+    monkeypatch.setenv("HF_HUB_OFFLINE", "1")
 
-    assert (
-        resolve_model_path("Systran/faster-whisper-large-v3") == str(snapshot)
-    )
+    assert resolve_model_path("Systran/faster-whisper-large-v3") == str(active_snapshot)
 
 
 def test_resolve_model_path_uses_single_revision_snapshot(
@@ -261,9 +280,7 @@ def test_resolve_model_path_uses_single_revision_snapshot(
     revision.mkdir(parents=True)
     monkeypatch.setenv("HF_HOME", str(cache))
 
-    assert (
-        resolve_model_path("Systran/faster-whisper-large-v3") == str(revision)
-    )
+    assert resolve_model_path("Systran/faster-whisper-large-v3") == str(revision)
 
 
 def test_resolve_model_path_falls_back_to_repository_id_when_online(
@@ -284,6 +301,22 @@ def test_resolve_model_path_fails_clearly_on_offline_cache_miss(
     monkeypatch.setenv("HF_HUB_OFFLINE", "1")
 
     with pytest.raises(ModelLoadError, match="not present in the offline cache"):
+        resolve_model_path("Systran/faster-whisper-large-v3")
+
+
+def test_resolve_model_path_fails_offline_when_multiple_snapshots_have_no_ref(
+    tmp_path: Path, monkeypatch: object
+) -> None:
+    cache = tmp_path / "cache"
+    snapshots = (
+        cache / "hub" / "models--Systran--faster-whisper-large-v3" / "snapshots"
+    )
+    (snapshots / "old123").mkdir(parents=True)
+    (snapshots / "new456").mkdir()
+    monkeypatch.setenv("HF_HOME", str(cache))
+    monkeypatch.setenv("HF_HUB_OFFLINE", "1")
+
+    with pytest.raises(ModelLoadError, match="no resolvable cached snapshot"):
         resolve_model_path("Systran/faster-whisper-large-v3")
 
 
