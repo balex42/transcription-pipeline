@@ -10,7 +10,15 @@ spec:
 
   arguments:
     parameters:
-      - name: image
+      - name: application_image
+        value: ghcr.io/balex42/transcription-pipeline:sha-b6b6d90
+      - name: parakeet_image
+        value: ghcr.io/balex42/transcription-pipeline:sha-b6b6d90
+      - name: qwen_image
+        value: ghcr.io/balex42/transcription-pipeline:sha-b6b6d90
+      - name: nemotron_image
+        value: ghcr.io/balex42/transcription-pipeline:sha-b6b6d90
+      - name: voxtral_image
         value: ghcr.io/balex42/transcription-pipeline:sha-b6b6d90
       - name: backends
         value: '["parakeet"]'
@@ -76,7 +84,7 @@ spec:
               key: runs/{{workflow.uid}}/prepared/
 
       container:
-        image: "{{workflow.parameters.image}}"
+        image: "{{workflow.parameters.application_image}}"
 
         args:
           - prepare
@@ -121,14 +129,81 @@ spec:
           - name: prepared
           - name: recording
 
-      dag:
-        tasks:
-          - name: transcribe
-            template: transcribe-prepared
+      steps:
+        - - name: validate-backend
+            template: validate-backend
             arguments:
               parameters:
                 - name: backend
                   value: "{{inputs.parameters.backend}}"
+        - - name: parakeet
+            template: parakeet-pipeline
+            when: "{{inputs.parameters.backend}} == parakeet"
+            arguments:
+              artifacts:
+                - name: prepared
+                  from: "{{inputs.artifacts.prepared}}"
+                - name: recording
+                  from: "{{inputs.artifacts.recording}}"
+          - name: qwen
+            template: qwen-pipeline
+            when: "{{inputs.parameters.backend}} == qwen"
+            arguments:
+              artifacts:
+                - name: prepared
+                  from: "{{inputs.artifacts.prepared}}"
+                - name: recording
+                  from: "{{inputs.artifacts.recording}}"
+          - name: nemotron
+            template: nemotron-pipeline
+            when: "{{inputs.parameters.backend}} == nemotron"
+            arguments:
+              artifacts:
+                - name: prepared
+                  from: "{{inputs.artifacts.prepared}}"
+                - name: recording
+                  from: "{{inputs.artifacts.recording}}"
+          - name: voxtral
+            template: voxtral-pipeline
+            when: "{{inputs.parameters.backend}} == voxtral"
+            arguments:
+              artifacts:
+                - name: prepared
+                  from: "{{inputs.artifacts.prepared}}"
+                - name: recording
+                  from: "{{inputs.artifacts.recording}}"
+
+    - name: validate-backend
+      inputs:
+        parameters:
+          - name: backend
+
+      container:
+        image: "{{workflow.parameters.application_image}}"
+        command:
+          - /bin/sh
+          - -ec
+        args:
+          - |
+            case "$BACKEND" in
+              parakeet|qwen|nemotron|voxtral) ;;
+              *) printf 'unsupported backend: %s\n' "$BACKEND" >&2; exit 2 ;;
+            esac
+        env:
+          - name: BACKEND
+            value: "{{inputs.parameters.backend}}"
+
+    - name: parakeet-pipeline
+      inputs:
+        artifacts:
+          - name: prepared
+          - name: recording
+
+      dag:
+        tasks:
+          - name: transcribe
+            template: transcribe-parakeet
+            arguments:
               artifacts:
                 - name: prepared
                   from: "{{inputs.artifacts.prepared}}"
@@ -139,7 +214,91 @@ spec:
             arguments:
               parameters:
                 - name: backend
-                  value: "{{inputs.parameters.backend}}"
+                  value: parakeet
+              artifacts:
+                - name: recording
+                  from: "{{inputs.artifacts.recording}}"
+                - name: result
+                  from: "{{tasks.transcribe.outputs.artifacts.result}}"
+
+    - name: qwen-pipeline
+      inputs:
+        artifacts:
+          - name: prepared
+          - name: recording
+
+      dag:
+        tasks:
+          - name: transcribe
+            template: transcribe-qwen
+            arguments:
+              artifacts:
+                - name: prepared
+                  from: "{{inputs.artifacts.prepared}}"
+          - name: publish
+            dependencies:
+              - transcribe
+            template: publish
+            arguments:
+              parameters:
+                - name: backend
+                  value: qwen
+              artifacts:
+                - name: recording
+                  from: "{{inputs.artifacts.recording}}"
+                - name: result
+                  from: "{{tasks.transcribe.outputs.artifacts.result}}"
+
+    - name: nemotron-pipeline
+      inputs:
+        artifacts:
+          - name: prepared
+          - name: recording
+
+      dag:
+        tasks:
+          - name: transcribe
+            template: transcribe-nemotron
+            arguments:
+              artifacts:
+                - name: prepared
+                  from: "{{inputs.artifacts.prepared}}"
+          - name: publish
+            dependencies:
+              - transcribe
+            template: publish
+            arguments:
+              parameters:
+                - name: backend
+                  value: nemotron
+              artifacts:
+                - name: recording
+                  from: "{{inputs.artifacts.recording}}"
+                - name: result
+                  from: "{{tasks.transcribe.outputs.artifacts.result}}"
+
+    - name: voxtral-pipeline
+      inputs:
+        artifacts:
+          - name: prepared
+          - name: recording
+
+      dag:
+        tasks:
+          - name: transcribe
+            template: transcribe-voxtral
+            arguments:
+              artifacts:
+                - name: prepared
+                  from: "{{inputs.artifacts.prepared}}"
+          - name: publish
+            dependencies:
+              - transcribe
+            template: publish
+            arguments:
+              parameters:
+                - name: backend
+                  value: voxtral
               artifacts:
                 - name: recording
                   from: "{{inputs.artifacts.recording}}"
@@ -171,7 +330,7 @@ spec:
               key: transcription-data/jobs/{{workflow.uid}}/{{inputs.parameters.backend}}/
 
       container:
-        image: "{{workflow.parameters.image}}"
+        image: "{{workflow.parameters.application_image}}"
         command:
           - /bin/sh
           - -ec
@@ -182,11 +341,8 @@ spec:
           - name: work
             mountPath: /work
 
-    - name: transcribe-prepared
+    - name: transcribe-parakeet
       inputs:
-        parameters:
-          - name: backend
-
         artifacts:
           - name: prepared
             path: /work/prepared
@@ -200,17 +356,191 @@ spec:
             archive:
               none: {}
             s3:
-              key: runs/{{workflow.uid}}/{{inputs.parameters.backend}}/
+              key: runs/{{workflow.uid}}/parakeet/
 
       container:
-        image: "{{workflow.parameters.image}}"
+        image: "{{workflow.parameters.parakeet_image}}"
 
         args:
           - transcribe-prepared
           - --prepared
           - /work/prepared
           - --asr
-          - "{{inputs.parameters.backend}}"
+          - parakeet
+          - --output
+          - /work/result
+          - --working-directory
+          - /work/tmp
+          - --device
+          - cuda
+
+        env:
+          - name: HF_HOME
+            value: /models/huggingface
+
+          - name: HF_HUB_OFFLINE
+            value: "1"
+
+          - name: TRANSFORMERS_OFFLINE
+            value: "1"
+
+        resources:
+          limits:
+            nvidia.com/gpu: "1"
+
+        volumeMounts:
+          - name: model-cache
+            mountPath: /models
+            readOnly: true
+
+          - name: cache
+            mountPath: /cache
+
+          - name: work
+            mountPath: /work
+
+    - name: transcribe-qwen
+      inputs:
+        artifacts:
+          - name: prepared
+            path: /work/prepared
+            mode: 0755
+            recurseMode: true
+
+      outputs:
+        artifacts:
+          - name: result
+            path: /work/result
+            archive:
+              none: {}
+            s3:
+              key: runs/{{workflow.uid}}/qwen/
+
+      container:
+        image: "{{workflow.parameters.qwen_image}}"
+
+        args:
+          - transcribe-prepared
+          - --prepared
+          - /work/prepared
+          - --asr
+          - qwen
+          - --output
+          - /work/result
+          - --working-directory
+          - /work/tmp
+          - --device
+          - cuda
+
+        env:
+          - name: HF_HOME
+            value: /models/huggingface
+
+          - name: HF_HUB_OFFLINE
+            value: "1"
+
+          - name: TRANSFORMERS_OFFLINE
+            value: "1"
+
+        resources:
+          limits:
+            nvidia.com/gpu: "1"
+
+        volumeMounts:
+          - name: model-cache
+            mountPath: /models
+            readOnly: true
+
+          - name: cache
+            mountPath: /cache
+
+          - name: work
+            mountPath: /work
+
+    - name: transcribe-nemotron
+      inputs:
+        artifacts:
+          - name: prepared
+            path: /work/prepared
+            mode: 0755
+            recurseMode: true
+
+      outputs:
+        artifacts:
+          - name: result
+            path: /work/result
+            archive:
+              none: {}
+            s3:
+              key: runs/{{workflow.uid}}/nemotron/
+
+      container:
+        image: "{{workflow.parameters.nemotron_image}}"
+
+        args:
+          - transcribe-prepared
+          - --prepared
+          - /work/prepared
+          - --asr
+          - nemotron
+          - --output
+          - /work/result
+          - --working-directory
+          - /work/tmp
+          - --device
+          - cuda
+
+        env:
+          - name: HF_HOME
+            value: /models/huggingface
+
+          - name: HF_HUB_OFFLINE
+            value: "1"
+
+          - name: TRANSFORMERS_OFFLINE
+            value: "1"
+
+        resources:
+          limits:
+            nvidia.com/gpu: "1"
+
+        volumeMounts:
+          - name: model-cache
+            mountPath: /models
+            readOnly: true
+
+          - name: cache
+            mountPath: /cache
+
+          - name: work
+            mountPath: /work
+
+    - name: transcribe-voxtral
+      inputs:
+        artifacts:
+          - name: prepared
+            path: /work/prepared
+            mode: 0755
+            recurseMode: true
+
+      outputs:
+        artifacts:
+          - name: result
+            path: /work/result
+            archive:
+              none: {}
+            s3:
+              key: runs/{{workflow.uid}}/voxtral/
+
+      container:
+        image: "{{workflow.parameters.voxtral_image}}"
+
+        args:
+          - transcribe-prepared
+          - --prepared
+          - /work/prepared
+          - --asr
+          - voxtral
           - --output
           - /work/result
           - --working-directory

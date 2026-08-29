@@ -271,18 +271,33 @@ podman run --rm --device nvidia.com/gpu=all \
 
 `deploy/argo/transcription-workflowtemplate.yaml` is an example Argo `WorkflowTemplate`. It uses
 one GPU-limited `prepare` task, then fans out one GPU-limited `transcribe-prepared` and non-GPU
-`publish` pair for every selected backend. The template pins the known deployed worker image to
-`ghcr.io/balex42/transcription-pipeline:sha-b6b6d90`; replace it with the digest of a later
-verified release when updating the worker.
+`publish` pair for every selected backend. Each backend has an explicit pipeline and image
+parameter (`parakeet_image`, `qwen_image`, `nemotron_image`, and `voxtral_image`), so a future
+backend-specific runtime can replace its image and command without changing the fan-out DAG. All
+four currently default to the pinned worker image
+`ghcr.io/balex42/transcription-pipeline:sha-b6b6d90`.
 
-Select one or more of `parakeet`, `qwen`, `nemotron`, and `voxtral` with a JSON array. Each backend
-receives its own GPU pod after the shared preparation task:
+`backends` must be a JSON array containing only `parakeet`, `qwen`, `nemotron`, or `voxtral`.
+It is expanded with Argo `withParam`; a comma-separated value is invalid and rejected before any
+ASR command runs. Select one backend:
 
 ```bash
 argo submit --from workflowtemplate/speech-transcription --namespace argo \
-  -p 'backends=["parakeet","qwen","nemotron","voxtral"]' \
+  -p 'backends=["parakeet"]' -a recording=/path/to/recording.m4a
+```
+
+Select multiple backends:
+
+```bash
+argo submit --from workflowtemplate/speech-transcription --namespace argo \
+  -p 'backends=["parakeet","qwen","nemotron"]' \
   -a recording=/path/to/recording.m4a
 ```
+
+The topology is `prepare` once, then one independent validation, transcription, and publication
+path per selected backend. Each transcription task requests one GPU and invokes its fixed backend
+name, so with two available GPUs two ASR tasks can run concurrently while additional selected
+backends wait for Kubernetes scheduling. No pod loads multiple ASR models.
 
 Argo uses workflow-UID-scoped keys below `runs/` for temporary prepared and ASR artifacts. The
 publish step retains each canonical result at
