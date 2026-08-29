@@ -278,9 +278,10 @@ and command without changing the fan-out DAG. All four currently default to the 
 `ghcr.io/balex42/transcription-pipeline:sha-b6b6d90`.
 
 `backends` must be a JSON array containing only `parakeet`, `qwen`, `nemotron`, or `voxtral`.
-It is expanded with Argo `withParam`. The pre-prepare validator rejects malformed or empty arrays,
-unsupported names, and duplicates. A comma-separated value is invalid and fails before normalization,
-diarization, or any ASR command runs. Select one backend:
+The pre-prepare validator rejects malformed or empty arrays, unsupported names, and duplicates, then
+emits one boolean output per backend to condition the four direct DAG branches. A comma-separated
+value is invalid and fails before normalization, diarization, or any ASR command runs. Select one
+backend:
 
 ```bash
 argo submit --from workflowtemplate/speech-transcription --namespace argo \
@@ -295,13 +296,15 @@ argo submit --from workflowtemplate/speech-transcription --namespace argo \
   -a recording=/path/to/recording.m4a
 ```
 
-The topology is `validate-backends`, then `prepare` once and `publish-source` once, then one
-independent transcription and publication path per selected backend. `publish-source` is CPU-only,
-does not need prepared audio, and intentionally runs in parallel with `prepare` after validation.
-Each transcription task requests one GPU and invokes its fixed backend name, so with two available
-GPUs two ASR tasks can run concurrently while additional selected backends wait for Kubernetes
-scheduling. The workflow adds no inter-backend dependencies, mutexes, semaphores, or parallelism
-limits. No pod loads multiple ASR models.
+The top-level DAG is `validate-backends`, then `prepare` once and `publish-source` once, followed
+by direct `transcribe-parakeet`, `transcribe-qwen`, `transcribe-nemotron`, and `transcribe-voxtral`
+branches when selected. Each selected transcription task leads directly to its own publish task;
+there are no backend dispatcher or pipeline wrapper nodes. `publish-source` is CPU-only, does not
+need prepared audio, and intentionally runs in parallel with `prepare` after validation. Each
+transcription task requests one GPU and invokes its fixed backend name, so with two available GPUs
+two ASR tasks can run concurrently while additional selected backends wait for Kubernetes scheduling.
+The workflow adds no inter-backend dependencies, mutexes, semaphores, or parallelism limits. No pod
+loads multiple ASR models.
 
 The default Argo artifact repository stores temporary prepared and ASR artifacts in the
 `argo-artifacts` bucket at `runs/<workflow-uid>/...`. Durable outputs explicitly use the separate

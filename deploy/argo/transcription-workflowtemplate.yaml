@@ -70,18 +70,89 @@ spec:
                 - name: recording
                   from: "{{inputs.artifacts.recording}}"
 
-          - name: backend
+          - name: transcribe-parakeet
             dependencies:
               - prepare
-            template: backend-pipeline
-            withParam: "{{workflow.parameters.backends}}"
+            when: "{{tasks.validate-backends.outputs.parameters.run_parakeet}} == true"
+            template: transcribe-parakeet
             arguments:
-              parameters:
-                - name: backend
-                  value: "{{item}}"
               artifacts:
                 - name: prepared
                   from: "{{tasks.prepare.outputs.artifacts.prepared}}"
+
+          - name: publish-parakeet
+            depends: "transcribe-parakeet.Succeeded"
+            template: publish
+            arguments:
+              parameters:
+                - name: backend
+                  value: parakeet
+              artifacts:
+                - name: result
+                  from: "{{tasks.transcribe-parakeet.outputs.artifacts.result}}"
+
+          - name: transcribe-qwen
+            dependencies:
+              - prepare
+            when: "{{tasks.validate-backends.outputs.parameters.run_qwen}} == true"
+            template: transcribe-qwen
+            arguments:
+              artifacts:
+                - name: prepared
+                  from: "{{tasks.prepare.outputs.artifacts.prepared}}"
+
+          - name: publish-qwen
+            depends: "transcribe-qwen.Succeeded"
+            template: publish
+            arguments:
+              parameters:
+                - name: backend
+                  value: qwen
+              artifacts:
+                - name: result
+                  from: "{{tasks.transcribe-qwen.outputs.artifacts.result}}"
+
+          - name: transcribe-nemotron
+            dependencies:
+              - prepare
+            when: "{{tasks.validate-backends.outputs.parameters.run_nemotron}} == true"
+            template: transcribe-nemotron
+            arguments:
+              artifacts:
+                - name: prepared
+                  from: "{{tasks.prepare.outputs.artifacts.prepared}}"
+
+          - name: publish-nemotron
+            depends: "transcribe-nemotron.Succeeded"
+            template: publish
+            arguments:
+              parameters:
+                - name: backend
+                  value: nemotron
+              artifacts:
+                - name: result
+                  from: "{{tasks.transcribe-nemotron.outputs.artifacts.result}}"
+
+          - name: transcribe-voxtral
+            dependencies:
+              - prepare
+            when: "{{tasks.validate-backends.outputs.parameters.run_voxtral}} == true"
+            template: transcribe-voxtral
+            arguments:
+              artifacts:
+                - name: prepared
+                  from: "{{tasks.prepare.outputs.artifacts.prepared}}"
+
+          - name: publish-voxtral
+            depends: "transcribe-voxtral.Succeeded"
+            template: publish
+            arguments:
+              parameters:
+                - name: backend
+                  value: voxtral
+              artifacts:
+                - name: result
+                  from: "{{tasks.transcribe-voxtral.outputs.artifacts.result}}"
 
     - name: prepare
       inputs:
@@ -142,47 +213,25 @@ spec:
           - name: work
             mountPath: /work
 
-    - name: backend-pipeline
-      inputs:
-        parameters:
-          - name: backend
-        artifacts:
-          - name: prepared
-
-      steps:
-        - - name: parakeet
-            template: parakeet-pipeline
-            when: "{{inputs.parameters.backend}} == parakeet"
-            arguments:
-              artifacts:
-                - name: prepared
-                  from: "{{inputs.artifacts.prepared}}"
-          - name: qwen
-            template: qwen-pipeline
-            when: "{{inputs.parameters.backend}} == qwen"
-            arguments:
-              artifacts:
-                - name: prepared
-                  from: "{{inputs.artifacts.prepared}}"
-          - name: nemotron
-            template: nemotron-pipeline
-            when: "{{inputs.parameters.backend}} == nemotron"
-            arguments:
-              artifacts:
-                - name: prepared
-                  from: "{{inputs.artifacts.prepared}}"
-          - name: voxtral
-            template: voxtral-pipeline
-            when: "{{inputs.parameters.backend}} == voxtral"
-            arguments:
-              artifacts:
-                - name: prepared
-                  from: "{{inputs.artifacts.prepared}}"
-
     - name: validate-backends
       inputs:
         parameters:
           - name: backends
+
+      outputs:
+        parameters:
+          - name: run_parakeet
+            valueFrom:
+              path: /tmp/run_parakeet
+          - name: run_qwen
+            valueFrom:
+              path: /tmp/run_qwen
+          - name: run_nemotron
+            valueFrom:
+              path: /tmp/run_nemotron
+          - name: run_voxtral
+            valueFrom:
+              path: /tmp/run_voxtral
 
       container:
         image: "{{workflow.parameters.utility_image}}"
@@ -205,109 +254,12 @@ spec:
                 raise SystemExit(f"unsupported backend selection: {backends!r}")
             if len(set(backends)) != len(backends):
                 raise SystemExit(f"duplicate backend selection: {backends!r}")
+            for backend in supported:
+                with open(f"/tmp/run_{backend}", "w", encoding="utf-8") as output:
+                    output.write(str(backend in backends).lower())
         env:
           - name: BACKENDS
             value: "{{inputs.parameters.backends}}"
-
-    - name: parakeet-pipeline
-      inputs:
-        artifacts:
-          - name: prepared
-
-      dag:
-        tasks:
-          - name: transcribe
-            template: transcribe-parakeet
-            arguments:
-              artifacts:
-                - name: prepared
-                  from: "{{inputs.artifacts.prepared}}"
-          - name: publish
-            dependencies:
-              - transcribe
-            template: publish
-            arguments:
-              parameters:
-                - name: backend
-                  value: parakeet
-              artifacts:
-                - name: result
-                  from: "{{tasks.transcribe.outputs.artifacts.result}}"
-
-    - name: qwen-pipeline
-      inputs:
-        artifacts:
-          - name: prepared
-
-      dag:
-        tasks:
-          - name: transcribe
-            template: transcribe-qwen
-            arguments:
-              artifacts:
-                - name: prepared
-                  from: "{{inputs.artifacts.prepared}}"
-          - name: publish
-            dependencies:
-              - transcribe
-            template: publish
-            arguments:
-              parameters:
-                - name: backend
-                  value: qwen
-              artifacts:
-                - name: result
-                  from: "{{tasks.transcribe.outputs.artifacts.result}}"
-
-    - name: nemotron-pipeline
-      inputs:
-        artifacts:
-          - name: prepared
-
-      dag:
-        tasks:
-          - name: transcribe
-            template: transcribe-nemotron
-            arguments:
-              artifacts:
-                - name: prepared
-                  from: "{{inputs.artifacts.prepared}}"
-          - name: publish
-            dependencies:
-              - transcribe
-            template: publish
-            arguments:
-              parameters:
-                - name: backend
-                  value: nemotron
-              artifacts:
-                - name: result
-                  from: "{{tasks.transcribe.outputs.artifacts.result}}"
-
-    - name: voxtral-pipeline
-      inputs:
-        artifacts:
-          - name: prepared
-
-      dag:
-        tasks:
-          - name: transcribe
-            template: transcribe-voxtral
-            arguments:
-              artifacts:
-                - name: prepared
-                  from: "{{inputs.artifacts.prepared}}"
-          - name: publish
-            dependencies:
-              - transcribe
-            template: publish
-            arguments:
-              parameters:
-                - name: backend
-                  value: voxtral
-              artifacts:
-                - name: result
-                  from: "{{tasks.transcribe.outputs.artifacts.result}}"
 
     - name: publish-source
       inputs:
