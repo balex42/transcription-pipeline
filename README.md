@@ -270,10 +270,24 @@ podman run --rm --device nvidia.com/gpu=all \
 `deploy/k8s/job.example.yaml` is a generic `batch/v1` Job that requests one GPU and demonstrates the same mounted-local-model offline mode on any Kubernetes cluster. No model weights or secrets are baked into the image.
 
 `deploy/argo/transcription-workflowtemplate.yaml` is an example Argo `WorkflowTemplate`. It uses
-a `prepare` DAG task followed by four GPU-limited `transcribe-prepared` tasks, with Argo artifact
-inputs/outputs and workflow-UID-scoped artifact keys. Configure the cluster artifact repository
-and the `speech-model-cache` PVC outside this repository; the template contains no object-storage
-credentials or storage commands.
+one GPU-limited `prepare` task, one selected GPU-limited `transcribe-prepared` task, then a
+non-GPU `publish` task. The template pins the known deployed worker image to
+`ghcr.io/balex42/transcription-pipeline:sha-b6b6d90`; replace it with the digest of a later
+verified release when updating the worker.
+
+Select one of `parakeet`, `qwen`, `nemotron`, or `voxtral` at submission time:
+
+```bash
+argo submit --from workflowtemplate/speech-transcription --namespace argo \
+  -p backend=parakeet -a recording=/path/to/recording.m4a
+```
+
+Argo uses workflow-UID-scoped keys below `runs/` for temporary prepared and ASR artifacts. The
+publish step retains the canonical result at `transcription-data/jobs/<workflow-uid>/`, containing
+`source/recording`, `transcript.txt`, `transcript.json`, `asr_words.json`, and `metadata.json`.
+Configure the cluster artifact repository and the `speech-model-cache` PVC outside this repository;
+the template contains no object-storage credentials or storage commands. Retention of the canonical
+prefix is controlled by the RustFS bucket lifecycle policy.
 
 ## Verification
 
