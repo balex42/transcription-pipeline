@@ -10,31 +10,24 @@ spec:
 
   arguments:
     parameters:
-      - name: application_image
-        # Keep all Python runtime images on one schema-v2-compatible release.
-        value: ghcr.io/balex42/transcription-pipeline:sha-106ea39
-      # Production and air-gapped deployments should mirror and pin this utility image internally.
       - name: utility_image
         value: python:3.11-alpine
+      - name: application_image
+        value: ghcr.io/balex42/transcription-pipeline:sha-7e25561
       - name: parakeet_image
-        value: ghcr.io/balex42/transcription-pipeline:sha-106ea39
+        value: ghcr.io/balex42/transcription-pipeline:sha-7e25561
       - name: qwen_image
-        value: ghcr.io/balex42/transcription-pipeline:sha-106ea39
+        value: ghcr.io/balex42/transcription-pipeline:sha-7e25561
       - name: nemotron_image
-        value: ghcr.io/balex42/transcription-pipeline:sha-106ea39
+        value: ghcr.io/balex42/transcription-pipeline:sha-7e25561
       - name: voxtral_image
-        value: ghcr.io/balex42/transcription-pipeline:sha-106ea39
-      # Temporary bootstrap tag: the container workflow publishes this tag on
-      # every main-branch build. The deployment-only follow-up commit pins the
-      # immutable sha-<commit> tag produced by the container workflow.
+        value: ghcr.io/balex42/transcription-pipeline:sha-7e25561
       - name: faster_whisper_image
-        value: ghcr.io/balex42/transcription-pipeline-faster-whisper:sha-106ea39
-      # Bootstrap tag published by the implementation build. A deployment-only
-      # follow-up pins the immutable sha-<commit> image after CI succeeds.
+        value: ghcr.io/balex42/transcription-pipeline-faster-whisper:sha-7e25561
       - name: canary_image
-        value: ghcr.io/balex42/transcription-pipeline-canary:main
+        value: ghcr.io/balex42/transcription-pipeline-canary:sha-7e25561
       - name: backends
-        value: '["parakeet"]'
+        value: '["parakeet","qwen","nemotron","faster-whisper","canary"]'
 
     artifacts:
       - name: recording
