@@ -127,7 +127,7 @@ jobs:
 
       - name: Smoke test arbitrary non-root UID
         run: |
-          image="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.tags }}"
+          image="${{ steps.meta.outputs.tags }}"
           image="${image%%$'\n'*}"
           docker run --rm --user 12345:0 --entrypoint /usr/local/bin/uid-entrypoint "$image" \
             /app/.venv/bin/python -c "import os, pwd; print(pwd.getpwuid(os.getuid()))"
@@ -180,7 +180,7 @@ jobs:
 
       - name: Smoke test arbitrary non-root UID
         run: |
-          image="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-faster-whisper:${{ steps.meta.outputs.tags }}"
+          image="${{ steps.meta.outputs.tags }}"
           image="${image%%$'\n'*}"
           docker run --rm --user 12345:0 --entrypoint /usr/local/bin/uid-entrypoint "$image" \
             /app/.venv/bin/python -c "import os, pwd; print(pwd.getpwuid(os.getuid()))"
@@ -233,7 +233,7 @@ jobs:
 
       - name: Smoke test arbitrary non-root UID
         run: |
-          image="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-canary:${{ steps.meta.outputs.tags }}"
+          image="${{ steps.meta.outputs.tags }}"
           image="${image%%$'\n'*}"
           docker run --rm --user 12345:0 --entrypoint /usr/local/bin/uid-entrypoint "$image" \
             /app/.venv/bin/python -c "import os, pwd; print(pwd.getpwuid(os.getuid()))"
