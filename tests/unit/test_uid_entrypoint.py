@@ -70,14 +70,16 @@ def test_uid_entrypoint_handles_unknown_and_existing_uids() -> None:
     assert 'exec "$@"' in entrypoint
     assert "cat /etc/passwd" in entrypoint
     assert "cat /etc/group" in entrypoint
-    assert "TMPDIR:-/tmp" in entrypoint
+    assert "NSS_WRAPPER_TMPDIR" in entrypoint
     assert "HOME:-/cache/home" in entrypoint
 
 
 def test_uid_entrypoint_uses_unique_temporary_identity_files() -> None:
     entrypoint = (ROOT / "container/uid-entrypoint.sh").read_text(encoding="utf-8")
-    assert 'mktemp "$tmpdir/nss-passwd.XXXXXX"' in entrypoint
-    assert 'mktemp "$tmpdir/nss-group.XXXXXX"' in entrypoint
+    assert 'mktemp "$nss_tmpdir/nss-passwd.XXXXXX"' in entrypoint
+    assert 'mktemp "$nss_tmpdir/nss-group.XXXXXX"' in entrypoint
+    assert 'nss_tmpdir="${NSS_WRAPPER_TMPDIR:-/tmp}"' in entrypoint
+    assert "${TMPDIR:-/tmp}" not in entrypoint
     assert "${TMPDIR:-/tmp}/passwd" not in entrypoint
     assert "${TMPDIR:-/tmp}/group" not in entrypoint
     assert "cp /etc/passwd" not in entrypoint
@@ -89,3 +91,4 @@ def test_ci_smoke_tests_arbitrary_uid() -> None:
     assert "--user 12345:0" in workflow
     assert "pwd.getpwuid(os.getuid())" in workflow
     assert "load: true" in workflow
+    assert "--tmpfs /cache" in workflow

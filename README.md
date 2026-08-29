@@ -368,11 +368,15 @@ All three runtime images run as an arbitrary non-root UID and resolve their
 identity through the shared `container/uid-entrypoint.sh` entrypoint. When the
 runtime UID or GID has no `/etc/passwd` or `/etc/group` entry (for example a
 Kubernetes/OpenShift-assigned UID such as `1000870000`), the entrypoint copies
-`/etc/passwd` and `/etc/group` into the writable `TMPDIR`, appends a synthetic
+`/etc/passwd` and `/etc/group` into unique `mktemp` files under `/tmp` (or
+`NSS_WRAPPER_TMPDIR` if set), appends a synthetic
 `speech-transcriber` entry for the actual UID/GID, and preloads
 `libnss_wrapper.so` so `getpwuid()` and friends resolve the identity. This
 keeps `/etc/passwd` unmodified, requires no root at startup, and preserves
-OpenShift group-0 writable-directory compatibility. UIDs that already exist in
+OpenShift group-0 writable-directory compatibility. NSS scratch files are
+deliberately decoupled from the application `TMPDIR=/cache/tmp`, so identity
+resolution succeeds even when Argo mounts a fresh empty `emptyDir` over
+`/cache`. UIDs that already exist in
 `/etc/passwd` are used as-is. Each image installs the `libnss-wrapper` package
 (Debian/Ubuntu) and the entrypoint locates the installed `libnss_wrapper.so`
 under `/usr/lib` at runtime. The entrypoint preserves the existing contract:
@@ -537,7 +541,8 @@ build only the generic image; `Containerfile.faster-whisper` or `runtimes/faster
 build only faster-whisper; `Containerfile.canary` or `runtimes/canary/**` changes build only Canary.
 Changes under `container/**` (the shared UID entrypoint) rebuild all three images. Each build job
 also runs the image with an arbitrary non-root UID (`--user 12345:0`) and verifies
-`pwd.getpwuid(os.getuid())` succeeds. Version-tag pushes and manual dispatch remain full build
+`pwd.getpwuid(os.getuid())` succeeds, both with the baked `/cache` and with `/cache` masked by a
+tmpfs mount that reproduces the Argo `emptyDir` behavior. Version-tag pushes and manual dispatch remain full build
 triggers, so an image-tag-only Argo update does not create a follow-up image build. Each image has
 its own immutable `sha-<commit>` tag namespace.
 

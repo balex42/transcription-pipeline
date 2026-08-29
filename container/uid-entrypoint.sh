@@ -12,9 +12,9 @@ uid="$(id -u)"
 gid="$(id -g)"
 
 if ! getent passwd "$uid" >/dev/null 2>&1 || ! getent group "$gid" >/dev/null 2>&1; then
-    tmpdir="${TMPDIR:-/tmp}"
-    passwd_file="$(mktemp "$tmpdir/nss-passwd.XXXXXX")"
-    group_file="$(mktemp "$tmpdir/nss-group.XXXXXX")"
+    nss_tmpdir="${NSS_WRAPPER_TMPDIR:-/tmp}"
+    passwd_file="$(mktemp "$nss_tmpdir/nss-passwd.XXXXXX")"
+    group_file="$(mktemp "$nss_tmpdir/nss-group.XXXXXX")"
 
     cat /etc/passwd > "$passwd_file"
     cat /etc/group > "$group_file"
