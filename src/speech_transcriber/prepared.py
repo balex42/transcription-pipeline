@@ -2,22 +2,43 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import os
 import shutil
 import tempfile
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
 from speech_transcriber.models import AudioMetadata, DiarizationSegment, NormalizedAudio
-from speech_transcriber.pipeline import PreparedRecording
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 NORMALIZED_AUDIO_FILE = "normalized.wav"
 DIARIZATION_FILE = "diarization.json"
 MANIFEST_FILE = "prepared.json"
+
+
+@dataclass(frozen=True)
+class PreparedRecording:
+    """One normalization and diarization result reusable by recognition and finalization."""
+
+    audio: NormalizedAudio
+    diarization: list[DiarizationSegment]
+    work_directory: Path
+    diarization_model: str | None = None
+    language: str | None = None
+    cleanup_enabled: bool = True
+
+
+def sha256_file(path: Path) -> str:
+    """Return a streaming SHA-256 digest for a portable artifact file."""
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def write_prepared_recording(prepared: PreparedRecording, destination: Path) -> None:
@@ -57,6 +78,7 @@ def write_prepared_recording(prepared: PreparedRecording, destination: Path) -> 
                     "channels": prepared.audio.metadata.channels,
                     "sample_width_bits": prepared.audio.metadata.sample_width_bits,
                     "file": NORMALIZED_AUDIO_FILE,
+                    "sha256": sha256_file(staging / NORMALIZED_AUDIO_FILE),
                 },
                 "diarization": {
                     "file": DIARIZATION_FILE,
@@ -92,6 +114,9 @@ def load_prepared_recording(directory: Path) -> PreparedRecording:
     normalized_path = directory / normalized_name
     if not normalized_path.is_file():
         raise ValueError(f"prepared normalized audio is missing: {normalized_path}")
+    expected_sha256 = _sha256(audio.get("sha256"), "audio.sha256")
+    if sha256_file(normalized_path) != expected_sha256:
+        raise ValueError("prepared normalized audio SHA-256 does not match its manifest")
 
     metadata = AudioMetadata(
         source=_relative_name(audio.get("source"), "audio.source"),
@@ -146,7 +171,16 @@ def _object(value: object, name: str) -> dict[str, Any]:
 def _string(value: object, name: str) -> str:
     if not isinstance(value, str) or not value:
         raise ValueError(f"{name} must be a non-empty string")
+    if Path(value).is_absolute():
+        raise ValueError(f"{name} must not be an absolute path")
     return value
+
+
+def _sha256(value: object, name: str) -> str:
+    result = _string(value, name)
+    if len(result) != 64 or any(character not in "0123456789abcdef" for character in result):
+        raise ValueError(f"{name} must be a lowercase SHA-256 hex digest")
+    return result
 
 
 def _positive_float(value: object, name: str) -> float:

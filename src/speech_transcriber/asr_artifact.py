@@ -18,7 +18,7 @@ from speech_transcriber.models import (
     RuntimeProvenance,
 )
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 ASR_WORDS_FILE = "asr_words.json"
 METADATA_FILE = "metadata.json"
 
@@ -49,9 +49,15 @@ def write_asr_result_files(result: ASRRecognitionResult, directory: Path) -> Non
     _write_json(directory / METADATA_FILE, _metadata_payload(result.metadata))
 
 
-def load_asr_recognition(directory: Path) -> ASRRecognitionResult:
+def load_asr_recognition(
+    directory: Path,
+    *,
+    expected_backend: str | None = None,
+    expected_normalized_audio_sha256: str | None = None,
+) -> ASRRecognitionResult:
     """Load a recognition artifact without importing or instantiating an ASR backend."""
     metadata = _object(_load_json(directory / METADATA_FILE, "ASR metadata"), "ASR metadata")
+    _reject_absolute_paths(metadata, "ASR metadata")
     if metadata.get("schema_version") != SCHEMA_VERSION:
         raise ValueError(
             f"unsupported ASR artifact schema version: {metadata.get('schema_version')!r}"
@@ -61,10 +67,22 @@ def load_asr_recognition(directory: Path) -> ASRRecognitionResult:
     word_data = _load_json(directory / ASR_WORDS_FILE, "ASR words")
     if not isinstance(word_data, list):
         raise ValueError("ASR words must be a JSON array")
-    return ASRRecognitionResult(
+    result = ASRRecognitionResult(
         words=[_asr_word(record, index) for index, record in enumerate(word_data)],
         metadata=_asr_metadata(metadata),
     )
+    if expected_backend is not None and result.metadata.backend != expected_backend:
+        raise ValueError(
+            f"ASR artifact backend {result.metadata.backend!r} does not match {expected_backend!r}"
+        )
+    if (
+        expected_normalized_audio_sha256 is not None
+        and result.metadata.normalized_audio_sha256 != expected_normalized_audio_sha256
+    ):
+        raise ValueError(
+            "ASR artifact normalized audio SHA-256 does not match the prepared recording"
+        )
+    return result
 
 
 def _metadata_payload(metadata: ASRRunMetadata) -> dict[str, object]:
@@ -85,6 +103,17 @@ def _remove_absolute_paths(value: object) -> object:
     if isinstance(value, list):
         return [_remove_absolute_paths(item) for item in value]
     return value
+
+
+def _reject_absolute_paths(value: object, name: str) -> None:
+    if isinstance(value, str) and Path(value).is_absolute():
+        raise ValueError(f"{name} must not contain an absolute path")
+    if isinstance(value, dict):
+        for key, item in value.items():
+            _reject_absolute_paths(item, f"{name}.{key}")
+    elif isinstance(value, list):
+        for index, item in enumerate(value):
+            _reject_absolute_paths(item, f"{name}[{index}]")
 
 
 def _asr_metadata(value: dict[str, Any]) -> ASRRunMetadata:
@@ -110,6 +139,9 @@ def _asr_metadata(value: dict[str, Any]) -> ASRRunMetadata:
         ),
         peak_cuda_memory_reserved_bytes=_optional_nonnegative_int(
             value.get("peak_cuda_memory_reserved_bytes"), "peak_cuda_memory_reserved_bytes"
+        ),
+        normalized_audio_sha256=_sha256(
+            value.get("normalized_audio_sha256"), "normalized_audio_sha256"
         ),
         transformers_version=_string_or_default(
             value.get("transformers_version"), "transformers_version", "unknown"
@@ -179,6 +211,13 @@ def _string_or_default(value: object, name: str, default: str) -> str:
     return default if value is None else _string(value, name)
 
 
+def _sha256(value: object, name: str) -> str:
+    result = _string(value, name)
+    if len(result) != 64 or any(character not in "0123456789abcdef" for character in result):
+        raise ValueError(f"{name} must be a lowercase SHA-256 hex digest")
+    return result
+
+
 def _positive_float(value: object, name: str) -> float:
     result = _nonnegative_float(value, name)
     if result <= 0:
@@ -192,6 +231,15 @@ def _nonnegative_float(value: object, name: str) -> float:
     result = float(value)
     if not math.isfinite(result) or result < 0:
         raise ValueError(f"{name} must be a non-negative finite number")
+    return result
+
+
+def _finite_float(value: object, name: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        raise ValueError(f"{name} must be a finite number")
+    result = float(value)
+    if not math.isfinite(result):
+        raise ValueError(f"{name} must be a finite number")
     return result
 
 
@@ -230,7 +278,7 @@ def _string_mapping_or_empty(value: object, name: str) -> dict[str, str]:
 
 def _number_mapping(value: object, name: str) -> dict[str, float]:
     mapping = _object(value, name)
-    return {key: _nonnegative_float(item, f"{name}.{key}") for key, item in mapping.items()}
+    return {key: _finite_float(item, f"{name}.{key}") for key, item in mapping.items()}
 
 
 def _number_mapping_or_empty(value: object, name: str) -> dict[str, float]:
@@ -241,15 +289,11 @@ def _configuration(value: object) -> dict[str, str | int | float | bool | None]:
     mapping = _object(value, "backend_configuration")
     result: dict[str, str | int | float | bool | None] = {}
     for key, item in mapping.items():
-        if (
-            item is None
-            or isinstance(item, str | bool)
-            or (
-                isinstance(item, int | float)
-                and not isinstance(item, bool)
-                and math.isfinite(float(item))
-            )
-        ):
+        if item is None or isinstance(item, bool):
+            result[key] = item
+        elif isinstance(item, str):
+            result[key] = _string(item, f"backend_configuration.{key}")
+        elif isinstance(item, int | float) and math.isfinite(float(item)):
             result[key] = item
         else:
             raise ValueError(f"backend_configuration.{key} must be a JSON scalar")

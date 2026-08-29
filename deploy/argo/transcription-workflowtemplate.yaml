@@ -678,6 +678,8 @@ spec:
           - /work/prepared
           - --asr-result
           - /work/asr
+          - --expected-backend
+          - "{{inputs.parameters.backend}}"
           - --output
           - /work/result
           - --working-directory

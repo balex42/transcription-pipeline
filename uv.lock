@@ -2757,7 +2757,24 @@ wheels = [
 name = "speech-transcriber"
 version = "0.1.0"
 source = { editable = "." }
-dependencies = [
+
+[package.optional-dependencies]
+dev = [
+    { name = "accelerate" },
+    { name = "librosa" },
+    { name = "mistral-common", extra = ["audio"] },
+    { name = "mypy" },
+    { name = "numpy" },
+    { name = "pyannote-audio" },
+    { name = "pytest" },
+    { name = "ruff" },
+    { name = "soundfile" },
+    { name = "torch" },
+    { name = "torchaudio" },
+    { name = "torchcodec" },
+    { name = "transformers" },
+]
+runtime = [
     { name = "accelerate" },
     { name = "librosa" },
     { name = "mistral-common", extra = ["audio"] },
@@ -2770,30 +2787,33 @@ dependencies = [
     { name = "transformers" },
 ]
 
-[package.optional-dependencies]
-dev = [
-    { name = "mypy" },
-    { name = "pytest" },
-    { name = "ruff" },
-]
-
 [package.metadata]
 requires-dist = [
-    { name = "accelerate", specifier = "==1.12.0" },
-    { name = "librosa", specifier = "==0.11.0" },
-    { name = "mistral-common", extras = ["audio"], specifier = "==1.10.0" },
+    { name = "accelerate", marker = "extra == 'dev'", specifier = "==1.12.0" },
+    { name = "accelerate", marker = "extra == 'runtime'", specifier = "==1.12.0" },
+    { name = "librosa", marker = "extra == 'dev'", specifier = "==0.11.0" },
+    { name = "librosa", marker = "extra == 'runtime'", specifier = "==0.11.0" },
+    { name = "mistral-common", extras = ["audio"], marker = "extra == 'dev'", specifier = "==1.10.0" },
+    { name = "mistral-common", extras = ["audio"], marker = "extra == 'runtime'", specifier = "==1.10.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = "==1.18.2" },
-    { name = "numpy", specifier = "==2.2.6" },
-    { name = "pyannote-audio", specifier = "==4.0.7" },
+    { name = "numpy", marker = "extra == 'dev'", specifier = "==2.2.6" },
+    { name = "numpy", marker = "extra == 'runtime'", specifier = "==2.2.6" },
+    { name = "pyannote-audio", marker = "extra == 'dev'", specifier = "==4.0.7" },
+    { name = "pyannote-audio", marker = "extra == 'runtime'", specifier = "==4.0.7" },
     { name = "pytest", marker = "extra == 'dev'", specifier = "==8.4.2" },
     { name = "ruff", marker = "extra == 'dev'", specifier = "==0.12.12" },
-    { name = "soundfile", specifier = "==0.14.0" },
-    { name = "torch", specifier = "==2.8.0" },
-    { name = "torchaudio", specifier = "==2.8.0" },
-    { name = "torchcodec", specifier = "==0.7.0" },
-    { name = "transformers", specifier = "==5.13.0" },
+    { name = "soundfile", marker = "extra == 'dev'", specifier = "==0.14.0" },
+    { name = "soundfile", marker = "extra == 'runtime'", specifier = "==0.14.0" },
+    { name = "torch", marker = "extra == 'dev'", specifier = "==2.8.0" },
+    { name = "torch", marker = "extra == 'runtime'", specifier = "==2.8.0" },
+    { name = "torchaudio", marker = "extra == 'dev'", specifier = "==2.8.0" },
+    { name = "torchaudio", marker = "extra == 'runtime'", specifier = "==2.8.0" },
+    { name = "torchcodec", marker = "extra == 'dev'", specifier = "==0.7.0" },
+    { name = "torchcodec", marker = "extra == 'runtime'", specifier = "==0.7.0" },
+    { name = "transformers", marker = "extra == 'dev'", specifier = "==5.13.0" },
+    { name = "transformers", marker = "extra == 'runtime'", specifier = "==5.13.0" },
 ]
-provides-extras = ["dev"]
+provides-extras = ["runtime", "dev"]
 
 [[package]]
 name = "sqlalchemy"

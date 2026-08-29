@@ -74,6 +74,9 @@ python3.11 -m venv .venv
 
 `ffmpeg` and `ffprobe` must be on `PATH`.
 
+The base package contains the artifact and CPU finalization path only. Install `.[runtime]` for
+preparation/recognition or `.[dev]` for the full runtime and test tools.
+
 ## Commands
 
 ### Local
@@ -186,6 +189,11 @@ The Python `Transcriber` protocol is only an internal abstraction for the curren
 implementations; a future vLLM, NVIDIA NIM, Riva, or Triton runtime only needs to produce the same
 recognition artifact and does not need to import or implement that protocol.
 
+Finalization is a backend-neutral CPU component. Its import path contains only artifact contracts,
+speaker alignment, turn building, and transcript exporters: it does not import ASR backend modules,
+Pyannote, Torch, Transformers, or model factories. This makes a smaller finalizer image practical
+without changing the filesystem contract.
+
 `prepare` writes a versioned prepared artifact containing only these files:
 
 ```text
@@ -196,9 +204,9 @@ prepared/
 ```
 
 `normalized.wav` is 16 kHz mono 16-bit PCM WAV. `diarization.json` contains the canonical
-`DiarizationSegment` records. `prepared.json` has `schema_version: 1`, relative filenames,
-normalized audio metadata, diarization model provenance, and language. It contains no absolute
-host paths.
+`DiarizationSegment` records. `prepared.json` has `schema_version: 2`, relative filenames,
+normalized audio metadata, a SHA-256 digest of `normalized.wav`, diarization model provenance, and
+language. It contains no absolute host paths. The digest is recomputed when the artifact is loaded.
 
 Each backend-specific `recognize-prepared` task writes a versioned ASR artifact:
 
@@ -210,13 +218,15 @@ asr/
 
 `asr_words.json` contains only backend-neutral `ASRWord` records (`text`, absolute `end`, nullable
 absolute `start`, and nullable `confidence`). It never contains speaker attribution, turns,
-pyannote output, backend objects, or absolute paths. `metadata.json` has `schema_version: 1`, the
-relative ASR-word filename, backend/model/device/dtype, timings, RTF, peak GPU memory, backend
-metrics/model references/configuration, and generic runtime provenance (`runtime.name`,
-`runtime.version`, and `runtime.components`). Absolute model paths are reduced to their basename.
+pyannote output, backend objects, or absolute paths. `metadata.json` has `schema_version: 2`, the
+relative ASR-word filename, the prepared artifact's normalized-audio SHA-256, backend/model/device/dtype,
+timings, RTF, peak GPU memory, backend metrics/model references/configuration, and generic runtime
+provenance (`runtime.name`, `runtime.version`, and `runtime.components`). Loaders reject absolute
+paths in external metadata and allow finite signed backend metrics such as log probabilities.
 
-`finalize-prepared` needs only `prepared/` and `asr/`; it does not instantiate an ASR backend or
-load model weights. It performs speaker alignment, turn building, and transcript export, preserving
+`finalize-prepared` needs only `prepared/` and `asr/`; it does not instantiate an ASR backend, load
+model weights, or import backend implementations. It checks both the normalized-audio SHA-256 and the
+required expected backend before speaker alignment, turn building, and transcript export, preserving
 the ASR metadata in the final result:
 
 ```text
@@ -236,7 +246,8 @@ process. The independently runnable commands are:
 
 ```bash
 speech-transcriber recognize-prepared --prepared /work/prepared --asr parakeet --output /work/asr --device cuda
-speech-transcriber finalize-prepared --prepared /work/prepared --asr-result /work/asr --output /work/result
+speech-transcriber finalize-prepared --prepared /work/prepared --asr-result /work/asr \
+  --expected-backend parakeet --output /work/result
 ```
 
 ## Offline and Air-Gapped Models
@@ -336,6 +347,9 @@ Each recognition task requests one GPU and invokes its fixed backend name, so wi
 GPUs two ASR tasks can run concurrently while additional selected backends wait for Kubernetes scheduling.
 The workflow adds no inter-backend dependencies, mutexes, semaphores, or parallelism limits. No pod
 loads multiple ASR models.
+
+Each Argo finalization task passes its fixed backend as `--expected-backend`; a recognition artifact
+from a different backend or normalized recording fails before publication.
 
 The default Argo artifact repository stores temporary prepared, ASR, and final-result artifacts in
 the `argo-artifacts` bucket at `runs/<workflow-uid>/prepared/`, `runs/<workflow-uid>/asr/<backend>/`,

@@ -4,8 +4,8 @@ from pathlib import Path
 from speech_transcriber import cli
 from speech_transcriber.config import DEFAULT_PYANNOTE_MODEL, DEFAULT_QWEN_ALIGNER_MODEL
 from speech_transcriber.models import ASRWord, AudioMetadata, DiarizationSegment, NormalizedAudio
-from speech_transcriber.pipeline import PreparedRecording, TranscriptionPipeline
-from speech_transcriber.prepared import write_prepared_recording
+from speech_transcriber.pipeline import TranscriptionPipeline
+from speech_transcriber.prepared import PreparedRecording, write_prepared_recording
 from speech_transcriber.transcription.base import TranscriberCapabilities
 
 
@@ -176,7 +176,7 @@ def test_transcribe_prepared_uses_only_asr_and_keeps_input_immutable(
     assert json.loads((output / "transcript.json").read_text(encoding="utf-8"))["metadata"][
         "diarization_model"
     ] == "pyannote/test"
-    assert json.loads((output / "metadata.json").read_text(encoding="utf-8"))["schema_version"] == 1
+    assert json.loads((output / "metadata.json").read_text(encoding="utf-8"))["schema_version"] == 2
 
 
 def test_recognize_and_finalize_commands_cross_the_artifact_boundary(
@@ -226,15 +226,10 @@ def test_recognize_and_finalize_commands_cross_the_artifact_boundary(
     assert {path.name for path in asr.iterdir()} == {"asr_words.json", "metadata.json"}
     assert transcriber.loaded and transcriber.released
 
-    def finalization_pipeline(config: object) -> TranscriptionPipeline:
-        return TranscriptionPipeline(  # type: ignore[arg-type]
-            config,
-            diarizer_factory=lambda: (_ for _ in ()).throw(AssertionError("no diarizer")),
-            transcriber_factory=lambda: (_ for _ in ()).throw(AssertionError("no ASR backend")),
-            preprocessor=FakePreprocessor(),
-        )
+    def unexpected_pipeline(_: object) -> object:
+        raise AssertionError("finalization must not create a runtime pipeline")
 
-    monkeypatch.setattr(cli, "create_default_pipeline", finalization_pipeline)  # type: ignore[attr-defined]
+    monkeypatch.setattr(cli, "create_default_pipeline", unexpected_pipeline)  # type: ignore[attr-defined]
     result = tmp_path / "result"
     assert (
         cli.main(
@@ -244,6 +239,8 @@ def test_recognize_and_finalize_commands_cross_the_artifact_boundary(
                 str(prepared_directory),
                 "--asr-result",
                 str(asr),
+                "--expected-backend",
+                "parakeet",
                 "--output",
                 str(result),
                 "--working-directory",
@@ -293,6 +290,8 @@ def test_new_command_parsing() -> None:
             "/tmp/prepared",
             "--asr-result",
             "/tmp/asr",
+            "--expected-backend",
+            "parakeet",
             "--output",
             "/tmp/result",
         ]

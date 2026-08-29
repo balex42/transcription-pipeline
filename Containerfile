@@ -22,7 +22,7 @@ WORKDIR /app
 COPY pyproject.toml uv.lock README.md LICENSE ./
 COPY src ./src
 RUN python -m pip install --no-cache-dir uv==0.11.32 \
-    && UV_CACHE_DIR=/tmp/uv-cache uv sync --frozen --no-dev \
+    && UV_CACHE_DIR=/tmp/uv-cache uv sync --frozen --no-dev --extra runtime \
     && rm -rf /tmp/uv-cache
 
 # The container runs as an arbitrary non-root UID that is normally a member of group 0.

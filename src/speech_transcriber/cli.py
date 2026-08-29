@@ -7,13 +7,13 @@ import logging
 import os
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from speech_transcriber.asr_artifact import (
     load_asr_recognition,
     write_asr_recognition,
     write_asr_result_files,
 )
-from speech_transcriber.comparison import ASRComparisonRunner
 from speech_transcriber.config import (
     ASR_BACKENDS,
     DEFAULT_PYANNOTE_MODEL,
@@ -21,8 +21,22 @@ from speech_transcriber.config import (
     PipelineConfig,
 )
 from speech_transcriber.errors import TranscriberError
-from speech_transcriber.pipeline import create_default_pipeline
-from speech_transcriber.prepared import load_prepared_recording, write_prepared_recording
+from speech_transcriber.finalization import TranscriptFinalizer
+from speech_transcriber.prepared import (
+    load_prepared_recording,
+    sha256_file,
+    write_prepared_recording,
+)
+
+if TYPE_CHECKING:
+    from speech_transcriber.pipeline import TranscriptionPipeline
+
+
+def create_default_pipeline(config: PipelineConfig) -> TranscriptionPipeline:
+    """Lazily import the ML-oriented runtime pipeline for non-finalization commands."""
+    from speech_transcriber.pipeline import create_default_pipeline as create_pipeline
+
+    return create_pipeline(config)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -144,6 +158,7 @@ def _add_transcribe_prepared_options(parser: argparse.ArgumentParser) -> None:
 def _add_finalize_prepared_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--prepared", type=Path, required=True)
     parser.add_argument("--asr-result", type=Path, required=True)
+    parser.add_argument("--expected-backend", choices=ASR_BACKENDS, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--working-directory", type=Path)
     parser.add_argument(
@@ -189,8 +204,25 @@ def main(argv: list[str] | None = None) -> int:
         else:
             config = _config_from_args(args)
         logging.getLogger(__name__).setLevel(config.log_level)
+        if args.command == "finalize-prepared":
+            recognition = load_asr_recognition(
+                args.asr_result,
+                expected_backend=args.expected_backend,
+                expected_normalized_audio_sha256=sha256_file(prepared.audio.path),
+            )
+            result = TranscriptFinalizer(config).finalize_prepared(
+                prepared,
+                recognition,
+                config.output_directory,
+                expected_backend=args.expected_backend,
+            )
+            write_asr_result_files(recognition, result.output_directory or config.output_directory)
+            return 0
+
         pipeline = create_default_pipeline(config)
         if args.command == "compare":
+            from speech_transcriber.comparison import ASRComparisonRunner
+
             models = [model.strip() for model in args.models.split(",") if model.strip()]
             if len(models) != len(set(models)):
                 raise ValueError("--models must not contain duplicate ASR backends")
@@ -208,10 +240,6 @@ def main(argv: list[str] | None = None) -> int:
                 config.asr_backend,
             )
             write_asr_recognition(recognition, config.output_directory)
-        elif args.command == "finalize-prepared":
-            recognition = load_asr_recognition(args.asr_result)
-            result = pipeline.finalize_prepared(prepared, recognition, config.output_directory)
-            write_asr_result_files(recognition, result.output_directory or config.output_directory)
         elif args.command == "transcribe-prepared":
             recognition = pipeline.recognize_prepared(
                 prepared,

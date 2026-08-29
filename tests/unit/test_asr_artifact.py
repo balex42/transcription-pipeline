@@ -1,11 +1,13 @@
 import json
 import shutil
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
 from speech_transcriber.asr_artifact import load_asr_recognition, write_asr_recognition
 from speech_transcriber.config import PipelineConfig
+from speech_transcriber.finalization import TranscriptFinalizer
 from speech_transcriber.models import (
     ASRRecognitionResult,
     ASRRunMetadata,
@@ -15,7 +17,7 @@ from speech_transcriber.models import (
     NormalizedAudio,
     RuntimeProvenance,
 )
-from speech_transcriber.pipeline import PreparedRecording, TranscriptionPipeline
+from speech_transcriber.prepared import PreparedRecording, sha256_file
 
 
 def _recognition() -> ASRRecognitionResult:
@@ -36,6 +38,7 @@ def _recognition() -> ASRRecognitionResult:
             real_time_factor=0.75,
             peak_cuda_memory_allocated_bytes=42,
             peak_cuda_memory_reserved_bytes=84,
+            normalized_audio_sha256="a" * 64,
             runtime=RuntimeProvenance(
                 name="transformers",
                 version="5.13.0",
@@ -61,7 +64,7 @@ def test_recognition_artifact_round_trip_is_relocatable_and_redacts_absolute_pat
     assert loaded.metadata.runtime.name == "transformers"
     assert loaded.metadata.model == "parakeet"
     payload = json.loads((relocated / "metadata.json").read_text(encoding="utf-8"))
-    assert payload["schema_version"] == 1
+    assert payload["schema_version"] == 2
     assert payload["asr_words_file"] == "asr_words.json"
     assert "/models" not in json.dumps(payload)
 
@@ -69,7 +72,7 @@ def test_recognition_artifact_round_trip_is_relocatable_and_redacts_absolute_pat
 @pytest.mark.parametrize(
     ("filename", "mutate", "message"),
     [
-        ("metadata.json", lambda value: value.update(schema_version=2), "unsupported ASR artifact"),
+        ("metadata.json", lambda value: value.update(schema_version=3), "unsupported ASR artifact"),
         (
             "asr_words.json",
             lambda value: value[0].update(speaker="SPEAKER_00"),
@@ -92,6 +95,31 @@ def test_recognition_artifact_rejects_invalid_schema(
         load_asr_recognition(directory)
 
 
+def test_recognition_artifact_validates_backend_fingerprint_metrics_and_paths(
+    tmp_path: Path,
+) -> None:
+    directory = tmp_path / "asr"
+    recognition = _recognition()
+    recognition = ASRRecognitionResult(
+        words=recognition.words,
+        metadata=replace(recognition.metadata, backend_metrics={"log_probability": -2.5}),
+    )
+    write_asr_recognition(recognition, directory)
+
+    assert load_asr_recognition(directory).metadata.backend_metrics == {"log_probability": -2.5}
+    with pytest.raises(ValueError, match="does not match"):
+        load_asr_recognition(directory, expected_backend="qwen")
+    with pytest.raises(ValueError, match="SHA-256"):
+        load_asr_recognition(directory, expected_normalized_audio_sha256="b" * 64)
+
+    metadata_path = directory / "metadata.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata["backend_configuration"]["external_model"] = "/models/external"
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+    with pytest.raises(ValueError, match="absolute path"):
+        load_asr_recognition(directory)
+
+
 def test_finalization_uses_only_prepared_and_recognition_artifacts(tmp_path: Path) -> None:
     audio = tmp_path / "normalized.wav"
     audio.write_bytes(b"normalized audio")
@@ -104,17 +132,15 @@ def test_finalization_uses_only_prepared_and_recognition_artifacts(tmp_path: Pat
         cleanup_enabled=False,
     )
     recognition_directory = tmp_path / "asr"
-    write_asr_recognition(_recognition(), recognition_directory)
-
-    def no_transcriber() -> object:
-        raise AssertionError("finalization must not instantiate a Transcriber")
-
-    pipeline = TranscriptionPipeline(
-        PipelineConfig(audio, tmp_path / "result", tmp_path / "work"),
-        diarizer_factory=lambda: None,  # type: ignore[arg-type]
-        transcriber_factory=no_transcriber,  # type: ignore[arg-type]
+    recognition = _recognition()
+    recognition = ASRRecognitionResult(
+        words=recognition.words,
+        metadata=replace(recognition.metadata, normalized_audio_sha256=sha256_file(audio)),
     )
-    result = pipeline.finalize_prepared(
+    write_asr_recognition(recognition, recognition_directory)
+    result = TranscriptFinalizer(
+        PipelineConfig(audio, tmp_path / "result", tmp_path / "work")
+    ).finalize_prepared(
         prepared,
         load_asr_recognition(recognition_directory),
         tmp_path / "result",
@@ -127,3 +153,24 @@ def test_finalization_uses_only_prepared_and_recognition_artifacts(tmp_path: Pat
     assert result.transcript.asr_backend == "parakeet"
     assert result.transcript.asr_model == "parakeet"
     assert (tmp_path / "result" / "transcript.json").is_file()
+
+
+def test_finalization_rejects_a_recognition_for_another_recording(tmp_path: Path) -> None:
+    audio = tmp_path / "normalized.wav"
+    audio.write_bytes(b"normalized audio")
+    prepared = PreparedRecording(
+        audio=NormalizedAudio(audio, AudioMetadata("meeting.wav", 2.0)),
+        diarization=[],
+        work_directory=tmp_path,
+        diarization_model="pyannote/test",
+        language="de-DE",
+    )
+
+    with pytest.raises(ValueError, match="SHA-256"):
+        config = PipelineConfig(audio, tmp_path / "result", tmp_path / "work")
+        finalizer = TranscriptFinalizer(config)
+        finalizer.finalize_prepared(
+            prepared,
+            _recognition(),
+            tmp_path / "result",
+        )

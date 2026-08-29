@@ -23,6 +23,8 @@ class FakePreprocessor:
 
     def normalize(self, source: Path, destination: Path) -> AudioMetadata:
         self.calls += 1
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(b"normalized audio")
         return AudioMetadata(source=source.name, duration_seconds=2.0)
 
 
@@ -81,7 +83,7 @@ def test_pipeline_with_model_test_doubles(tmp_path: Path) -> None:
     assert diarizer.released and transcriber.loaded and transcriber.released
     assert transcriber.audio is not None
     assert (config.output_directory / "transcript.json").is_file()
-    assert not config.working_directory.exists()
+    assert not any(config.working_directory.iterdir())
 
 
 def test_comparison_prepares_once_and_separates_backend_outputs(tmp_path: Path) -> None:

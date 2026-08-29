@@ -8,9 +8,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-import numpy as np
-from numpy.typing import NDArray
+if TYPE_CHECKING:
+    import numpy as np
+    from numpy.typing import NDArray
 
 
 @dataclass(frozen=True)
@@ -123,6 +125,7 @@ class ASRRunMetadata:
     real_time_factor: float
     peak_cuda_memory_allocated_bytes: int | None
     peak_cuda_memory_reserved_bytes: int | None
+    normalized_audio_sha256: str
     transformers_version: str = "unknown"
     torch_version: str = "unknown"
     runtime: RuntimeProvenance = field(default_factory=lambda: RuntimeProvenance())

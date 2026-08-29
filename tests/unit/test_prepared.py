@@ -4,8 +4,11 @@ from pathlib import Path
 import pytest
 
 from speech_transcriber.models import AudioMetadata, DiarizationSegment, NormalizedAudio
-from speech_transcriber.pipeline import PreparedRecording
-from speech_transcriber.prepared import load_prepared_recording, write_prepared_recording
+from speech_transcriber.prepared import (
+    PreparedRecording,
+    load_prepared_recording,
+    write_prepared_recording,
+)
 
 
 def _write_bundle(tmp_path: Path) -> Path:
@@ -42,6 +45,7 @@ def test_prepared_recording_round_trip_uses_relative_paths(tmp_path: Path) -> No
     assert not loaded.cleanup_enabled
     manifest = json.loads((directory / "prepared.json").read_text(encoding="utf-8"))
     assert manifest["audio"]["file"] == "normalized.wav"
+    assert len(manifest["audio"]["sha256"]) == 64
 
 
 def test_load_rejects_missing_prepared_manifest(tmp_path: Path) -> None:
@@ -53,7 +57,7 @@ def test_load_rejects_unsupported_schema_version(tmp_path: Path) -> None:
     directory = _write_bundle(tmp_path)
     manifest_path = directory / "prepared.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    manifest["schema_version"] = 2
+    manifest["schema_version"] = 3
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
 
     with pytest.raises(ValueError, match="unsupported prepared artifact schema version"):
@@ -66,6 +70,37 @@ def test_load_rejects_missing_required_files(tmp_path: Path, missing: str) -> No
     (directory / missing).unlink()
 
     with pytest.raises(ValueError, match="missing"):
+        load_prepared_recording(directory)
+
+
+@pytest.mark.parametrize(
+    ("mutate", "message"),
+    [
+        (lambda manifest: manifest["audio"].update(sha256="not-a-digest"), "SHA-256"),
+        (
+            lambda manifest: manifest["diarization"].update(model="/models/pyannote"),
+            "absolute path",
+        ),
+    ],
+)
+def test_load_rejects_invalid_prepared_provenance(
+    tmp_path: Path, mutate: object, message: str
+) -> None:
+    directory = _write_bundle(tmp_path)
+    manifest_path = directory / "prepared.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    mutate(manifest)  # type: ignore[operator]
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(ValueError, match=message):
+        load_prepared_recording(directory)
+
+
+def test_load_rejects_modified_normalized_audio(tmp_path: Path) -> None:
+    directory = _write_bundle(tmp_path)
+    (directory / "normalized.wav").write_bytes(b"different normalized audio")
+
+    with pytest.raises(ValueError, match="SHA-256 does not match"):
         load_prepared_recording(directory)
 
 

@@ -2,40 +2,29 @@
 
 from __future__ import annotations
 
-import json
 import logging
-import math
 import shutil
 import time
-from collections.abc import Callable, Iterable
-from dataclasses import asdict, dataclass
+from collections.abc import Callable
+from dataclasses import asdict
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
-from speech_transcriber.alignment.speaker import (
-    UNKNOWN_SPEAKER,
-    OverlapSpeakerAligner,
-    SpeakerAligner,
-)
 from speech_transcriber.audio.preprocess import AudioPreprocessor
 from speech_transcriber.config import PipelineConfig
 from speech_transcriber.diarization.base import Diarizer
 from speech_transcriber.diarization.pyannote import PyannoteDiarizer
-from speech_transcriber.exporters.json import JsonTranscriptExporter
-from speech_transcriber.exporters.text import TextTranscriptExporter
+from speech_transcriber.finalization import TranscriptFinalizer, write_records
 from speech_transcriber.models import (
     ASRRecognitionResult,
     ASRRunMetadata,
-    ASRWord,
-    AttributedWord,
     AudioMetadata,
-    DiarizationSegment,
     NormalizedAudio,
     PipelineResult,
     RuntimeProvenance,
-    Transcript,
 )
+from speech_transcriber.prepared import PreparedRecording, sha256_file
 from speech_transcriber.runtime.device import (
     peak_cuda_memory,
     reset_peak_cuda_memory,
@@ -44,7 +33,10 @@ from speech_transcriber.runtime.device import (
 from speech_transcriber.runtime.lifecycle import release_model
 from speech_transcriber.transcription.base import Transcriber
 from speech_transcriber.transcription.factory import create_transcriber
-from speech_transcriber.turns.builder import TurnBuilder
+
+if TYPE_CHECKING:
+    from speech_transcriber.alignment.speaker import SpeakerAligner
+    from speech_transcriber.turns.builder import TurnBuilder
 
 LOGGER = logging.getLogger(__name__)
 
@@ -64,18 +56,6 @@ class AudioNormalizer(Protocol):
         """Return normalized recording metadata."""
 
 
-@dataclass(frozen=True)
-class PreparedRecording:
-    """One normalization and diarization result reusable by multiple ASR runs."""
-
-    audio: NormalizedAudio
-    diarization: list[DiarizationSegment]
-    work_directory: Path
-    diarization_model: str | None = None
-    language: str | None = None
-    cleanup_enabled: bool = True
-
-
 class TranscriptionPipeline:
     """Run normalization, global diarization, ASR, alignment, and export."""
 
@@ -87,13 +67,13 @@ class TranscriptionPipeline:
         preprocessor: AudioNormalizer | None = None,
         aligner: SpeakerAligner | None = None,
         turn_builder: TurnBuilder | None = None,
+        finalizer: TranscriptFinalizer | None = None,
     ) -> None:
         self.config = config
         self.diarizer_factory = diarizer_factory
         self.transcriber_factory = transcriber_factory
         self.preprocessor = preprocessor or AudioPreprocessor()
-        self.aligner = aligner or OverlapSpeakerAligner(config.alignment_tolerance)
-        self.turn_builder = turn_builder or TurnBuilder(config.turn_gap_seconds)
+        self.finalizer = finalizer or TranscriptFinalizer(config, aligner, turn_builder)
 
     def run(self) -> PipelineResult:
         """Execute the complete single-backend pipeline."""
@@ -197,6 +177,7 @@ class TranscriptionPipeline:
             real_time_factor=total_seconds / prepared.audio.metadata.duration_seconds,
             peak_cuda_memory_allocated_bytes=allocated,
             peak_cuda_memory_reserved_bytes=reserved,
+            normalized_audio_sha256=sha256_file(prepared.audio.path),
             transformers_version=_package_version("transformers"),
             torch_version=_package_version("torch"),
             runtime=RuntimeProvenance(
@@ -220,65 +201,16 @@ class TranscriptionPipeline:
         recognition: ASRRecognitionResult,
         output_directory: Path,
     ) -> PipelineResult:
-        """Build and export a transcript from prepared and backend-neutral ASR artifacts."""
-        if not math.isclose(
-            recognition.metadata.audio_duration_seconds,
-            prepared.audio.metadata.duration_seconds,
-            rel_tol=0.0,
-            abs_tol=0.001,
-        ):
-            raise ValueError("ASR artifact audio duration does not match the prepared recording")
-        self._stage("align")
-        attributed = self.aligner.align(recognition.words, prepared.diarization)
-        self._stage("turns")
-        turns = self.turn_builder.build(attributed)
-        speakers = sorted({word.speaker for word in attributed if word.speaker != UNKNOWN_SPEAKER})
-        transcript = Transcript(
-            metadata=prepared.audio.metadata,
-            asr_backend=recognition.metadata.backend,
-            asr_model=recognition.metadata.model,
-            diarization_model=prepared.diarization_model or self.config.pyannote_model,
-            speakers=speakers,
-            words=attributed,
-            turns=turns,
-            language=prepared.language or self.config.language,
-        )
-        result = PipelineResult(
-            transcript=transcript,
-            diarization=prepared.diarization,
-            asr_words=recognition.words,
-            output_directory=output_directory,
-        )
-        self._export(result, output_directory)
-        return result
-
-    def _export(self, result: PipelineResult, output_directory: Path) -> None:
-        self._stage("export")
-        output_directory.mkdir(parents=True, exist_ok=True)
-        JsonTranscriptExporter().export(result.transcript, output_directory / "transcript.json")
-        TextTranscriptExporter().export(result.transcript, output_directory / "transcript.txt")
-        if self.config.keep_intermediate_files:
-            intermediate = output_directory / "intermediate"
-            intermediate.mkdir(parents=True, exist_ok=True)
-            self.write_records(intermediate / "diarization.json", result.diarization)
-            self.write_records(intermediate / "asr_words.json", result.asr_words)
-            self.write_records(intermediate / "attributed_words.json", result.transcript.words)
+        """Delegate transcript construction to the backend-neutral finalizer."""
+        return self.finalizer.finalize_prepared(prepared, recognition, output_directory)
 
     @staticmethod
     def write_records(
         path: Path,
-        records: Iterable[DiarizationSegment | ASRWord | AttributedWord],
+        records: object,
     ) -> None:
-        path.write_text(
-            json.dumps(
-                [asdict(record) for record in records],
-                ensure_ascii=False,
-                indent=2,
-                sort_keys=True,
-            )
-            + "\n",
-            encoding="utf-8",
-        )
+        """Retain the legacy helper while implementation lives in finalization."""
+        write_records(path, records)  # type: ignore[arg-type]
 
     @staticmethod
     def _stage(name: str) -> None:
