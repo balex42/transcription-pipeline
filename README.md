@@ -200,6 +200,15 @@ The Python `Transcriber` protocol is only an internal abstraction for the curren
 implementations; a future vLLM, NVIDIA NIM, Riva, or Triton runtime only needs to produce the same
 recognition artifact and does not need to import or implement that protocol.
 
+Recognition is orchestrated by the backend-neutral `RecognitionRunner`, which owns model load and
+transcription timing, RTF, release lifecycle, normalized-audio SHA propagation, runtime provenance,
+and backend metrics/configuration. It never imports PyTorch, Transformers, pyannote, audio
+normalization, or any backend implementation, so the dedicated faster-whisper image runs
+`recognize-prepared` without the Transformers ASR stack installed. Torch-backed CUDA memory
+statistics are provided to the runner only by the ML-oriented pipeline path; the faster-whisper
+image records `None` for those fields. `TranscriptionPipeline` composes prepare + recognition +
+finalization for local convenience and delegates recognition to the same runner.
+
 Finalization is a backend-neutral CPU component. Its import path contains only artifact contracts,
 speaker alignment, turn building, and transcript exporters: it does not import ASR backend modules,
 Pyannote, Torch, Transformers, or model factories. This makes a smaller finalizer image practical
@@ -287,10 +296,10 @@ HF_TOKEN=hf_... speech-transcriber prefetch-models --asr voxtral
 HF_TOKEN=hf_... speech-transcriber prefetch-models --asr faster-whisper
 ```
 
-Qwen prefetch includes the configured Qwen forced-aligner artifact. Faster-whisper prefetch
-additionally stages the `Systran/faster-whisper-large-v3-tokenizer` repository, which the
-CTranslate2 runtime reads from the same cache. The model is never converted from Transformers
-format at runtime; the Systran CTranslate2 repository is used directly.
+Qwen prefetch includes the configured Qwen forced-aligner artifact. The faster-whisper
+CTranslate2 repository already contains the tokenizer and preprocessor config files the runtime
+reads from the same cache, so no separate tokenizer repository is prefetched. The model is never
+converted from Transformers format at runtime; the Systran CTranslate2 repository is used directly.
 
 Also obtain the accepted pyannote artifact through the approved process. Transfer approved artifacts and externally generated checksums through the air gap. A production volume can use:
 
@@ -316,7 +325,7 @@ PYANNOTE_MODEL=/models/pyannote-community-1 \
 speech-transcriber transcribe /data/audio.m4a --output /data/result --device cuda
 ```
 
-With all required artifacts mounted locally, inference performs no network access, telemetry, NVIDIA API calls, or remote-code loading. The faster-whisper recognition image resolves the cached snapshot path under `HF_HOME` and passes it directly to `WhisperModel`, so the read-only model cache is never copied into the pod's ephemeral filesystem.
+With all required artifacts mounted locally, inference performs no network access, telemetry, NVIDIA API calls, or remote-code loading. The faster-whisper recognition image resolves the cached snapshot path under `HF_HOME` and passes it directly to `WhisperModel`, so the read-only model cache is never copied into the pod's ephemeral filesystem. When `HF_HUB_OFFLINE=1` and the model is not present in the cache, recognition fails with an explicit "not present in the offline cache" error instead of silently attempting a repository lookup.
 
 ## Podman and Kubernetes
 
@@ -334,7 +343,7 @@ podman build -t speech-transcriber-faster-whisper:local -f Containerfile.faster-
 
 The faster-whisper image is materially independent of the Transformers ASR stack: it installs
 only the `faster-whisper-runtime` dependency set and the backend-neutral artifact code, and it
-bases on `nvidia/cuda:12.4.1-cudnn-runtime-ubuntu24.04` because CTranslate2 GPU wheels require
+bases on `nvidia/cuda:12.6.3-cudnn-runtime-ubuntu24.04` because CTranslate2 GPU wheels require
 CUDA 12 and cuDNN 9 at runtime. It supports the same `/models`, `/cache`, and `/work` mounts and
 the same arbitrary-UID execution model as the main image.
 
@@ -370,10 +379,12 @@ workers with schema-v2 prepared/ASR artifacts; upgrade the template and runtime 
 
 The faster-whisper image follows the same two-step release process. The implementation commit
 triggers the container workflow, which publishes the dedicated image under the immutable
-`sha-<commit>` tag (and a `faster-whisper-bootstrap` mutable tag). A deployment-only follow-up
-commit then pins `faster_whisper_image` to that `sha-<commit>` tag; because the follow-up commit
-touches only `deploy/argo/**`, it does not rebuild any image. Do not invent an immutable
-faster-whisper SHA tag before CI has built it.
+`sha-<commit>` tag and the mutable `main` tag. Until the deployment-only follow-up commit pins the
+immutable SHA, `faster_whisper_image` temporarily references the `main` tag that CI actually
+publishes on every main-branch build. The follow-up commit then pins `faster_whisper_image` to the
+`sha-<commit>` tag and updates the generic application image pins to the same revision; because the
+follow-up commit touches only `deploy/argo/**`, it does not rebuild any image. Do not invent an
+immutable faster-whisper SHA tag before CI has built it.
 
 `backends` must be a JSON array containing only `parakeet`, `qwen`, `nemotron`, `voxtral`, or
 `faster-whisper`.

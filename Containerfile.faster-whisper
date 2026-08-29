@@ -9,7 +9,7 @@
 # CTranslate2 GPU wheels require CUDA 12.x and cuDNN 9 at runtime; the base
 # image provides both. The model cache is mounted read-only at /models and the
 # model is loaded from the cached snapshot path (HF_HUB_OFFLINE=1).
-FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu24.04
+FROM nvidia/cuda:12.6.3-cudnn-runtime-ubuntu24.04
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -21,7 +21,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     WORKING_DIRECTORY=/work
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg git git-lfs \
+    && apt-get install -y --no-install-recommends python3 python3-pip python3-venv ffmpeg git git-lfs \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /app /work /cache/home /cache/config /cache/tmp /models \
     && chgrp -R 0 /work /cache /models \
@@ -30,7 +30,7 @@ RUN apt-get update \
 WORKDIR /app
 COPY pyproject.toml uv.lock README.md LICENSE ./
 COPY src ./src
-RUN python -m pip install --no-cache-dir uv==0.11.32 \
+RUN python3 -m pip install --no-cache-dir uv==0.11.32 \
     && UV_CACHE_DIR=/tmp/uv-cache uv sync --frozen --no-dev --extra faster-whisper-runtime \
     && rm -rf /tmp/uv-cache
 

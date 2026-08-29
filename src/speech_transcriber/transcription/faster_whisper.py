@@ -17,6 +17,15 @@ from speech_transcriber.errors import ASROutputError, ModelLoadError
 from speech_transcriber.models import ASRWord, NormalizedAudio, RuntimeProvenance
 from speech_transcriber.transcription.base import Transcriber, TranscriberCapabilities
 
+DEFAULT_BEAM_SIZE = 5
+
+
+class _FasterWhisperInfo(Protocol):
+    language: str
+    language_probability: float
+    duration: float
+    duration_after_vad: float
+
 
 class _FasterWhisperModel(Protocol):
     def transcribe(
@@ -24,11 +33,11 @@ class _FasterWhisperModel(Protocol):
         audio: str | Path,
         *,
         language: str | None = None,
-        beam_size: int | None = None,
+        beam_size: int = DEFAULT_BEAM_SIZE,
         word_timestamps: bool = False,
         vad_filter: bool = False,
         **kwargs: object,
-    ) -> Any: ...
+    ) -> tuple[Iterable[Any], _FasterWhisperInfo]: ...
 
 
 class FasterWhisperTranscriber(Transcriber):
@@ -56,7 +65,7 @@ class FasterWhisperTranscriber(Transcriber):
             "compute_type": compute_type,
             "word_timestamps": True,
             "vad_filter": False,
-            "beam_size": None,
+            "beam_size": DEFAULT_BEAM_SIZE,
         }
         self.runtime_provenance = RuntimeProvenance(
             name="faster-whisper",
@@ -72,20 +81,22 @@ class FasterWhisperTranscriber(Transcriber):
         self._load()
 
     def transcribe(self, audio: NormalizedAudio) -> list[ASRWord]:
-        """Flatten faster-whisper segment words into canonical ASR words."""
+        """Flatten faster-whisper segment words into canonical ASR words.
+
+        The real faster-whisper API returns ``(segments, info)``; language
+        metadata comes from ``info``, not from individual segments.
+        """
         model = self._load()
         try:
-            segments = _iter_segments(
-                model.transcribe(
-                    audio.path,
-                    language=whisper_language(self.language),
-                    beam_size=None,
-                    word_timestamps=True,
-                    vad_filter=False,
-                )
+            segments, info = model.transcribe(
+                audio.path,
+                language=whisper_language(self.language),
+                beam_size=DEFAULT_BEAM_SIZE,
+                word_timestamps=True,
+                vad_filter=False,
             )
-            words = flatten_segment_words(segments)
-            self._record_detected_language(segments)
+            words = flatten_segment_words(list(segments))
+            self._record_info(info)
             return words
         except ASROutputError:
             raise
@@ -95,17 +106,20 @@ class FasterWhisperTranscriber(Transcriber):
                 f"{audio.path} with model {self.model_reference}: {error}"
             ) from error
 
-    def _record_detected_language(self, segments: object) -> None:
-        """Record the first segment's detected language when available."""
-        first = _first_segment(segments)
-        if first is None:
-            return
-        language = getattr(first, "language", None)
+    def _record_info(self, info: _FasterWhisperInfo) -> None:
+        """Record detected language and duration metadata from ``info``."""
+        language = getattr(info, "language", None)
         if isinstance(language, str) and language:
-            self.backend_metrics["detected_language_probability"] = float(
-                getattr(first, "language_probability", 0.0)
-            )
             self.backend_configuration["detected_language"] = language
+            probability = getattr(info, "language_probability", None)
+            if isinstance(probability, int | float):
+                self.backend_metrics["detected_language_probability"] = float(probability)
+        duration = getattr(info, "duration", None)
+        if isinstance(duration, int | float):
+            self.backend_metrics["audio_duration_seconds"] = float(duration)
+        duration_after_vad = getattr(info, "duration_after_vad", None)
+        if isinstance(duration_after_vad, int | float):
+            self.backend_metrics["duration_after_vad_seconds"] = float(duration_after_vad)
 
     def _load(self) -> _FasterWhisperModel:
         if self._model is not None:
@@ -166,6 +180,8 @@ def resolve_model_path(model: str) -> str:
 
     The production model cache is read-only during inference, so the cached
     snapshot path is resolved once and passed directly to ``WhisperModel``.
+    When ``HF_HUB_OFFLINE=1`` and the model is not cached, fail explicitly
+    instead of silently falling back to a repository ID.
     """
     if Path(model).is_absolute():
         return model
@@ -174,6 +190,11 @@ def resolve_model_path(model: str) -> str:
         return model
     repo_dir = Path(cache_root) / "hub" / f"models--{model.replace('/', '--')}"
     if not repo_dir.is_dir():
+        if os.environ.get("HF_HUB_OFFLINE") == "1":
+            raise ModelLoadError(
+                f"required faster-whisper model {model!r} is not present in the offline cache "
+                f"under {repo_dir}"
+            )
         return model
     snapshots = repo_dir / "snapshots"
     if snapshots.is_dir():
@@ -219,16 +240,3 @@ def flatten_segment_words(segments: list[Any]) -> list[ASRWord]:
                 )
             )
     return words
-
-
-def _iter_segments(segments: object) -> list[Any]:
-    if segments is None:
-        return []
-    if isinstance(segments, list):
-        return segments
-    return list(cast(Iterable[Any], segments))
-
-
-def _first_segment(segments: object) -> Any | None:
-    items = _iter_segments(segments)
-    return items[0] if items else None

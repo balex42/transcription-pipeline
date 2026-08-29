@@ -24,11 +24,11 @@ spec:
         value: ghcr.io/balex42/transcription-pipeline:sha-d6e4bde
       - name: voxtral_image
         value: ghcr.io/balex42/transcription-pipeline:sha-d6e4bde
-      # Temporary bootstrap tag: CI publishes the dedicated faster-whisper image
-      # under this tag until the deployment-only follow-up commit pins the
+      # Temporary bootstrap tag: the container workflow publishes this tag on
+      # every main-branch build. The deployment-only follow-up commit pins the
       # immutable sha-<commit> tag produced by the container workflow.
       - name: faster_whisper_image
-        value: ghcr.io/balex42/transcription-pipeline-faster-whisper:faster-whisper-bootstrap
+        value: ghcr.io/balex42/transcription-pipeline-faster-whisper:main
       - name: backends
         value: '["parakeet"]'
 

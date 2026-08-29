@@ -16,7 +16,6 @@ from speech_transcriber.asr_artifact import (
 )
 from speech_transcriber.config import (
     ASR_BACKENDS,
-    DEFAULT_FASTER_WHISPER_MODEL,
     DEFAULT_PYANNOTE_MODEL,
     DEFAULT_QWEN_ALIGNER_MODEL,
     FASTER_WHISPER_COMPUTE_TYPES,
@@ -230,6 +229,18 @@ def main(argv: list[str] | None = None) -> int:
             write_asr_result_files(recognition, result.output_directory or config.output_directory)
             return 0
 
+        if args.command == "recognize-prepared":
+            from speech_transcriber.recognition import RecognitionRunner
+            from speech_transcriber.transcription.factory import create_transcriber
+
+            recognition = RecognitionRunner().recognize(
+                prepared,
+                create_transcriber(config, _recognition_device(config.device)),
+                config.asr_backend,
+            )
+            write_asr_recognition(recognition, config.output_directory)
+            return 0
+
         pipeline = create_default_pipeline(config)
         if args.command == "compare":
             from speech_transcriber.comparison import ASRComparisonRunner
@@ -244,13 +255,6 @@ def main(argv: list[str] | None = None) -> int:
                 write_prepared_recording(prepared, config.output_directory)
             finally:
                 pipeline.cleanup(prepared)
-        elif args.command == "recognize-prepared":
-            recognition = pipeline.recognize_prepared(
-                prepared,
-                pipeline.transcriber_factory(),
-                config.asr_backend,
-            )
-            write_asr_recognition(recognition, config.output_directory)
         elif args.command == "transcribe-prepared":
             recognition = pipeline.recognize_prepared(
                 prepared,
@@ -265,6 +269,24 @@ def main(argv: list[str] | None = None) -> int:
     except (TranscriberError, OSError, RuntimeError, ValueError) as error:
         logging.getLogger(__name__).error("pipeline failed: %s", error)
         return 1
+
+
+def _recognition_device(requested: str) -> str:
+    """Resolve ``auto`` for recognition without importing PyTorch.
+
+    An explicit ``cuda`` or ``cpu`` passes through unchanged so the dedicated
+    faster-whisper image never imports Torch. ``auto`` falls back to ``cuda``
+    when the CUDA runtime is present, otherwise ``cpu``.
+    """
+    if requested != "auto":
+        return requested
+    try:
+        import ctypes
+
+        ctypes.CDLL("libcudart.so")
+    except OSError:
+        return "cpu"
+    return "cuda"
 
 
 def _config_from_args(
@@ -311,9 +333,6 @@ def _prefetch(asr_model: str, pyannote_model: str, qwen_aligner_model: str | Non
     if qwen_aligner_model:
         logging.getLogger(__name__).info("prefetching Qwen forced aligner")
         snapshot_download(qwen_aligner_model)
-    if asr_model == DEFAULT_FASTER_WHISPER_MODEL:
-        logging.getLogger(__name__).info("prefetching faster-whisper tokenizer")
-        snapshot_download("Systran/faster-whisper-large-v3-tokenizer")
     logging.getLogger(__name__).info("prefetching pyannote model")
     snapshot_download(pyannote_model, token=True)
 

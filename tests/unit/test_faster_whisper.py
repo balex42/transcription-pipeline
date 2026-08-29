@@ -6,10 +6,11 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from speech_transcriber.errors import ASROutputError
+from speech_transcriber.errors import ASROutputError, ModelLoadError
 from speech_transcriber.models import AudioMetadata, NormalizedAudio
 from speech_transcriber.transcription.base import TranscriberCapabilities
 from speech_transcriber.transcription.faster_whisper import (
+    DEFAULT_BEAM_SIZE,
     FasterWhisperTranscriber,
     flatten_segment_words,
     resolve_model_path,
@@ -26,31 +27,38 @@ class Word:
 
 
 class Segment:
-    def __init__(
-        self,
-        start: float,
-        end: float,
-        text: str,
-        words: list[Word] | None,
-        language: str = "de",
-        language_probability: float = 0.98,
-    ) -> None:
+    def __init__(self, start: float, end: float, text: str, words: list[Word] | None) -> None:
         self.start = start
         self.end = end
         self.text = text
         self.words = words
+
+
+class Info:
+    def __init__(
+        self,
+        language: str = "de",
+        language_probability: float = 0.98,
+        duration: float = 1.0,
+        duration_after_vad: float = 1.0,
+    ) -> None:
         self.language = language
         self.language_probability = language_probability
+        self.duration = duration
+        self.duration_after_vad = duration_after_vad
 
 
 class Model:
-    def __init__(self, segments: list[Segment]) -> None:
+    """Fake faster-whisper model matching the real ``(segments, info)`` API."""
+
+    def __init__(self, segments: list[Segment], info: Info | None = None) -> None:
         self.segments = segments
+        self.info = info or Info()
         self.calls: list[dict[str, object]] = []
 
-    def transcribe(self, audio: str | Path, **kwargs: object) -> list[Segment]:
+    def transcribe(self, audio: str | Path, **kwargs: object) -> tuple[list[Segment], Info]:
         self.calls.append({"audio": audio, **kwargs})
-        return self.segments
+        return self.segments, self.info
 
 
 def audio(tmp_path: Path) -> NormalizedAudio:
@@ -70,7 +78,7 @@ def test_capabilities_declare_native_word_timestamps_and_no_forced_alignment() -
     assert transcriber.capabilities.streaming is False
 
 
-def test_transcribe_maps_words_timestamps_and_confidence(tmp_path: Path) -> None:
+def test_transcribe_handles_the_real_segments_info_tuple_contract(tmp_path: Path) -> None:
     model = Model(
         [
             Segment(
@@ -83,7 +91,8 @@ def test_transcribe_maps_words_timestamps_and_confidence(tmp_path: Path) -> None
                     Word(".", 0.8, 0.9, 0.9),
                 ],
             )
-        ]
+        ],
+        Info(language="de", language_probability=0.98, duration=1.0, duration_after_vad=1.0),
     )
     transcriber = FasterWhisperTranscriber("/models/faster-whisper", "cpu", "de-DE")
     transcriber._model = model
@@ -98,11 +107,25 @@ def test_transcribe_maps_words_timestamps_and_confidence(tmp_path: Path) -> None
     assert model.calls[0]["word_timestamps"] is True
     assert model.calls[0]["vad_filter"] is False
     assert model.calls[0]["language"] == "de"
-    assert model.calls[0]["beam_size"] is None
+    assert model.calls[0]["beam_size"] == DEFAULT_BEAM_SIZE
     assert transcriber.backend_configuration["vad_filter"] is False
     assert transcriber.backend_configuration["word_timestamps"] is True
-    assert transcriber.backend_metrics["detected_language_probability"] == 0.98
+    assert transcriber.backend_configuration["beam_size"] == DEFAULT_BEAM_SIZE
     assert transcriber.backend_configuration["detected_language"] == "de"
+    assert transcriber.backend_metrics["detected_language_probability"] == 0.98
+    assert transcriber.backend_metrics["audio_duration_seconds"] == 1.0
+    assert transcriber.backend_metrics["duration_after_vad_seconds"] == 1.0
+
+
+def test_transcribe_uses_upstream_default_beam_size_when_omitted(tmp_path: Path) -> None:
+    model = Model([Segment(0.0, 1.0, "Hallo", [Word("Hallo", 0.0, 0.5, 0.9)])])
+    transcriber = FasterWhisperTranscriber("/models/faster-whisper", "cpu")
+    transcriber._model = model
+
+    transcriber.transcribe(audio(tmp_path))
+
+    assert model.calls[0]["beam_size"] == DEFAULT_BEAM_SIZE
+    assert transcriber.backend_configuration["beam_size"] == DEFAULT_BEAM_SIZE
 
 
 def test_transcribe_preserves_punctuation_and_whitespace_boundaries(tmp_path: Path) -> None:
@@ -153,7 +176,10 @@ def test_transcribe_rejects_words_ending_before_they_start(tmp_path: Path) -> No
 
 
 def test_transcribe_without_language_permits_detection(tmp_path: Path) -> None:
-    model = Model([Segment(0.0, 1.0, "Hallo", [Word("Hallo", 0.0, 0.5, 0.9)])])
+    model = Model(
+        [Segment(0.0, 1.0, "Hallo", [Word("Hallo", 0.0, 0.5, 0.9)])],
+        Info(language="de", language_probability=0.97),
+    )
     transcriber = FasterWhisperTranscriber("/models/faster-whisper", "cpu", language=None)
     transcriber._model = model
 
@@ -161,6 +187,8 @@ def test_transcribe_without_language_permits_detection(tmp_path: Path) -> None:
 
     assert model.calls[0]["language"] is None
     assert transcriber.backend_configuration["language"] is None
+    assert transcriber.backend_configuration["detected_language"] == "de"
+    assert transcriber.backend_metrics["detected_language_probability"] == 0.97
 
 
 def test_load_resolves_cached_snapshot_and_records_provenance(
@@ -238,14 +266,25 @@ def test_resolve_model_path_uses_single_revision_snapshot(
     )
 
 
-def test_resolve_model_path_falls_back_to_repository_id(
+def test_resolve_model_path_falls_back_to_repository_id_when_online(
     tmp_path: Path, monkeypatch: object
 ) -> None:
     monkeypatch.setenv("HF_HOME", str(tmp_path / "cache"))
+    monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
     assert (
         resolve_model_path("Systran/faster-whisper-large-v3")
         == "Systran/faster-whisper-large-v3"
     )
+
+
+def test_resolve_model_path_fails_clearly_on_offline_cache_miss(
+    tmp_path: Path, monkeypatch: object
+) -> None:
+    monkeypatch.setenv("HF_HOME", str(tmp_path / "cache"))
+    monkeypatch.setenv("HF_HUB_OFFLINE", "1")
+
+    with pytest.raises(ModelLoadError, match="not present in the offline cache"):
+        resolve_model_path("Systran/faster-whisper-large-v3")
 
 
 def test_resolve_model_path_ignores_hf_home_without_snapshot(
@@ -275,7 +314,7 @@ def test_flatten_segment_words_handles_generator_segments() -> None:
     def segments() -> object:
         yield Segment(0.0, 1.0, "Hallo", [Word("Hallo", 0.0, 0.5, 0.9)])
 
-    words = flatten_segment_words(segments())
+    words = flatten_segment_words(list(segments()))
     assert [(word.text, word.start, word.end, word.confidence) for word in words] == [
         ("Hallo", 0.0, 0.5, 0.9)
     ]

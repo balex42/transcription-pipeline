@@ -29,7 +29,6 @@ faster-whisper-runtime = [
   "faster-whisper==1.2.1",
   "huggingface-hub==1.28.0",
   "numpy==2.2.6",
-  "soundfile==0.14.0",
 ]
 dev = [
   "accelerate==1.12.0",

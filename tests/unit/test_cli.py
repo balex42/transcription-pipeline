@@ -69,7 +69,7 @@ def test_prefetch_qwen_includes_the_forced_aligner(monkeypatch: object) -> None:
     ]
 
 
-def test_prefetch_faster_whisper_includes_the_tokenizer(monkeypatch: object) -> None:
+def test_prefetch_faster_whisper_uses_only_the_model_repository(monkeypatch: object) -> None:
     downloads: list[str] = []
 
     def snapshot_download(repo: str, **kwargs: object) -> None:
@@ -82,7 +82,6 @@ def test_prefetch_faster_whisper_includes_the_tokenizer(monkeypatch: object) -> 
     assert cli.main(["prefetch-models", "--asr", "faster-whisper"]) == 0
     assert downloads == [
         "Systran/faster-whisper-large-v3",
-        "Systran/faster-whisper-large-v3-tokenizer",
         DEFAULT_PYANNOTE_MODEL,
     ]
 
@@ -222,15 +221,12 @@ def test_recognize_and_finalize_commands_cross_the_artifact_boundary(
     )
     transcriber = FakeTranscriber()
 
-    def recognition_pipeline(config: object) -> TranscriptionPipeline:
-        return TranscriptionPipeline(  # type: ignore[arg-type]
-            config,
-            diarizer_factory=lambda: (_ for _ in ()).throw(AssertionError("no diarizer")),
-            transcriber_factory=lambda: transcriber,
-            preprocessor=FakePreprocessor(),
-        )
+    def recognition_transcriber(config: object, device: str) -> FakeTranscriber:
+        return transcriber
 
-    monkeypatch.setattr(cli, "create_default_pipeline", recognition_pipeline)  # type: ignore[attr-defined]
+    from speech_transcriber.transcription import factory as factory_module
+
+    monkeypatch.setattr(factory_module, "create_transcriber", recognition_transcriber)
     asr = tmp_path / "asr"
     assert (
         cli.main(
@@ -281,6 +277,11 @@ def test_recognize_and_finalize_commands_cross_the_artifact_boundary(
         "metadata.json",
     }
     assert (result / "metadata.json").read_bytes() == (asr / "metadata.json").read_bytes()
+
+
+def test_recognition_device_passes_explicit_values_without_torch() -> None:
+    assert cli._recognition_device("cuda") == "cuda"
+    assert cli._recognition_device("cpu") == "cpu"
 
 
 def test_new_command_parsing() -> None:

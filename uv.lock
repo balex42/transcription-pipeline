@@ -2876,7 +2876,6 @@ faster-whisper-runtime = [
     { name = "faster-whisper" },
     { name = "huggingface-hub" },
     { name = "numpy" },
-    { name = "soundfile" },
 ]
 runtime = [
     { name = "accelerate" },
@@ -2910,7 +2909,6 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'dev'", specifier = "==8.4.2" },
     { name = "ruff", marker = "extra == 'dev'", specifier = "==0.12.12" },
     { name = "soundfile", marker = "extra == 'dev'", specifier = "==0.14.0" },
-    { name = "soundfile", marker = "extra == 'faster-whisper-runtime'", specifier = "==0.14.0" },
     { name = "soundfile", marker = "extra == 'runtime'", specifier = "==0.14.0" },
     { name = "torch", marker = "extra == 'dev'", specifier = "==2.8.0" },
     { name = "torch", marker = "extra == 'runtime'", specifier = "==2.8.0" },

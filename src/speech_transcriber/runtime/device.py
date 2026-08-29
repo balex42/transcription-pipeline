@@ -51,3 +51,20 @@ def peak_cuda_memory(device: str) -> tuple[int | None, int | None]:
     import torch
 
     return torch.cuda.max_memory_allocated(), torch.cuda.max_memory_reserved()
+
+
+class TorchMemoryMetrics:
+    """Torch-backed CUDA peak memory accounting for Transformers backends.
+
+    This adapter is only constructed by the ML-oriented pipeline path, so the
+    dedicated faster-whisper image never imports Torch for memory metrics.
+    """
+
+    def __init__(self, device: str) -> None:
+        self.device = device
+
+    def reset(self) -> None:
+        reset_peak_cuda_memory(self.device)
+
+    def peak(self) -> tuple[int | None, int | None]:
+        return peak_cuda_memory(self.device)

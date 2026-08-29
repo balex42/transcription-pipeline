@@ -6,8 +6,6 @@ import logging
 import shutil
 import time
 from collections.abc import Callable
-from dataclasses import asdict
-from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
@@ -22,12 +20,11 @@ from speech_transcriber.models import (
     AudioMetadata,
     NormalizedAudio,
     PipelineResult,
-    RuntimeProvenance,
 )
 from speech_transcriber.prepared import PreparedRecording, sha256_file
+from speech_transcriber.recognition import RecognitionRunner
 from speech_transcriber.runtime.device import (
-    peak_cuda_memory,
-    reset_peak_cuda_memory,
+    TorchMemoryMetrics,
     resolve_device,
 )
 from speech_transcriber.runtime.lifecycle import release_model
@@ -39,14 +36,6 @@ if TYPE_CHECKING:
     from speech_transcriber.turns.builder import TurnBuilder
 
 LOGGER = logging.getLogger(__name__)
-
-
-def _package_version(package: str) -> str:
-    """Return installed package provenance without contacting a registry."""
-    try:
-        return version(package)
-    except PackageNotFoundError:
-        return "unknown"
 
 
 class AudioNormalizer(Protocol):
@@ -68,12 +57,14 @@ class TranscriptionPipeline:
         aligner: SpeakerAligner | None = None,
         turn_builder: TurnBuilder | None = None,
         finalizer: TranscriptFinalizer | None = None,
+        recognition_runner: RecognitionRunner | None = None,
     ) -> None:
         self.config = config
         self.diarizer_factory = diarizer_factory
         self.transcriber_factory = transcriber_factory
         self.preprocessor = preprocessor or AudioPreprocessor()
         self.finalizer = finalizer or TranscriptFinalizer(config, aligner, turn_builder)
+        self.recognition_runner = recognition_runner or RecognitionRunner()
 
     def run(self) -> PipelineResult:
         """Execute the complete single-backend pipeline."""
@@ -141,63 +132,9 @@ class TranscriptionPipeline:
         transcriber: Transcriber,
         backend: str,
     ) -> ASRRecognitionResult:
-        """Run one backend and return portable ASR words with operational provenance."""
+        """Delegate recognition to the backend-neutral runner."""
         self._stage("transcribe")
-        reset_peak_cuda_memory(getattr(transcriber, "device", self.config.device))
-        total_started = time.monotonic()
-        load_started = time.monotonic()
-        LOGGER.info(
-            "loading ASR backend",
-            extra={
-                "backend": backend,
-                "model": transcriber.model_reference,
-                "dtype": transcriber.dtype_name,
-            },
-        )
-        try:
-            transcriber.load()
-            load_seconds = time.monotonic() - load_started
-            transcription_started = time.monotonic()
-            words = transcriber.transcribe(prepared.audio)
-            transcription_seconds = time.monotonic() - transcription_started
-            allocated, reserved = peak_cuda_memory(
-                getattr(transcriber, "device", self.config.device)
-            )
-        finally:
-            release_model(transcriber)
-        total_seconds = time.monotonic() - total_started
-        runtime = getattr(transcriber, "runtime_provenance", None)
-        if not isinstance(runtime, RuntimeProvenance):
-            runtime = RuntimeProvenance(
-                name="python",
-                version=_package_version("speech-transcriber"),
-                components={
-                    "torch": _package_version("torch"),
-                    "transformers": _package_version("transformers"),
-                },
-            )
-        metadata = ASRRunMetadata(
-            backend=backend,
-            model=transcriber.model_reference,
-            device=getattr(transcriber, "device", self.config.device),
-            dtype=transcriber.dtype_name,
-            audio_duration_seconds=prepared.audio.metadata.duration_seconds,
-            model_load_seconds=load_seconds,
-            transcription_seconds=transcription_seconds,
-            total_asr_seconds=total_seconds,
-            real_time_factor=total_seconds / prepared.audio.metadata.duration_seconds,
-            peak_cuda_memory_allocated_bytes=allocated,
-            peak_cuda_memory_reserved_bytes=reserved,
-            normalized_audio_sha256=prepared.normalized_audio_sha256,
-            transformers_version=_package_version("transformers"),
-            torch_version=_package_version("torch"),
-            runtime=runtime,
-            backend_metrics=getattr(transcriber, "backend_metrics", {}),
-            backend_models=getattr(transcriber, "backend_models", {}),
-            backend_configuration=getattr(transcriber, "backend_configuration", {}),
-        )
-        LOGGER.info("ASR backend complete", extra=asdict(metadata))
-        return ASRRecognitionResult(words=words, metadata=metadata)
+        return self.recognition_runner.recognize(prepared, transcriber, backend)
 
     def finalize_prepared(
         self,
@@ -235,4 +172,5 @@ def create_default_pipeline(config: PipelineConfig) -> TranscriptionPipeline:
             config.max_speakers,
         ),
         transcriber_factory=lambda: create_transcriber(config, device),
+        recognition_runner=RecognitionRunner(TorchMemoryMetrics(device)),
     )
