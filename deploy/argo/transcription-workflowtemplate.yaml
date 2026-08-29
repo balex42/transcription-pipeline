@@ -343,7 +343,7 @@ spec:
             if len(set(backends)) != len(backends):
                 raise SystemExit(f"duplicate backend selection: {backends!r}")
             for backend in supported:
-                with open(f"/tmp/run_{backend}", "w", encoding="utf-8") as output:
+                with open(f"/tmp/run_{backend.replace('-', '_')}", "w", encoding="utf-8") as output:
                     output.write(str(backend in backends).lower())
         env:
           - name: BACKENDS
