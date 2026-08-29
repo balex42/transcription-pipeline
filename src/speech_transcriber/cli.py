@@ -16,8 +16,10 @@ from speech_transcriber.asr_artifact import (
 )
 from speech_transcriber.config import (
     ASR_BACKENDS,
+    DEFAULT_FASTER_WHISPER_MODEL,
     DEFAULT_PYANNOTE_MODEL,
     DEFAULT_QWEN_ALIGNER_MODEL,
+    FASTER_WHISPER_COMPUTE_TYPES,
     PipelineConfig,
 )
 from speech_transcriber.errors import TranscriberError
@@ -66,8 +68,8 @@ def build_parser() -> argparse.ArgumentParser:
     _add_runtime_options(compare, include_asr=False)
     compare.add_argument(
         "--models",
-        default="parakeet,qwen,nemotron,voxtral",
-        help="comma-separated ASR backends: parakeet, qwen, nemotron, voxtral",
+        default="parakeet,qwen,nemotron,voxtral,faster-whisper",
+        help="comma-separated ASR backends: parakeet, qwen, nemotron, voxtral, faster-whisper",
     )
     prefetch = commands.add_parser(
         "prefetch-models", help="download models into configured Hugging Face cache"
@@ -88,7 +90,7 @@ def _add_runtime_options(parser: argparse.ArgumentParser, include_asr: bool) -> 
         parser.add_argument(
             "--asr",
             choices=ASR_BACKENDS,
-            help="ASR backend: parakeet, qwen, nemotron, voxtral",
+            help="ASR backend: parakeet, qwen, nemotron, voxtral, faster-whisper",
         )
         parser.add_argument("--asr-model", help="Hugging Face model ID or local model directory")
     parser.add_argument("--qwen-aligner-model", help="Qwen forced-aligner model ID or local path")
@@ -105,6 +107,11 @@ def _add_runtime_options(parser: argparse.ArgumentParser, include_asr: bool) -> 
         "--voxtral-timestamp-offset-tokens",
         type=int,
         help="Voxtral marker timestamp offset in tokens (default: 4)",
+    )
+    parser.add_argument(
+        "--faster-whisper-compute-type",
+        choices=FASTER_WHISPER_COMPUTE_TYPES,
+        help="faster-whisper CTranslate2 compute type (default: float16)",
     )
     parser.add_argument("--language", help="ASR language locale (default: de-DE)")
     parser.add_argument("--num-speakers", type=int)
@@ -147,6 +154,11 @@ def _add_transcribe_prepared_options(parser: argparse.ArgumentParser) -> None:
         "--voxtral-timestamp-offset-tokens",
         type=int,
         help="Voxtral marker timestamp offset in tokens (default: 4)",
+    )
+    parser.add_argument(
+        "--faster-whisper-compute-type",
+        choices=FASTER_WHISPER_COMPUTE_TYPES,
+        help="faster-whisper CTranslate2 compute type (default: float16)",
     )
     parser.add_argument(
         "--language", help="ASR language locale (default: prepared artifact language)"
@@ -275,6 +287,7 @@ def _config_from_args(
         "nemotron_num_lookahead_tokens": getattr(args, "nemotron_num_lookahead_tokens", None),
         "voxtral_delay_ms": getattr(args, "voxtral_delay_ms", None),
         "voxtral_timestamp_offset_tokens": getattr(args, "voxtral_timestamp_offset_tokens", None),
+        "faster_whisper_compute_type": getattr(args, "faster_whisper_compute_type", None),
         "language": language if language is not None else getattr(args, "language", None),
         "num_speakers": getattr(args, "num_speakers", None),
         "min_speakers": getattr(args, "min_speakers", None),
@@ -298,6 +311,9 @@ def _prefetch(asr_model: str, pyannote_model: str, qwen_aligner_model: str | Non
     if qwen_aligner_model:
         logging.getLogger(__name__).info("prefetching Qwen forced aligner")
         snapshot_download(qwen_aligner_model)
+    if asr_model == DEFAULT_FASTER_WHISPER_MODEL:
+        logging.getLogger(__name__).info("prefetching faster-whisper tokenizer")
+        snapshot_download("Systran/faster-whisper-large-v3-tokenizer")
     logging.getLogger(__name__).info("prefetching pyannote model")
     snapshot_download(pyannote_model, token=True)
 

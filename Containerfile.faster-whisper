@@ -1,0 +1,40 @@
+# Dedicated faster-whisper / CTranslate2 recognition image.
+#
+# This image is intentionally independent of the Transformers ASR stack: it
+# installs only the faster-whisper-runtime dependency set plus the backend-
+# neutral code needed to load prepared artifacts, run recognize-prepared, and
+# write ASR artifacts. It is not a restoration of the removed Transformers
+# Whisper backend.
+#
+# CTranslate2 GPU wheels require CUDA 12.x and cuDNN 9 at runtime; the base
+# image provides both. The model cache is mounted read-only at /models and the
+# model is loaded from the cached snapshot path (HF_HUB_OFFLINE=1).
+FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu24.04
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    HOME=/cache/home \
+    HF_HOME=/models/huggingface \
+    XDG_CACHE_HOME=/cache \
+    XDG_CONFIG_HOME=/cache/config \
+    TMPDIR=/cache/tmp \
+    WORKING_DIRECTORY=/work
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg git git-lfs \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /app /work /cache/home /cache/config /cache/tmp /models \
+    && chgrp -R 0 /work /cache /models \
+    && chmod -R g=u /work /cache /models
+
+WORKDIR /app
+COPY pyproject.toml uv.lock README.md LICENSE ./
+COPY src ./src
+RUN python -m pip install --no-cache-dir uv==0.11.32 \
+    && UV_CACHE_DIR=/tmp/uv-cache uv sync --frozen --no-dev --extra faster-whisper-runtime \
+    && rm -rf /tmp/uv-cache
+
+# The container runs as an arbitrary non-root UID that is normally a member of group 0.
+USER 1001
+ENTRYPOINT ["/app/.venv/bin/python", "-m", "speech_transcriber"]
+CMD ["--help"]

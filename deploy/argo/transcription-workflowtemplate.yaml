@@ -24,6 +24,11 @@ spec:
         value: ghcr.io/balex42/transcription-pipeline:sha-d6e4bde
       - name: voxtral_image
         value: ghcr.io/balex42/transcription-pipeline:sha-d6e4bde
+      # Temporary bootstrap tag: CI publishes the dedicated faster-whisper image
+      # under this tag until the deployment-only follow-up commit pins the
+      # immutable sha-<commit> tag produced by the container workflow.
+      - name: faster_whisper_image
+        value: ghcr.io/balex42/transcription-pipeline-faster-whisper:faster-whisper-bootstrap
       - name: backends
         value: '["parakeet"]'
 
@@ -201,6 +206,39 @@ spec:
                 - name: result
                   from: "{{tasks.finalize-voxtral.outputs.artifacts.result}}"
 
+          - name: recognize-faster-whisper
+            depends: "prepare.Succeeded"
+            when: "{{tasks.validate-backends.outputs.parameters.run_faster_whisper}} == true"
+            template: recognize-faster-whisper
+            arguments:
+              artifacts:
+                - name: prepared
+                  from: "{{tasks.prepare.outputs.artifacts.prepared}}"
+
+          - name: finalize-faster-whisper
+            depends: "recognize-faster-whisper.Succeeded"
+            template: finalize
+            arguments:
+              parameters:
+                - name: backend
+                  value: faster-whisper
+              artifacts:
+                - name: prepared
+                  from: "{{tasks.prepare.outputs.artifacts.prepared}}"
+                - name: asr
+                  from: "{{tasks.recognize-faster-whisper.outputs.artifacts.asr}}"
+
+          - name: publish-faster-whisper
+            depends: "finalize-faster-whisper.Succeeded"
+            template: publish
+            arguments:
+              parameters:
+                - name: backend
+                  value: faster-whisper
+              artifacts:
+                - name: result
+                  from: "{{tasks.finalize-faster-whisper.outputs.artifacts.result}}"
+
     - name: prepare
       inputs:
         artifacts:
@@ -279,6 +317,9 @@ spec:
           - name: run_voxtral
             valueFrom:
               path: /tmp/run_voxtral
+          - name: run_faster_whisper
+            valueFrom:
+              path: /tmp/run_faster_whisper
 
       container:
         image: "{{workflow.parameters.utility_image}}"
@@ -290,7 +331,7 @@ spec:
             import json
             import os
 
-            supported = {"parakeet", "qwen", "nemotron", "voxtral"}
+            supported = {"parakeet", "qwen", "nemotron", "voxtral", "faster-whisper"}
             try:
                 backends = json.loads(os.environ["BACKENDS"])
             except json.JSONDecodeError as error:
@@ -631,6 +672,66 @@ spec:
             value: "1"
 
           - name: TRANSFORMERS_OFFLINE
+            value: "1"
+
+        resources:
+          limits:
+            nvidia.com/gpu: "1"
+
+        volumeMounts:
+          - name: model-cache
+            mountPath: /models
+            readOnly: true
+
+          - name: cache
+            mountPath: /cache
+
+          - name: work
+            mountPath: /work
+
+    - name: recognize-faster-whisper
+      inputs:
+        artifacts:
+          - name: prepared
+            path: /work/prepared
+            mode: 0755
+            recurseMode: true
+
+      outputs:
+        artifacts:
+          - name: asr
+            path: /work/asr
+            archive:
+              none: {}
+            s3:
+              key: runs/{{workflow.uid}}/asr/faster-whisper/
+
+      volumes:
+        - name: model-cache
+          persistentVolumeClaim:
+            claimName: speech-model-cache
+
+      container:
+        image: "{{workflow.parameters.faster_whisper_image}}"
+
+        args:
+          - recognize-prepared
+          - --prepared
+          - /work/prepared
+          - --asr
+          - faster-whisper
+          - --output
+          - /work/asr
+          - --working-directory
+          - /work/tmp
+          - --device
+          - cuda
+
+        env:
+          - name: HF_HOME
+            value: /models/huggingface
+
+          - name: HF_HUB_OFFLINE
             value: "1"
 
         resources:

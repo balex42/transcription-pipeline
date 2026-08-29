@@ -19,8 +19,11 @@ VOXTRAL_MAX_DELAY_MS = 2400
 VOXTRAL_MIN_DELAY_MS = 80
 VOXTRAL_DELAY_STEP_MS = 80
 VOXTRAL_MAX_TIMESTAMP_OFFSET_TOKENS = 30
+DEFAULT_FASTER_WHISPER_MODEL = "Systran/faster-whisper-large-v3"
+DEFAULT_FASTER_WHISPER_COMPUTE_TYPE = "float16"
+FASTER_WHISPER_COMPUTE_TYPES = ("float16", "bfloat16", "float32", "int8", "int8_float16")
 DEFAULT_PYANNOTE_MODEL = "pyannote/speaker-diarization-community-1"
-ASR_BACKENDS = ("parakeet", "qwen", "nemotron", "voxtral")
+ASR_BACKENDS = ("parakeet", "qwen", "nemotron", "voxtral", "faster-whisper")
 QWEN_MAX_ALIGNMENT_DURATION_SECONDS = 300.0
 DEFAULT_PARAKEET_SEGMENT_DURATION = 180.0
 DEFAULT_PARAKEET_SEGMENT_OVERLAP = 15.0
@@ -31,6 +34,7 @@ DEFAULT_ASR_MODELS = {
     "qwen": DEFAULT_QWEN_MODEL,
     "nemotron": DEFAULT_NEMOTRON_MODEL,
     "voxtral": DEFAULT_VOXTRAL_MODEL,
+    "faster-whisper": DEFAULT_FASTER_WHISPER_MODEL,
 }
 
 
@@ -98,6 +102,7 @@ class PipelineConfig:
     nemotron_num_lookahead_tokens: int | None = DEFAULT_NEMOTRON_NUM_LOOKAHEAD_TOKENS
     voxtral_delay_ms: int = DEFAULT_VOXTRAL_DELAY_MS
     voxtral_timestamp_offset_tokens: int = DEFAULT_VOXTRAL_TIMESTAMP_OFFSET_TOKENS
+    faster_whisper_compute_type: str = DEFAULT_FASTER_WHISPER_COMPUTE_TYPE
     language: str = "de-DE"
     num_speakers: int | None = None
     min_speakers: int | None = None
@@ -123,6 +128,11 @@ class PipelineConfig:
         validate_qwen_segment_duration(self.qwen_segment_duration)
         validate_voxtral_delay(self.voxtral_delay_ms)
         validate_voxtral_timestamp_offset(self.voxtral_timestamp_offset_tokens)
+        if self.faster_whisper_compute_type not in FASTER_WHISPER_COMPUTE_TYPES:
+            raise ValueError(
+                "faster_whisper_compute_type must be one of: "
+                + ", ".join(FASTER_WHISPER_COMPUTE_TYPES)
+            )
         if not self.language:
             raise ValueError("language must not be empty")
         if self.num_speakers is not None and self.num_speakers < 1:
@@ -186,6 +196,11 @@ class PipelineConfig:
         voxtral_timestamp_offset = choose_int(
             "voxtral_timestamp_offset_tokens", "VOXTRAL_TIMESTAMP_OFFSET_TOKENS"
         )
+        faster_whisper_compute_type = choose(
+            "faster_whisper_compute_type",
+            "FASTER_WHISPER_COMPUTE_TYPE",
+            DEFAULT_FASTER_WHISPER_COMPUTE_TYPE,
+        )
         return cls(
             input_path=input_path,
             output_directory=output_directory,
@@ -236,6 +251,7 @@ class PipelineConfig:
                 if voxtral_timestamp_offset is None
                 else voxtral_timestamp_offset
             ),
+            faster_whisper_compute_type=faster_whisper_compute_type,
             language=choose("language", "LANGUAGE", "de-DE"),
             num_speakers=choose_int("num_speakers", "NUM_SPEAKERS"),
             min_speakers=choose_int("min_speakers", "MIN_SPEAKERS"),

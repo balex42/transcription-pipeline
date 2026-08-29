@@ -166,6 +166,16 @@ class TranscriptionPipeline:
         finally:
             release_model(transcriber)
         total_seconds = time.monotonic() - total_started
+        runtime = getattr(transcriber, "runtime_provenance", None)
+        if not isinstance(runtime, RuntimeProvenance):
+            runtime = RuntimeProvenance(
+                name="python",
+                version=_package_version("speech-transcriber"),
+                components={
+                    "torch": _package_version("torch"),
+                    "transformers": _package_version("transformers"),
+                },
+            )
         metadata = ASRRunMetadata(
             backend=backend,
             model=transcriber.model_reference,
@@ -181,14 +191,7 @@ class TranscriptionPipeline:
             normalized_audio_sha256=prepared.normalized_audio_sha256,
             transformers_version=_package_version("transformers"),
             torch_version=_package_version("torch"),
-            runtime=RuntimeProvenance(
-                name="python",
-                version=_package_version("speech-transcriber"),
-                components={
-                    "torch": _package_version("torch"),
-                    "transformers": _package_version("transformers"),
-                },
-            ),
+            runtime=runtime,
             backend_metrics=getattr(transcriber, "backend_metrics", {}),
             backend_models=getattr(transcriber, "backend_models", {}),
             backend_configuration=getattr(transcriber, "backend_configuration", {}),

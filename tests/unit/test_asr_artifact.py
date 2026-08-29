@@ -176,3 +176,112 @@ def test_finalization_rejects_a_recognition_for_another_recording(tmp_path: Path
             _recognition(),
             tmp_path / "result",
         )
+
+
+def test_finalizer_accepts_a_faster_whisper_artifact_without_backend_specific_logic(
+    tmp_path: Path,
+) -> None:
+    audio = tmp_path / "normalized.wav"
+    audio.write_bytes(b"normalized audio")
+    prepared = PreparedRecording(
+        audio=NormalizedAudio(audio, AudioMetadata("meeting.wav", 2.0)),
+        diarization=[DiarizationSegment("SPEAKER_00", 0.0, 2.0)],
+        work_directory=tmp_path,
+        normalized_audio_sha256=sha256_file(audio),
+        diarization_model="pyannote/test",
+        language="de-DE",
+        cleanup_enabled=False,
+    )
+    recognition_directory = tmp_path / "asr"
+    recognition = ASRRecognitionResult(
+        words=[
+            ASRWord("hallo", end=0.5, start=0.0, confidence=0.99),
+            ASRWord("welt", end=1.0, start=0.5, confidence=0.95),
+        ],
+        metadata=ASRRunMetadata(
+            backend="faster-whisper",
+            model="Systran/faster-whisper-large-v3",
+            device="cuda",
+            dtype="float16",
+            audio_duration_seconds=2.0,
+            model_load_seconds=1.0,
+            transcription_seconds=0.5,
+            total_asr_seconds=1.5,
+            real_time_factor=0.75,
+            peak_cuda_memory_allocated_bytes=None,
+            peak_cuda_memory_reserved_bytes=None,
+            normalized_audio_sha256=sha256_file(audio),
+            transformers_version="unknown",
+            torch_version="unknown",
+            runtime=RuntimeProvenance(
+                name="faster-whisper",
+                version="1.2.1",
+                components={"ctranslate2": "4.8.1", "huggingface_hub": "1.28.0"},
+            ),
+            backend_configuration={
+                "language": "de",
+                "compute_type": "float16",
+                "word_timestamps": True,
+                "vad_filter": False,
+            },
+        ),
+    )
+    write_asr_recognition(recognition, recognition_directory)
+    result = TranscriptFinalizer(
+        PipelineConfig(audio, tmp_path / "result", tmp_path / "work")
+    ).finalize_prepared(
+        prepared,
+        load_asr_recognition(recognition_directory),
+        tmp_path / "result",
+        expected_backend="faster-whisper",
+    )
+
+    assert [(word.text, word.speaker) for word in result.transcript.words] == [
+        ("hallo", "SPEAKER_00"),
+        ("welt", "SPEAKER_00"),
+    ]
+    assert result.transcript.asr_backend == "faster-whisper"
+    assert result.transcript.asr_model == "Systran/faster-whisper-large-v3"
+    assert (tmp_path / "result" / "transcript.json").is_file()
+
+
+def test_finalizer_rejects_a_faster_whisper_artifact_for_another_backend(
+    tmp_path: Path,
+) -> None:
+    audio = tmp_path / "normalized.wav"
+    audio.write_bytes(b"normalized audio")
+    prepared = PreparedRecording(
+        audio=NormalizedAudio(audio, AudioMetadata("meeting.wav", 2.0)),
+        diarization=[],
+        work_directory=tmp_path,
+        normalized_audio_sha256=sha256_file(audio),
+        diarization_model="pyannote/test",
+        language="de-DE",
+    )
+    recognition = ASRRecognitionResult(
+        words=[ASRWord("hallo", end=0.5, start=0.0)],
+        metadata=ASRRunMetadata(
+            backend="faster-whisper",
+            model="Systran/faster-whisper-large-v3",
+            device="cuda",
+            dtype="float16",
+            audio_duration_seconds=2.0,
+            model_load_seconds=1.0,
+            transcription_seconds=0.5,
+            total_asr_seconds=1.5,
+            real_time_factor=0.75,
+            peak_cuda_memory_allocated_bytes=None,
+            peak_cuda_memory_reserved_bytes=None,
+            normalized_audio_sha256=sha256_file(audio),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="does not match"):
+        TranscriptFinalizer(
+            PipelineConfig(audio, tmp_path / "result", tmp_path / "work")
+        ).finalize_prepared(
+            prepared,
+            recognition,
+            tmp_path / "result",
+            expected_backend="parakeet",
+        )

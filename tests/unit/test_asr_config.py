@@ -3,6 +3,8 @@ from pathlib import Path
 import pytest
 
 from speech_transcriber.config import (
+    DEFAULT_FASTER_WHISPER_COMPUTE_TYPE,
+    DEFAULT_FASTER_WHISPER_MODEL,
     DEFAULT_NEMOTRON_MODEL,
     DEFAULT_NEMOTRON_NUM_LOOKAHEAD_TOKENS,
     DEFAULT_PARAKEET_MODEL,
@@ -28,6 +30,31 @@ def test_default_backend_is_parakeet() -> None:
 def test_environment_backend_and_default_model_mapping() -> None:
     assert make({}, {"ASR_BACKEND": "nemotron"}).resolved_asr_model == DEFAULT_NEMOTRON_MODEL
     assert make({}, {"ASR_BACKEND": "voxtral"}).resolved_asr_model == DEFAULT_VOXTRAL_MODEL
+    assert (
+        make({}, {"ASR_BACKEND": "faster-whisper"}).resolved_asr_model
+        == DEFAULT_FASTER_WHISPER_MODEL
+    )
+
+
+def test_faster_whisper_uses_float16_compute_type_by_default() -> None:
+    config = make({"asr_backend": "faster-whisper"})
+    assert config.faster_whisper_compute_type == DEFAULT_FASTER_WHISPER_COMPUTE_TYPE
+
+
+def test_faster_whisper_compute_type_allows_an_override() -> None:
+    assert (
+        make(
+            {"asr_backend": "faster-whisper"},
+            {"FASTER_WHISPER_COMPUTE_TYPE": "int8_float16"},
+        ).faster_whisper_compute_type
+        == "int8_float16"
+    )
+
+
+@pytest.mark.parametrize("compute_type", ["float8", "int4", ""])
+def test_faster_whisper_rejects_unsupported_compute_type(compute_type: str) -> None:
+    with pytest.raises(ValueError, match="faster_whisper_compute_type"):
+        make({"asr_backend": "faster-whisper", "faster_whisper_compute_type": compute_type})
 
 
 def test_nemotron_uses_highest_accuracy_lookahead_by_default() -> None:

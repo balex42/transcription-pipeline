@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from speech_transcriber.config import (
+    DEFAULT_FASTER_WHISPER_MODEL,
     DEFAULT_NEMOTRON_MODEL,
     DEFAULT_PARAKEET_MODEL,
     DEFAULT_QWEN_MODEL,
@@ -14,6 +15,7 @@ from speech_transcriber.config import (
 from speech_transcriber.errors import UnsupportedASRBackendError
 from speech_transcriber.transcription.base import TranscriberCapabilities
 from speech_transcriber.transcription.factory import create_transcriber
+from speech_transcriber.transcription.faster_whisper import FasterWhisperTranscriber
 from speech_transcriber.transcription.nemotron import NemotronTranscriber
 from speech_transcriber.transcription.parakeet import ParakeetTranscriber
 from speech_transcriber.transcription.qwen import QwenTranscriber
@@ -33,6 +35,7 @@ def config(backend: str, model: str | None = None) -> PipelineConfig:
         ("qwen", QwenTranscriber, DEFAULT_QWEN_MODEL),
         ("nemotron", NemotronTranscriber, DEFAULT_NEMOTRON_MODEL),
         ("voxtral", VoxtralTranscriber, DEFAULT_VOXTRAL_MODEL),
+        ("faster-whisper", FasterWhisperTranscriber, DEFAULT_FASTER_WHISPER_MODEL),
     ],
 )
 def test_factory_selects_adapter_and_default_model(
@@ -51,6 +54,10 @@ def test_factory_selects_adapter_and_default_model(
         )
         assert transcriber.delay_ms == DEFAULT_VOXTRAL_DELAY_MS
         assert transcriber.timestamp_offset_tokens == DEFAULT_VOXTRAL_TIMESTAMP_OFFSET_TOKENS
+    if backend == "faster-whisper":
+        assert transcriber.capabilities == TranscriberCapabilities(True, True, True, True)
+        assert transcriber.compute_type == "float16"
+        assert transcriber.language == "de-DE"
 
 
 def test_voxtral_delay_from_config_is_passed_to_adapter() -> None:
@@ -67,6 +74,21 @@ def test_voxtral_delay_from_config_is_passed_to_adapter() -> None:
     )
     assert transcriber.delay_ms == 1200
     assert transcriber.timestamp_offset_tokens == 6
+
+
+def test_faster_whisper_compute_type_from_config_is_passed_to_adapter() -> None:
+    transcriber = create_transcriber(
+        PipelineConfig(
+            Path("in.wav"),
+            Path("out"),
+            Path("work"),
+            asr_backend="faster-whisper",
+            faster_whisper_compute_type="bfloat16",
+        ),
+        "cuda",
+    )
+    assert transcriber.compute_type == "bfloat16"
+    assert transcriber.dtype_name == "bfloat16"
 
 
 def test_explicit_model_overrides_backend_default() -> None:

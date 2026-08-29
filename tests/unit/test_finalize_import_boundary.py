@@ -33,8 +33,8 @@ def test_finalize_command_imports_no_ml_or_backend_modules(tmp_path: Path) -> No
     recognition = ASRRecognitionResult(
         words=[ASRWord("hallo", end=0.5, start=0.0)],
         metadata=ASRRunMetadata(
-            backend="parakeet",
-            model="nvidia/parakeet",
+            backend="faster-whisper",
+            model="Systran/faster-whisper-large-v3",
             device="cuda",
             dtype="float16",
             audio_duration_seconds=2.0,
@@ -68,7 +68,7 @@ builtins.__import__ = guarded_import
 from speech_transcriber.cli import main
 raise SystemExit(main([
     "finalize-prepared", "--prepared", {str(prepared)!r},
-    "--asr-result", {str(asr)!r}, "--expected-backend", "parakeet",
+    "--asr-result", {str(asr)!r}, "--expected-backend", "faster-whisper",
     "--output", {str(result)!r},
 ]))
 """

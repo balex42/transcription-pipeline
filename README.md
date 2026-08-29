@@ -21,10 +21,12 @@ flowchart TD
     transcriber --> qwen[Qwen\ninternal segments plus aligner]
     transcriber --> nemotron[Nemotron\ncache-aware streaming]
     transcriber --> voxtral[Voxtral\nnative streaming]
+    transcriber --> faster_whisper[Faster Whisper\nCTranslate2 native word timestamps]
     parakeet --> words[Global ASRWord list]
     qwen --> words
     nemotron --> words
     voxtral --> words
+    faster_whisper --> words
     words --> align[SpeakerAligner]
     timeline --> align
     align --> turns[TurnBuilder]
@@ -39,15 +41,16 @@ Audio segmentation is not part of the generic pipeline. Each ASR backend owns it
 - `qwen`: `Qwen/Qwen3-ASR-1.7B-hf` plus `Qwen/Qwen3-ForcedAligner-0.6B-hf`. Qwen recognizes bounded 240-second internal segments with 15-second overlap, releases ASR, aligns all recognized segments once, then reconciles them. Collapsed 80 ms-grid boundaries are interpolated and reported in metadata. The aligner limit is 300 seconds.
 - `nemotron`: `nvidia/nemotron-3.5-asr-streaming-0.6b`. Native Transformers RNNT cache-aware streaming, explicit language conditioning, native token emission timestamps, and internal token-to-word aggregation. Batch transcription defaults to 13 lookahead tokens (1.12s latency) for the model's highest-accuracy streaming configuration. It does not issue independent ASR requests for long-form audio.
 - `voxtral`: `mistralai/Voxtral-Mini-4B-Realtime-2602`. Native Transformers cache-aware streaming in one continuous `generate()` session using processor-defined buffers and EOF padding. `[STREAMING_WORD]` token positions provide approximate emission-group end times; starts remain unset for speaker alignment to infer.
+- `faster-whisper`: `Systran/faster-whisper-large-v3`. A distinct heterogeneous runtime using the native `faster-whisper` / CTranslate2 stack, not Transformers. It is not a restoration of the previously removed Transformers Whisper backend. Native word start/end timestamps and word probabilities map directly to canonical `ASRWord` records; no forced alignment is used. GPU recognition defaults to `float16` compute type; VAD is disabled by default (`vad_filter=False`) because the pipeline already normalizes the full recording and diarizes it separately with pyannote. The configured language is reduced to a Whisper base code (`de-DE` -> `de`); without a language, the model detects it and the detected language/probability is recorded in backend metadata.
 - Diarization: `pyannote/speaker-diarization-community-1` runs once over the normalized full recording.
 
 Nemotron word intervals are aggregates of RNNT token emission times, not manually aligned acoustic boundaries. Leading-space tokenizer markers start words; trailing punctuation attaches to the preceding word; opening punctuation attaches to the following lexical token.
 
-All adapters use deterministic inference, `model.eval()`, `torch.inference_mode()`, and `trust_remote_code=False`. CUDA uses FP16 on Turing-class GPUs and BF16 only when PyTorch verifies support; CPU uses FP32.
+All adapters use deterministic inference, `model.eval()`, `torch.inference_mode()`, and `trust_remote_code=False`. CUDA uses FP16 on Turing-class GPUs and BF16 only when PyTorch verifies support; CPU uses FP32. The faster-whisper adapter is the exception: it runs CTranslate2 with the configured compute type (`float16` by default) and never imports Transformers for inference.
 
 ## Language
 
-The pipeline is language-agnostic. The default ASR language is `de-DE` and can be changed with the `LANGUAGE` environment variable or the `--language` CLI flag. Qwen and Nemotron accept a locale such as `de-DE`; the Qwen ASR and forced-aligner stages use the base language code (for example `de`).
+The pipeline is language-agnostic. The default ASR language is `de-DE` and can be changed with the `LANGUAGE` environment variable or the `--language` CLI flag. Qwen and Nemotron accept a locale such as `de-DE`; the Qwen ASR and forced-aligner stages use the base language code (for example `de`). Faster Whisper also reduces the locale to a Whisper base code (`de-DE` -> `de`); an empty language leaves detection to the model.
 
 ## Dependencies
 
@@ -63,6 +66,8 @@ The pipeline is language-agnostic. The default ASR language is `de-DE` and can b
 | mistral-common | `1.10.0` with `audio` extra |
 | pyannote.audio | `4.0.7` |
 | numpy | `2.2.6` |
+| faster-whisper | `1.2.1` (dedicated `faster-whisper-runtime` extra) |
+| ctranslate2 | `4.8.1` (dedicated `faster-whisper-runtime` extra) |
 
 Install the appropriate PyTorch CPU/CUDA wheel first when required, then install the project:
 
@@ -75,7 +80,8 @@ python3.11 -m venv .venv
 `ffmpeg` and `ffprobe` must be on `PATH`.
 
 The base package contains the artifact and CPU finalization path only. Install `.[runtime]` for
-preparation/recognition or `.[dev]` for the full runtime and test tools.
+preparation/recognition, `.[faster-whisper-runtime]` for the dedicated faster-whisper/CTranslate2
+recognition image, or `.[dev]` for the full runtime and test tools.
 
 ## Commands
 
@@ -86,13 +92,14 @@ speech-transcriber transcribe audio.m4a --asr parakeet --output ./result/parakee
 speech-transcriber transcribe audio.m4a --asr qwen --output ./result/qwen --device cuda
 speech-transcriber transcribe audio.m4a --asr nemotron --output ./result/nemotron --device cuda
 speech-transcriber transcribe audio.m4a --asr voxtral --output ./result/voxtral --device cuda
+speech-transcriber transcribe audio.m4a --asr faster-whisper --output ./result/faster-whisper --device cuda
 ```
 
 Compare all production configurations with one normalization and one diarization pass:
 
 ```bash
 speech-transcriber compare audio.m4a \
-  --models parakeet,qwen,nemotron,voxtral \
+  --models parakeet,qwen,nemotron,voxtral,faster-whisper \
   --output ./comparison --device cuda
 ```
 
@@ -120,7 +127,7 @@ speech-transcriber transcribe-prepared \
   --device cuda
 ```
 
-Repeat `transcribe-prepared` with `qwen`, `nemotron`, or `voxtral`. The command does not
+Repeat `transcribe-prepared` with `qwen`, `nemotron`, `voxtral`, or `faster-whisper`. The command does not
 normalize audio or initialize pyannote, and it never removes or modifies the prepared input.
 Argo Workflows should transfer `/work/prepared` and each backend result through its configured
 artifact repository; the application only reads and writes local filesystem paths.
@@ -141,6 +148,7 @@ QWEN_SEGMENT_OVERLAP
 NEMOTRON_NUM_LOOKAHEAD_TOKENS
 VOXTRAL_DELAY_MS
 VOXTRAL_TIMESTAMP_OFFSET_TOKENS
+FASTER_WHISPER_COMPUTE_TYPE
 LANGUAGE
 DEVICE
 WORKING_DIRECTORY
@@ -153,11 +161,13 @@ HF_HOME
 HF_TOKEN
 ```
 
-Equivalent CLI flags include `--parakeet-segment-duration`, `--qwen-segment-duration`, and `--nemotron-num-lookahead-tokens`. There is intentionally no global `--chunk-duration` or `CHUNK_DURATION`: those old settings were removed because they incorrectly coupled backend implementations.
+Equivalent CLI flags include `--parakeet-segment-duration`, `--qwen-segment-duration`, `--nemotron-num-lookahead-tokens`, and `--faster-whisper-compute-type`. There is intentionally no global `--chunk-duration` or `CHUNK_DURATION`: those old settings were removed because they incorrectly coupled backend implementations.
 
 Nemotron validates an explicit lookahead through the loaded processor. Batch transcription defaults to 13 lookahead tokens; set `NEMOTRON_NUM_LOOKAHEAD_TOKENS` or `--nemotron-num-lookahead-tokens` to select another supported latency/accuracy trade-off. The checkpoint derives its first/subsequent streaming buffer sizes and latency from model/processor configuration.
 
 Voxtral derives its first/subsequent buffers, transcript delay, and right EOF padding from the loaded processor. Its marker-derived end times are approximate, and multiple lexical words may share one native emission-group end time.
+
+Faster Whisper uses the configured `FASTER_WHISPER_COMPUTE_TYPE` (default `float16`) and records the requested language, compute type, word-timestamp mode, VAD setting, and detected language/probability in backend metadata. Its runtime provenance identifies `faster-whisper` with `ctranslate2` and `huggingface_hub` component versions; Transformers-specific provenance fields remain `unknown`.
 
 ## Output and Metrics
 
@@ -174,10 +184,11 @@ comparison/
 │   └── transcript.txt
 ├── qwen/
 ├── nemotron/
-└── voxtral/
+├── voxtral/
+└── faster-whisper/
 ```
 
-Each backend metadata file records model/device/dtype, load time, ASR time, total backend time, RTF, peak CUDA memory, backend configuration, and backend-specific metrics. Forced-alignment backends record recognition, recognizer release, aligner load, alignment, and aligner release timings; Qwen also records interpolated timestamps plus clipped/dropped trailing-boundary words and their maximum overflow. Nemotron records language, lookahead, streaming latency, and `stream_buffers_processed`; Voxtral records native delay, right padding, stream buffer counts, and any `inferred_final_emission_groups` used for an unmarked EOF tail.
+Each backend metadata file records model/device/dtype, load time, ASR time, total backend time, RTF, peak CUDA memory, backend configuration, and backend-specific metrics. Forced-alignment backends record recognition, recognizer release, aligner load, alignment, and aligner release timings; Qwen also records interpolated timestamps plus clipped/dropped trailing-boundary words and their maximum overflow. Nemotron records language, lookahead, streaming latency, and `stream_buffers_processed`; Voxtral records native delay, right padding, stream buffer counts, and any `inferred_final_emission_groups` used for an unmarked EOF tail. Faster Whisper records the resolved cached model path, detected language/probability, and its CTranslate2 runtime provenance.
 
 With `--keep-intermediate`, generic diarization, ASR words, and attributed words are retained under `OUTPUT/intermediate`. Backend-specific state remains internal and is never added to the canonical transcript schema.
 
@@ -251,6 +262,19 @@ speech-transcriber finalize-prepared --prepared /work/prepared --asr-result /wor
   --expected-backend parakeet --output /work/result
 ```
 
+A faster-whisper smoke run uses the same split commands with the dedicated runtime:
+
+```bash
+speech-transcriber recognize-prepared \
+  --prepared /work/prepared \
+  --asr faster-whisper \
+  --output /work/asr \
+  --working-directory /work/tmp \
+  --device cuda
+speech-transcriber finalize-prepared --prepared /work/prepared --asr-result /work/asr \
+  --expected-backend faster-whisper --output /work/result
+```
+
 ## Offline and Air-Gapped Models
 
 On an approved connected staging system, prefetch artifacts:
@@ -260,9 +284,13 @@ HF_TOKEN=hf_... speech-transcriber prefetch-models --asr parakeet
 HF_TOKEN=hf_... speech-transcriber prefetch-models --asr qwen
 HF_TOKEN=hf_... speech-transcriber prefetch-models --asr nemotron
 HF_TOKEN=hf_... speech-transcriber prefetch-models --asr voxtral
+HF_TOKEN=hf_... speech-transcriber prefetch-models --asr faster-whisper
 ```
 
-Qwen prefetch includes the configured Qwen forced-aligner artifact.
+Qwen prefetch includes the configured Qwen forced-aligner artifact. Faster-whisper prefetch
+additionally stages the `Systran/faster-whisper-large-v3-tokenizer` repository, which the
+CTranslate2 runtime reads from the same cache. The model is never converted from Transformers
+format at runtime; the Systran CTranslate2 repository is used directly.
 
 Also obtain the accepted pyannote artifact through the approved process. Transfer approved artifacts and externally generated checksums through the air gap. A production volume can use:
 
@@ -273,7 +301,8 @@ Also obtain the accepted pyannote artifact through the approved process. Transfe
 ├── qwen3-asr-1.7b/
 ├── qwen3-forced-aligner-0.6b/
 ├── nemotron-3.5-asr-streaming-0.6b/
-└── voxtral-mini-4b-realtime-2602/
+├── voxtral-mini-4b-realtime-2602/
+└── faster-whisper-large-v3/
 ```
 
 Run with mounted local paths and no runtime network access:
@@ -287,7 +316,7 @@ PYANNOTE_MODEL=/models/pyannote-community-1 \
 speech-transcriber transcribe /data/audio.m4a --output /data/result --device cuda
 ```
 
-With all required artifacts mounted locally, inference performs no network access, telemetry, NVIDIA API calls, or remote-code loading.
+With all required artifacts mounted locally, inference performs no network access, telemetry, NVIDIA API calls, or remote-code loading. The faster-whisper recognition image resolves the cached snapshot path under `HF_HOME` and passes it directly to `WhisperModel`, so the read-only model cache is never copied into the pod's ephemeral filesystem.
 
 ## Podman and Kubernetes
 
@@ -296,6 +325,18 @@ Build the single non-root, arbitrary-UID compatible image:
 ```bash
 podman build -t speech-transcriber:local -f Containerfile .
 ```
+
+Build the dedicated faster-whisper/CTranslate2 recognition image:
+
+```bash
+podman build -t speech-transcriber-faster-whisper:local -f Containerfile.faster-whisper .
+```
+
+The faster-whisper image is materially independent of the Transformers ASR stack: it installs
+only the `faster-whisper-runtime` dependency set and the backend-neutral artifact code, and it
+bases on `nvidia/cuda:12.4.1-cudnn-runtime-ubuntu24.04` because CTranslate2 GPU wheels require
+CUDA 12 and cuDNN 9 at runtime. It supports the same `/models`, `/cache`, and `/work` mounts and
+the same arbitrary-UID execution model as the main image.
 
 ```bash
 podman run --rm --device nvidia.com/gpu=all \
@@ -316,19 +357,28 @@ podman run --rm --device nvidia.com/gpu=all \
 one lightweight `validate-backends` task before a GPU-limited `prepare` task. It then fans out one
 GPU-limited `recognize-prepared`, common CPU-only finalization, and non-GPU `publish` chain for
 every selected backend. Each backend has an explicit recognition template and image parameter (`parakeet_image`, `qwen_image`,
-`nemotron_image`, and `voxtral_image`), so a future backend-specific runtime can replace its image
-and command as long as it produces the ASR artifact, without changing the fan-out DAG. All four currently default to the pinned worker image
-`ghcr.io/balex42/transcription-pipeline:sha-9119123`.
+`nemotron_image`, `voxtral_image`, and `faster_whisper_image`), so a future backend-specific runtime can replace its image
+and command as long as it produces the ASR artifact, without changing the fan-out DAG. The four Transformers backends currently default to the pinned worker image
+`ghcr.io/balex42/transcription-pipeline:sha-d6e4bde`; `faster_whisper_image` defaults to the
+dedicated `ghcr.io/balex42/transcription-pipeline-faster-whisper` repository.
 
 The WorkflowTemplate and all five Python runtime image parameters form one compatible release pair.
-`sha-9119123` must be published by the container workflow before applying this template. If it is not
+`sha-d6e4bde` must be published by the container workflow before applying this template. If it is not
 available in the target registry, publish that source revision or override every Python runtime image
 parameter with the same schema-v2-compatible immutable release tag or digest. Do not mix schema-v1
 workers with schema-v2 prepared/ASR artifacts; upgrade the template and runtime images together.
 
-`backends` must be a JSON array containing only `parakeet`, `qwen`, `nemotron`, or `voxtral`.
+The faster-whisper image follows the same two-step release process. The implementation commit
+triggers the container workflow, which publishes the dedicated image under the immutable
+`sha-<commit>` tag (and a `faster-whisper-bootstrap` mutable tag). A deployment-only follow-up
+commit then pins `faster_whisper_image` to that `sha-<commit>` tag; because the follow-up commit
+touches only `deploy/argo/**`, it does not rebuild any image. Do not invent an immutable
+faster-whisper SHA tag before CI has built it.
+
+`backends` must be a JSON array containing only `parakeet`, `qwen`, `nemotron`, `voxtral`, or
+`faster-whisper`.
 The pre-prepare validator rejects malformed or empty arrays, unsupported names, and duplicates, then
-emits one boolean output per backend to condition the four direct DAG branches. A comma-separated
+emits one boolean output per backend to condition the five direct DAG branches. A comma-separated
 value is invalid and fails before normalization, diarization, or any ASR command runs. Select one
 backend:
 
@@ -341,19 +391,22 @@ Select multiple backends:
 
 ```bash
 argo submit --from workflowtemplate/speech-transcription --namespace argo \
-  -p 'backends=["parakeet","qwen","nemotron"]' \
+  -p 'backends=["parakeet","faster-whisper"]' \
   -a recording=/path/to/recording.m4a
 ```
 
 The top-level DAG is `validate-backends`, then `prepare` once and `publish-source` once, followed
-by direct `recognize-parakeet`, `recognize-qwen`, `recognize-nemotron`, and `recognize-voxtral`
+by direct `recognize-parakeet`, `recognize-qwen`, `recognize-nemotron`, `recognize-voxtral`, and
+`recognize-faster-whisper`
 branches when selected. Each selected branch is `recognize` (GPU), `finalize` (CPU), then `publish`
 (CPU); there are no backend dispatcher or pipeline wrapper nodes. `publish-source` is CPU-only,
 does not need prepared audio, and intentionally runs in parallel with `prepare` after validation.
 Each recognition task requests one GPU and invokes its fixed backend name, so with two available
 GPUs two ASR tasks can run concurrently while additional selected backends wait for Kubernetes scheduling.
 The workflow adds no inter-backend dependencies, mutexes, semaphores, or parallelism limits. No pod
-loads multiple ASR models.
+loads multiple ASR models. `recognize-faster-whisper` uses the dedicated `faster_whisper_image`
+parameter; `finalize-faster-whisper` reuses the common backend-neutral `finalize` template with the
+common application image and requests no GPU and mounts no model cache.
 
 Each Argo finalization task passes its fixed backend as `--expected-backend`; a recognition artifact
 from a different backend or normalized recording fails before publication.
@@ -373,6 +426,7 @@ jobs/<workflow-uid>/
   qwen/...
   nemotron/...
   voxtral/...
+  faster-whisper/...
 ```
 
 The source recording is published once per workflow; backend publication tasks only copy their own
@@ -384,11 +438,14 @@ that utility image in their internal registry.
 
 The container GitHub Actions workflow uses an explicit application-input allowlist. Changes limited to
 Markdown or deployment manifests, including `deploy/argo/**`, do not build an image. Changes to
-`src/**`, `Containerfile`, `.containerignore`, `pyproject.toml`, `uv.lock`, or the container workflow
+`src/**`, `Containerfile`, `Containerfile.faster-whisper`, `.containerignore`, `pyproject.toml`,
+`uv.lock`, or the container workflow
 do. Version-tag pushes and manual dispatch remain build triggers, so an image-tag-only Argo update
-does not create a follow-up image build.
+does not create a follow-up image build. The workflow builds two images: the generic application
+image and the dedicated `-faster-whisper` image, each with its own immutable `sha-<commit>` tag
+namespace.
 
-Only `prepare` and the four recognition templates declare and mount `speech-model-cache` read-only
+Only `prepare` and the five recognition templates declare and mount `speech-model-cache` read-only
 at `/models`; validation, finalization, and publication pods do not depend on model storage.
 A ReadWriteOnce PVC can be mounted by multiple pods on the same node, so it does not require serializing backend GPU pods.
 If selected backend pods must run on different nodes, an RWO volume may prevent multi-node cache
@@ -406,4 +463,4 @@ uv run ruff check .
 uv run mypy src/speech_transcriber
 ```
 
-An optional real-model smoke test requires predownloaded local artifacts, a WAV, and `RUN_MODEL_TESTS=1 MODEL_TEST_BACKEND=nemotron MODEL_TEST_AUDIO=/path/to/audio.wav uv run pytest tests/integration`.
+An optional real-model smoke test requires predownloaded local artifacts, a WAV, and `RUN_MODEL_TESTS=1 MODEL_TEST_BACKEND=nemotron MODEL_TEST_AUDIO=/path/to/audio.wav uv run pytest tests/integration`. For faster-whisper, use `MODEL_TEST_BACKEND=faster-whisper` with the model staged in the local Hugging Face cache.
