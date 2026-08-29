@@ -24,7 +24,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     WORKING_DIRECTORY=/work
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends python3 python3-pip python3-venv ffmpeg git git-lfs \
+    && apt-get install -y --no-install-recommends python3 python3-pip python3-venv ffmpeg git git-lfs libnss-wrapper \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /app /work /cache/home /cache/config /cache/tmp /models \
     && chgrp -R 0 /work /cache /models \
@@ -45,7 +45,12 @@ RUN /bin/uv venv --python python3 /app/.venv \
     && /bin/uv pip install --python /app/.venv/bin/python --no-deps . \
     && rm -rf /tmp/uv-cache /tmp/requirements.txt
 
-# The container runs as an arbitrary non-root UID that is normally a member of group 0.
+# The container runs as an arbitrary non-root UID that is normally a member of
+# group 0. The uid-entrypoint resolves the runtime UID/GID through NSS wrapper
+# when they have no /etc/passwd or /etc/group entry, so getpwuid() and friends
+# work for any Kubernetes/OpenShift-assigned UID without modifying /etc/passwd.
+COPY container/uid-entrypoint.sh /usr/local/bin/uid-entrypoint
 USER 1001
-ENTRYPOINT ["/app/.venv/bin/python", "-m", "speech_transcriber"]
+RUN /usr/local/bin/uid-entrypoint /app/.venv/bin/python -c "import os, pwd; print(pwd.getpwuid(os.getuid()))"
+ENTRYPOINT ["/usr/local/bin/uid-entrypoint", "/app/.venv/bin/python", "-m", "speech_transcriber"]
 CMD ["--help"]

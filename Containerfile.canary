@@ -21,7 +21,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     VIRTUAL_ENV=/app/.venv \
     PATH=/app/.venv/bin:$PATH
 
-RUN mkdir -p /app /work /cache/home /cache/config /cache/tmp /models \
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libnss-wrapper \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /app /work /cache/home /cache/config /cache/tmp /models \
     && chgrp -R 0 /work /cache /models \
     && chmod -R g=u /work /cache /models
 
@@ -40,9 +43,15 @@ RUN /bin/uv venv --python python --system-site-packages /app/.venv \
     && /bin/uv pip install --python /app/.venv/bin/python --no-deps . \
     && rm -rf /tmp/uv-cache /tmp/requirements.txt
 
-RUN /app/.venv/bin/python -c "import nemo, nemo.collections.asr, speech_transcriber, torch; assert torch.__version__.startswith('2.12.0'); assert torch.version.cuda and torch.version.cuda.startswith('13.2'); print(torch.__version__); print(torch.version.cuda); print(nemo.__version__)"
-
-# The container runs as an arbitrary non-root UID that is normally a member of group 0.
+# The container runs as an arbitrary non-root UID that is normally a member of
+# group 0. The uid-entrypoint resolves the runtime UID/GID through NSS wrapper
+# when they have no /etc/passwd or /etc/group entry, so getpwuid() and friends
+# work for any Kubernetes/OpenShift-assigned UID without modifying /etc/passwd.
+# The smoke test runs after USER 1001 through the entrypoint, so it verifies
+# the passwd lookup under the non-root identity that NeMo exercises at model
+# load time.
+COPY container/uid-entrypoint.sh /usr/local/bin/uid-entrypoint
 USER 1001
-ENTRYPOINT ["/app/.venv/bin/python", "-m", "speech_transcriber"]
+RUN /usr/local/bin/uid-entrypoint /app/.venv/bin/python -c "import os, pwd, nemo, nemo.collections.asr, speech_transcriber, torch; print(pwd.getpwuid(os.getuid())); assert torch.__version__.startswith('2.12.0'); assert torch.version.cuda and torch.version.cuda.startswith('13.2'); print(torch.__version__); print(torch.version.cuda); print(nemo.__version__)"
+ENTRYPOINT ["/usr/local/bin/uid-entrypoint", "/app/.venv/bin/python", "-m", "speech_transcriber"]
 CMD ["--help"]

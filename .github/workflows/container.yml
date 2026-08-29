@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "src/**"
+      - "container/**"
       - "Containerfile"
       - "Containerfile.faster-whisper"
       - "Containerfile.canary"
@@ -16,6 +17,7 @@ on:
     branches: [main]
     paths:
       - "src/**"
+      - "container/**"
       - "Containerfile"
       - "Containerfile.faster-whisper"
       - "Containerfile.canary"
@@ -54,6 +56,7 @@ jobs:
           filters: |
             generic:
               - 'src/**'
+              - 'container/**'
               - 'Containerfile'
               - '.containerignore'
               - 'pyproject.toml'
@@ -61,6 +64,7 @@ jobs:
               - '.github/workflows/container.yml'
             faster_whisper:
               - 'src/**'
+              - 'container/**'
               - 'pyproject.toml'
               - 'Containerfile.faster-whisper'
               - 'runtimes/faster-whisper/**'
@@ -68,6 +72,7 @@ jobs:
               - '.github/workflows/container.yml'
             canary:
               - 'src/**'
+              - 'container/**'
               - 'pyproject.toml'
               - 'Containerfile.canary'
               - 'runtimes/canary/**'
@@ -116,8 +121,16 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          load: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Smoke test arbitrary non-root UID
+        run: |
+          image="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.tags }}"
+          image="${image%%$'\n'*}"
+          docker run --rm --user 12345:0 --entrypoint /usr/local/bin/uid-entrypoint "$image" \
+            /app/.venv/bin/python -c "import os, pwd; print(pwd.getpwuid(os.getuid()))"
 
   build-faster-whisper:
     needs: changes
@@ -161,8 +174,16 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          load: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Smoke test arbitrary non-root UID
+        run: |
+          image="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-faster-whisper:${{ steps.meta.outputs.tags }}"
+          image="${image%%$'\n'*}"
+          docker run --rm --user 12345:0 --entrypoint /usr/local/bin/uid-entrypoint "$image" \
+            /app/.venv/bin/python -c "import os, pwd; print(pwd.getpwuid(os.getuid()))"
 
   build-canary:
     needs: changes
@@ -206,5 +227,13 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          load: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Smoke test arbitrary non-root UID
+        run: |
+          image="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-canary:${{ steps.meta.outputs.tags }}"
+          image="${image%%$'\n'*}"
+          docker run --rm --user 12345:0 --entrypoint /usr/local/bin/uid-entrypoint "$image" \
+            /app/.venv/bin/python -c "import os, pwd; print(pwd.getpwuid(os.getuid()))"

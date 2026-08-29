@@ -364,6 +364,20 @@ With all required artifacts mounted locally, inference performs no network acces
 
 ## Podman and Kubernetes
 
+All three runtime images run as an arbitrary non-root UID and resolve their
+identity through the shared `container/uid-entrypoint.sh` entrypoint. When the
+runtime UID or GID has no `/etc/passwd` or `/etc/group` entry (for example a
+Kubernetes/OpenShift-assigned UID such as `1000870000`), the entrypoint copies
+`/etc/passwd` and `/etc/group` into the writable `TMPDIR`, appends a synthetic
+`speech-transcriber` entry for the actual UID/GID, and preloads
+`libnss_wrapper.so` so `getpwuid()` and friends resolve the identity. This
+keeps `/etc/passwd` unmodified, requires no root at startup, and preserves
+OpenShift group-0 writable-directory compatibility. UIDs that already exist in
+`/etc/passwd` are used as-is. Each image installs the `libnss-wrapper` package
+(Debian/Ubuntu) and the entrypoint locates the installed `libnss_wrapper.so`
+under `/usr/lib` at runtime. The entrypoint preserves the existing contract:
+`ENTRYPOINT ["/usr/local/bin/uid-entrypoint", "/app/.venv/bin/python", "-m", "speech_transcriber"]` with `CMD ["--help"]`, so Argo `args:` lists are unchanged.
+
 Build the single non-root, arbitrary-UID compatible image:
 
 ```bash
@@ -386,7 +400,8 @@ The faster-whisper image is materially independent of the Transformers ASR stack
 only the `runtimes/faster-whisper/uv.lock` dependency set and the backend-neutral artifact code, and it
 bases on `nvidia/cuda:12.6.3-cudnn-runtime-ubuntu24.04` because CTranslate2 GPU wheels require
 CUDA 12 and cuDNN 9 at runtime. It supports the same `/models`, `/cache`, and `/work` mounts and
-the same arbitrary-UID execution model as the main image.
+the same arbitrary-UID execution model as the main image, including the shared
+`uid-entrypoint` NSS-wrapper identity resolution.
 
 The Canary image uses the verified
 `pytorch/pytorch:2.12.0-cuda13.2-cudnn9-runtime` base (Python 3.12, PyTorch
@@ -394,8 +409,10 @@ The Canary image uses the verified
 `runtimes/canary` NeMo ASR stack plus backend-neutral artifact code. The base
 owns Torch/CUDA/cuDNN; the build prunes the lock's transitive Torch wheel and
 its CUDA-library subtree before installing the remaining hash-locked NeMo
-requirements. A no-model build smoke test imports Torch, NeMo ASR, and the
-application, and verifies the expected Torch/CUDA family. The base tag exists
+requirements. A no-model build smoke test runs after `USER 1001` through the
+shared `uid-entrypoint`, imports Torch, NeMo ASR, and the application, verifies
+`pwd.getpwuid(os.getuid())` resolves under the non-root identity, and verifies
+the expected Torch/CUDA family. The base tag exists
 on Docker Hub and CUDA 13.2/PyTorch 2.12 is NeMo Speech 3.0.0's tested
 Blackwell-capable configuration. It does not contain pyannote, faster-whisper,
 or CTranslate2.
@@ -521,8 +538,11 @@ Markdown or deployment manifests, including `deploy/argo/**`, do not build an im
 or root package metadata changes build all compatible images. Generic `Containerfile`/root-lock changes
 build only the generic image; `Containerfile.faster-whisper` or `runtimes/faster-whisper/**` changes
 build only faster-whisper; `Containerfile.canary` or `runtimes/canary/**` changes build only Canary.
-Version-tag pushes and manual dispatch remain full build triggers, so an image-tag-only Argo update does
-not create a follow-up image build. Each image has its own immutable `sha-<commit>` tag namespace.
+Changes under `container/**` (the shared UID entrypoint) rebuild all three images. Each build job
+also runs the image with an arbitrary non-root UID (`--user 12345:0`) and verifies
+`pwd.getpwuid(os.getuid())` succeeds. Version-tag pushes and manual dispatch remain full build
+triggers, so an image-tag-only Argo update does not create a follow-up image build. Each image has
+its own immutable `sha-<commit>` tag namespace.
 
 Only `prepare` and the six recognition templates declare and mount `speech-model-cache` read-only
 at `/models`; validation, finalization, and publication pods do not depend on model storage.

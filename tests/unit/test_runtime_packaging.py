@@ -20,7 +20,8 @@ def test_canary_runtime_uses_byo_torch_and_build_smoke_test() -> None:
     assert "unsafe-best-match" not in container
     assert "--prune torch" in container
     assert "--no-deps --require-hashes" in container
-    assert "import nemo, nemo.collections.asr, speech_transcriber, torch" in container
+    assert "import os, pwd, nemo, nemo.collections.asr, speech_transcriber, torch" in container
+    assert "pwd.getpwuid(os.getuid())" in container
     assert "torch.version.cuda" in container
     assert "faster-whisper" not in runtime.read_text(encoding="utf-8")
     assert "ctranslate2" not in runtime.read_text(encoding="utf-8")
@@ -61,3 +62,4 @@ def test_ci_targets_only_the_changed_runtime_or_shared_source() -> None:
     assert "runtimes/canary/**" in workflow
     assert "needs.changes.outputs.faster_whisper == 'true'" in workflow
     assert "needs.changes.outputs.canary == 'true'" in workflow
+    assert "container/**" in workflow
