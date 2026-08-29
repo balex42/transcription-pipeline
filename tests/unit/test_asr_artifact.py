@@ -208,7 +208,7 @@ def test_finalization_rejects_a_recognition_for_another_recording(tmp_path: Path
                 "source_language": "de",
                 "target_language": "de",
                 "timestamps": True,
-                "long_form_mode": "native_dynamic_chunking",
+                "inference_mode": "sequential_non_overlapping_chunks",
             },
         ),
     ],

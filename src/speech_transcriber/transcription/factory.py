@@ -75,5 +75,11 @@ def create_transcriber(config: PipelineConfig, device: str) -> Transcriber:
     if config.asr_backend == "canary":
         from speech_transcriber.transcription.canary import CanaryTranscriber
 
-        return CanaryTranscriber(model, device, config.language)
+        return CanaryTranscriber(
+            model,
+            device,
+            config.language,
+            config.canary_chunk_duration_seconds,
+            working_directory=config.working_directory,
+        )
     raise AssertionError("validated backend did not match a registered adapter")

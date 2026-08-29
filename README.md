@@ -44,7 +44,7 @@ Audio segmentation is not part of the generic pipeline. Each ASR backend owns it
 - `nemotron`: `nvidia/nemotron-3.5-asr-streaming-0.6b`. Native Transformers RNNT cache-aware streaming, explicit language conditioning, native token emission timestamps, and internal token-to-word aggregation. Batch transcription defaults to 13 lookahead tokens (1.12s latency) for the model's highest-accuracy streaming configuration. It does not issue independent ASR requests for long-form audio.
 - `voxtral`: `mistralai/Voxtral-Mini-4B-Realtime-2602`. Native Transformers cache-aware streaming in one continuous `generate()` session using processor-defined buffers and EOF padding. `[STREAMING_WORD]` token positions provide approximate emission-group end times; starts remain unset for speaker alignment to infer.
 - `faster-whisper`: `Systran/faster-whisper-large-v3`. A distinct heterogeneous runtime using the native `faster-whisper` / CTranslate2 stack, not Transformers. It is not a restoration of the previously removed Transformers Whisper backend. Native word start/end timestamps and word probabilities map directly to canonical `ASRWord` records; no forced alignment is used. GPU recognition defaults to `float16` compute type; VAD is disabled by default (`vad_filter=False`) because the pipeline already normalizes the full recording and diarizes it separately with pyannote. The configured language is reduced to a Whisper base code (`de-DE` -> `de`); without a language, the model detects it and the detected language/probability is recorded in backend metadata.
-- `canary`: `nvidia/canary-1b-v2` (CC BY 4.0). A distinct NVIDIA NeMo / PyTorch batch recognition runtime for multilingual ASR, including German (`de`). It performs transcription only: `source_lang` and `target_lang` are both the normalized configured language. Native `Hypothesis.timestamp["word"]` records provide absolute `word`, `start`, and `end` values, including punctuation/capitalization; Canary exposes no stable native per-word confidence, so canonical confidence is `null`. No forced alignment, translation, speaker attribution, or manual timestamp de-duplication is used. NeMo's supported one-file, `batch_size=1` dynamic long-form chunking (one-second overlap) is retained, including its native overlap handling and absolute merged timestamps.
+- `canary`: `nvidia/canary-1b-v2` (CC BY 4.0). A distinct NVIDIA NeMo / PyTorch batch recognition runtime for multilingual ASR, including German (`de`). It performs transcription only: `source_lang` and `target_lang` are both the normalized configured language. The adapter splits the normalized WAV into deterministic non-overlapping PCM chunks (default 10 seconds, exact frame boundaries), transcribes them sequentially with a single model load, and rebases native `Hypothesis.timestamp["word"]` records to recording-global `word`, `start`, and `end` values, including punctuation/capitalization; Canary exposes no stable native per-word confidence, so canonical confidence is `null`. No forced alignment, translation, speaker attribution, or manual timestamp de-duplication is used.
 - Diarization: `pyannote/speaker-diarization-community-1` runs once over the normalized full recording.
 
 Nemotron word intervals are aggregates of RNNT token emission times, not manually aligned acoustic boundaries. Leading-space tokenizer markers start words; trailing punctuation attaches to the preceding word; opening punctuation attaches to the following lexical token.
@@ -158,6 +158,7 @@ PARAKEET_SEGMENT_OVERLAP
 QWEN_SEGMENT_DURATION
 QWEN_SEGMENT_OVERLAP
 NEMOTRON_NUM_LOOKAHEAD_TOKENS
+CANARY_CHUNK_DURATION
 VOXTRAL_DELAY_MS
 VOXTRAL_TIMESTAMP_OFFSET_TOKENS
 FASTER_WHISPER_COMPUTE_TYPE
@@ -173,7 +174,7 @@ HF_HOME
 HF_TOKEN
 ```
 
-Equivalent CLI flags include `--parakeet-segment-duration`, `--qwen-segment-duration`, `--nemotron-num-lookahead-tokens`, and `--faster-whisper-compute-type`. There is intentionally no global `--chunk-duration` or `CHUNK_DURATION`: those old settings were removed because they incorrectly coupled backend implementations.
+Equivalent CLI flags include `--parakeet-segment-duration`, `--qwen-segment-duration`, `--nemotron-num-lookahead-tokens`, `--faster-whisper-compute-type`, and `--canary-chunk-duration`. There is intentionally no global `--chunk-duration` or `CHUNK_DURATION`: those old settings were removed because they incorrectly coupled backend implementations.
 
 Nemotron validates an explicit lookahead through the loaded processor. Batch transcription defaults to 13 lookahead tokens; set `NEMOTRON_NUM_LOOKAHEAD_TOKENS` or `--nemotron-num-lookahead-tokens` to select another supported latency/accuracy trade-off. The checkpoint derives its first/subsequent streaming buffer sizes and latency from model/processor configuration.
 
@@ -181,7 +182,9 @@ Voxtral derives its first/subsequent buffers, transcript delay, and right EOF pa
 
 Faster Whisper uses the configured `FASTER_WHISPER_COMPUTE_TYPE` (default `float16`) and records the requested language, compute type, word-timestamp mode, VAD setting, and detected language/probability in backend metadata. Its runtime provenance identifies `faster-whisper` with `ctranslate2` and `huggingface_hub` component versions; Transformers-specific provenance fields remain `unknown`.
 
-Canary records `timestamps=true`, `batch_size=1`, `long_form_mode=native_dynamic_chunking`, requested language, normalized source language, and same-language ASR target language. Its generic runtime provenance is `nemo` with installed `nemo-toolkit`, PyTorch, and CUDA versions.
+Canary records `timestamps=true`, `batch_size=1`, `inference_mode=sequential_non_overlapping_chunks`, the configured `chunk_duration_seconds` (default 10.0, override with `--canary-chunk-duration` or `CANARY_CHUNK_DURATION`), `chunk_count`, requested language, normalized source language, and same-language ASR target language. Its generic runtime provenance is `nemo` with installed `nemo-toolkit`, PyTorch, and CUDA versions.
+
+Canary recognition uses exactly one inference path for every recording length. The normalized 16 kHz mono PCM WAV is split into deterministic non-overlapping chunks by exact frame arithmetic (`frames_per_chunk = round(chunk_duration * 16000)`); the model is loaded once and each chunk is transcribed sequentially with native word timestamps rebased to recording-global positions (`chunk_start_frame / sample_rate + local_timestamp`). Recordings shorter than one chunk produce a single short chunk through identical machinery. Chunk boundaries depend only on audio frames, never on diarization. Canary records `inference_mode=sequential_non_overlapping_chunks` rather than `native_dynamic_chunking` because the application performs the chunking.
 
 ## Output and Metrics
 
@@ -203,7 +206,7 @@ comparison/
 └── canary/
 ```
 
-Each backend metadata file records model/device/dtype, load time, ASR time, total backend time, RTF, peak CUDA memory, backend configuration, and backend-specific metrics. Forced-alignment backends record recognition, recognizer release, aligner load, alignment, and aligner release timings; Qwen also records interpolated timestamps plus clipped/dropped trailing-boundary words and their maximum overflow. Nemotron records language, lookahead, streaming latency, and `stream_buffers_processed`; Voxtral records native delay, right padding, stream buffer counts, and any `inferred_final_emission_groups` used for an unmarked EOF tail. Faster Whisper records the resolved cached model path, detected language/probability, and its CTranslate2 runtime provenance. Canary records its local `.nemo` filename, native dynamic-chunking configuration, source/target languages, word count, and NeMo/PyTorch/CUDA provenance.
+Each backend metadata file records model/device/dtype, load time, ASR time, total backend time, RTF, peak CUDA memory, backend configuration, and backend-specific metrics. Forced-alignment backends record recognition, recognizer release, aligner load, alignment, and aligner release timings; Qwen also records interpolated timestamps plus clipped/dropped trailing-boundary words and their maximum overflow. Nemotron records language, lookahead, streaming latency, and `stream_buffers_processed`; Voxtral records native delay, right padding, stream buffer counts, and any `inferred_final_emission_groups` used for an unmarked EOF tail. Faster Whisper records the resolved cached model path, detected language/probability, and its CTranslate2 runtime provenance. Canary records its local `.nemo` filename, sequential non-overlapping chunk configuration (mode, chunk duration, chunk count), source/target languages, word count, and NeMo/PyTorch/CUDA provenance.
 
 With `--keep-intermediate`, generic diarization, ASR words, and attributed words are retained under `OUTPUT/intermediate`. Backend-specific state remains internal and is never added to the canonical transcript schema.
 
@@ -332,8 +335,7 @@ reads from the same cache, so no separate tokenizer repository is prefetched. Th
 converted from Transformers format at runtime; the Systran CTranslate2 repository is used directly.
 Canary prefetches only `nvidia/canary-1b-v2`; its repository contains the required
 `canary-1b-v2.nemo` checkpoint, including NeMo's timestamp alignment component. Do not strip
-timestamp files from the checkpoint: they are required for native word timestamps and long-form
-dynamic chunking.
+timestamp files from the checkpoint: they are required for native word timestamps.
 
 Also obtain the accepted pyannote artifact through the approved process. Transfer approved artifacts and externally generated checksums through the air gap. A production volume can use:
 

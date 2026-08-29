@@ -116,6 +116,11 @@ def _add_runtime_options(parser: argparse.ArgumentParser, include_asr: bool) -> 
         choices=FASTER_WHISPER_COMPUTE_TYPES,
         help="faster-whisper CTranslate2 compute type (default: float16)",
     )
+    parser.add_argument(
+        "--canary-chunk-duration",
+        type=float,
+        help="Canary sequential chunk duration in seconds (default: 10)",
+    )
     parser.add_argument("--language", help="ASR language locale (default: de-DE)")
     parser.add_argument("--num-speakers", type=int)
     parser.add_argument("--min-speakers", type=int)
@@ -162,6 +167,11 @@ def _add_transcribe_prepared_options(parser: argparse.ArgumentParser) -> None:
         "--faster-whisper-compute-type",
         choices=FASTER_WHISPER_COMPUTE_TYPES,
         help="faster-whisper CTranslate2 compute type (default: float16)",
+    )
+    parser.add_argument(
+        "--canary-chunk-duration",
+        type=float,
+        help="Canary sequential chunk duration in seconds (default: 10)",
     )
     parser.add_argument(
         "--language", help="ASR language locale (default: prepared artifact language)"
@@ -324,6 +334,7 @@ def _config_from_args(
         "voxtral_delay_ms": getattr(args, "voxtral_delay_ms", None),
         "voxtral_timestamp_offset_tokens": getattr(args, "voxtral_timestamp_offset_tokens", None),
         "faster_whisper_compute_type": getattr(args, "faster_whisper_compute_type", None),
+        "canary_chunk_duration_seconds": getattr(args, "canary_chunk_duration", None),
         "language": language if language is not None else getattr(args, "language", None),
         "num_speakers": getattr(args, "num_speakers", None),
         "min_speakers": getattr(args, "min_speakers", None),

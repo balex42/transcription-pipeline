@@ -65,6 +65,22 @@ def test_factory_selects_adapter_and_default_model(
         assert transcriber.capabilities == TranscriberCapabilities(True, True, True, True)
         assert transcriber.source_language == "de"
         assert transcriber.target_language == "de"
+        assert transcriber.chunk_duration_seconds == 10.0
+
+
+def test_canary_chunk_duration_from_config_is_passed_to_adapter() -> None:
+    transcriber = create_transcriber(
+        PipelineConfig(
+            Path("in.wav"),
+            Path("out"),
+            Path("work"),
+            asr_backend="canary",
+            canary_chunk_duration_seconds=15.0,
+        ),
+        "cuda",
+    )
+    assert transcriber.chunk_duration_seconds == 15.0
+    assert transcriber.working_directory == Path("work")
 
 
 def test_voxtral_delay_from_config_is_passed_to_adapter() -> None:

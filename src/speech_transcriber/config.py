@@ -23,6 +23,7 @@ DEFAULT_FASTER_WHISPER_MODEL = "Systran/faster-whisper-large-v3"
 DEFAULT_FASTER_WHISPER_COMPUTE_TYPE = "float16"
 FASTER_WHISPER_COMPUTE_TYPES = ("float16", "bfloat16", "float32", "int8", "int8_float16")
 DEFAULT_CANARY_MODEL = "nvidia/canary-1b-v2"
+DEFAULT_CANARY_CHUNK_DURATION_SECONDS = 10.0
 DEFAULT_PYANNOTE_MODEL = "pyannote/speaker-diarization-community-1"
 ASR_BACKENDS = ("parakeet", "qwen", "nemotron", "voxtral", "faster-whisper", "canary")
 COMPARE_BACKENDS = ("parakeet", "qwen", "nemotron", "voxtral")
@@ -106,6 +107,7 @@ class PipelineConfig:
     voxtral_delay_ms: int = DEFAULT_VOXTRAL_DELAY_MS
     voxtral_timestamp_offset_tokens: int = DEFAULT_VOXTRAL_TIMESTAMP_OFFSET_TOKENS
     faster_whisper_compute_type: str = DEFAULT_FASTER_WHISPER_COMPUTE_TYPE
+    canary_chunk_duration_seconds: float = DEFAULT_CANARY_CHUNK_DURATION_SECONDS
     language: str = "de-DE"
     num_speakers: int | None = None
     min_speakers: int | None = None
@@ -136,6 +138,8 @@ class PipelineConfig:
                 "faster_whisper_compute_type must be one of: "
                 + ", ".join(FASTER_WHISPER_COMPUTE_TYPES)
             )
+        if self.canary_chunk_duration_seconds <= 0:
+            raise ValueError("canary_chunk_duration_seconds must be positive")
         if not self.language:
             raise ValueError("language must not be empty")
         if self.num_speakers is not None and self.num_speakers < 1:
@@ -255,6 +259,11 @@ class PipelineConfig:
                 else voxtral_timestamp_offset
             ),
             faster_whisper_compute_type=faster_whisper_compute_type,
+            canary_chunk_duration_seconds=choose_float(
+                "canary_chunk_duration_seconds",
+                "CANARY_CHUNK_DURATION",
+                DEFAULT_CANARY_CHUNK_DURATION_SECONDS,
+            ),
             language=choose("language", "LANGUAGE", "de-DE"),
             num_speakers=choose_int("num_speakers", "NUM_SPEAKERS"),
             min_speakers=choose_int("min_speakers", "MIN_SPEAKERS"),

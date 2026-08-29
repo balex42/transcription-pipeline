@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from speech_transcriber.config import (
+    DEFAULT_CANARY_CHUNK_DURATION_SECONDS,
     DEFAULT_CANARY_MODEL,
     DEFAULT_FASTER_WHISPER_COMPUTE_TYPE,
     DEFAULT_FASTER_WHISPER_MODEL,
@@ -41,6 +42,22 @@ def test_environment_backend_and_default_model_mapping() -> None:
 def test_faster_whisper_uses_float16_compute_type_by_default() -> None:
     config = make({"asr_backend": "faster-whisper"})
     assert config.faster_whisper_compute_type == DEFAULT_FASTER_WHISPER_COMPUTE_TYPE
+
+
+def test_canary_uses_ten_second_chunks_by_default() -> None:
+    config = make({"asr_backend": "canary"})
+    assert config.canary_chunk_duration_seconds == DEFAULT_CANARY_CHUNK_DURATION_SECONDS
+
+
+def test_canary_chunk_duration_allows_an_override() -> None:
+    assert make({}, {"CANARY_CHUNK_DURATION": "20"}).canary_chunk_duration_seconds == 20.0
+    assert make({"canary_chunk_duration_seconds": 15.5}).canary_chunk_duration_seconds == 15.5
+
+
+@pytest.mark.parametrize("duration", [0, -5])
+def test_canary_rejects_nonpositive_chunk_duration(duration: float) -> None:
+    with pytest.raises(ValueError, match="canary_chunk_duration_seconds"):
+        make({"asr_backend": "canary", "canary_chunk_duration_seconds": duration})
 
 
 def test_faster_whisper_compute_type_allows_an_override() -> None:

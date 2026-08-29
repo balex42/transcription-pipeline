@@ -9,13 +9,19 @@ from speech_transcriber.prepared import PreparedRecording, sha256_file, write_pr
 
 
 def test_recognize_prepared_canary_imports_no_unrelated_asr_runtime(tmp_path: Path) -> None:
+    import wave
+
     normalized = tmp_path / "normalized.wav"
-    normalized.write_bytes(b"normalized audio")
+    with wave.open(str(normalized), "wb") as target:
+        target.setnchannels(1)
+        target.setsampwidth(2)
+        target.setframerate(16000)
+        target.writeframes(b"\x00\x00" * 16000)
     prepared = tmp_path / "prepared"
     write_prepared_recording(
         PreparedRecording(
-            audio=NormalizedAudio(normalized, AudioMetadata("meeting.wav", 45.0)),
-            diarization=[DiarizationSegment("SPEAKER_00", 0.0, 45.0)],
+            audio=NormalizedAudio(normalized, AudioMetadata("meeting.wav", 1.0)),
+            diarization=[DiarizationSegment("SPEAKER_00", 0.0, 1.0)],
             work_directory=tmp_path,
             normalized_audio_sha256=sha256_file(normalized),
             diarization_model="pyannote/test",
