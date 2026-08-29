@@ -37,7 +37,8 @@ RUN /bin/uv venv --python python --system-site-packages /app/.venv
 RUN /bin/uv export --frozen --no-dev --extra canary-runtime --no-emit-project \
     --format requirements-txt --emit-index-url --output-file /tmp/requirements.txt
 
-RUN UV_CACHE_DIR=/tmp/uv-cache /bin/uv pip install --python /app/.venv/bin/python \
+# The CUDA index is incomplete; locked hashes still constrain cross-index resolution.
+RUN UV_CACHE_DIR=/tmp/uv-cache /bin/uv pip install --index-strategy unsafe-best-match --python /app/.venv/bin/python \
     --require-hashes -r /tmp/requirements.txt
 
 RUN /bin/uv pip install --python /app/.venv/bin/python --no-deps . \
