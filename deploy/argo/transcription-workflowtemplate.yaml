@@ -52,8 +52,7 @@ spec:
                   value: "{{workflow.parameters.backends}}"
 
           - name: prepare
-            dependencies:
-              - validate-backends
+            depends: "validate-backends.Succeeded"
             template: prepare
             arguments:
               artifacts:
@@ -62,8 +61,7 @@ spec:
 
           - name: publish-source
             # Source publication is CPU-only and intentionally overlaps prepare after validation.
-            dependencies:
-              - validate-backends
+            depends: "validate-backends.Succeeded"
             template: publish-source
             arguments:
               artifacts:
@@ -71,8 +69,7 @@ spec:
                   from: "{{inputs.artifacts.recording}}"
 
           - name: transcribe-parakeet
-            dependencies:
-              - prepare
+            depends: "prepare.Succeeded"
             when: "{{tasks.validate-backends.outputs.parameters.run_parakeet}} == true"
             template: transcribe-parakeet
             arguments:
@@ -92,8 +89,7 @@ spec:
                   from: "{{tasks.transcribe-parakeet.outputs.artifacts.result}}"
 
           - name: transcribe-qwen
-            dependencies:
-              - prepare
+            depends: "prepare.Succeeded"
             when: "{{tasks.validate-backends.outputs.parameters.run_qwen}} == true"
             template: transcribe-qwen
             arguments:
@@ -113,8 +109,7 @@ spec:
                   from: "{{tasks.transcribe-qwen.outputs.artifacts.result}}"
 
           - name: transcribe-nemotron
-            dependencies:
-              - prepare
+            depends: "prepare.Succeeded"
             when: "{{tasks.validate-backends.outputs.parameters.run_nemotron}} == true"
             template: transcribe-nemotron
             arguments:
@@ -134,8 +129,7 @@ spec:
                   from: "{{tasks.transcribe-nemotron.outputs.artifacts.result}}"
 
           - name: transcribe-voxtral
-            dependencies:
-              - prepare
+            depends: "prepare.Succeeded"
             when: "{{tasks.validate-backends.outputs.parameters.run_voxtral}} == true"
             template: transcribe-voxtral
             arguments:
