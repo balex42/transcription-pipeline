@@ -12,18 +12,18 @@ spec:
     parameters:
       - name: application_image
         # Keep all Python runtime images on one schema-v2-compatible release.
-        value: ghcr.io/balex42/transcription-pipeline:sha-9119123
+        value: ghcr.io/balex42/transcription-pipeline:sha-d6e4bde
       # Production and air-gapped deployments should mirror and pin this utility image internally.
       - name: utility_image
         value: python:3.11-alpine
       - name: parakeet_image
-        value: ghcr.io/balex42/transcription-pipeline:sha-9119123
+        value: ghcr.io/balex42/transcription-pipeline:sha-d6e4bde
       - name: qwen_image
-        value: ghcr.io/balex42/transcription-pipeline:sha-9119123
+        value: ghcr.io/balex42/transcription-pipeline:sha-d6e4bde
       - name: nemotron_image
-        value: ghcr.io/balex42/transcription-pipeline:sha-9119123
+        value: ghcr.io/balex42/transcription-pipeline:sha-d6e4bde
       - name: voxtral_image
-        value: ghcr.io/balex42/transcription-pipeline:sha-9119123
+        value: ghcr.io/balex42/transcription-pipeline:sha-d6e4bde
       - name: backends
         value: '["parakeet"]'
 
