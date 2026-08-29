@@ -176,35 +176,52 @@ def whisper_language(language: str | None) -> str | None:
 
 
 def resolve_model_path(model: str) -> str:
-    """Resolve a model reference to a local cached snapshot when possible.
+    """Resolve a model reference to the active local Hugging Face snapshot.
 
-    The production model cache is read-only during inference, so the cached
-    snapshot path is resolved once and passed directly to ``WhisperModel``.
-    When ``HF_HUB_OFFLINE=1`` and the model is not cached, fail explicitly
-    instead of silently falling back to a repository ID.
+    Hugging Face stores branch refs such as ``main`` under ``refs/`` and model
+    contents under commit-named ``snapshots/`` directories. Resolve that ref
+    explicitly so a cache with multiple historical snapshots remains
+    deterministic in air-gapped operation. If no usable snapshot can be found
+    while offline, fail instead of passing a repository-cache root to
+    CTranslate2.
     """
     if Path(model).is_absolute():
         return model
+
     cache_root = os.environ.get("HF_HOME")
     if not cache_root:
         return model
+
     repo_dir = Path(cache_root) / "hub" / f"models--{model.replace('/', '--')}"
+    offline = os.environ.get("HF_HUB_OFFLINE") == "1"
     if not repo_dir.is_dir():
-        if os.environ.get("HF_HUB_OFFLINE") == "1":
+        if offline:
             raise ModelLoadError(
                 f"required faster-whisper model {model!r} is not present in the offline cache "
                 f"under {repo_dir}"
             )
         return model
+
     snapshots = repo_dir / "snapshots"
+    ref = repo_dir / "refs" / "main"
+    if ref.is_file():
+        revision = ref.read_text(encoding="utf-8").strip()
+        if revision and Path(revision).name == revision:
+            snapshot = snapshots / revision
+            if snapshot.is_dir():
+                return str(snapshot)
+
     if snapshots.is_dir():
-        main = snapshots / "main"
-        if main.is_dir():
-            return str(main)
-        revisions = [path for path in snapshots.iterdir() if path.is_dir()]
+        revisions = sorted(path for path in snapshots.iterdir() if path.is_dir())
         if len(revisions) == 1:
             return str(revisions[0])
-    return str(repo_dir)
+
+    if offline:
+        raise ModelLoadError(
+            f"required faster-whisper model {model!r} has no resolvable cached snapshot "
+            f"under {repo_dir}"
+        )
+    return model
 
 
 def flatten_segment_words(segments: list[Any]) -> list[ASRWord]:
