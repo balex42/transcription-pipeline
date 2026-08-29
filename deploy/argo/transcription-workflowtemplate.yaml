@@ -12,6 +12,7 @@ spec:
     parameters:
       - name: application_image
         value: ghcr.io/balex42/transcription-pipeline:sha-b6b6d90
+      # Production and air-gapped deployments should mirror and pin this utility image internally.
       - name: utility_image
         value: python:3.11-alpine
       - name: parakeet_image
@@ -322,8 +323,17 @@ spec:
             artifactGC:
               strategy: Never
             s3:
+              endpoint: rustfs-svc.rustfs.svc.cluster.local:9000
+              insecure: true
+              addressingStyle: path
               bucket: transcription-data
               key: jobs/{{workflow.uid}}/source/
+              accessKeySecret:
+                name: rustfs-s3
+                key: accessKey
+              secretKeySecret:
+                name: rustfs-s3
+                key: secretKey
 
       container:
         image: "{{workflow.parameters.utility_image}}"
@@ -356,8 +366,17 @@ spec:
             artifactGC:
               strategy: Never
             s3:
+              endpoint: rustfs-svc.rustfs.svc.cluster.local:9000
+              insecure: true
+              addressingStyle: path
               bucket: transcription-data
               key: jobs/{{workflow.uid}}/{{inputs.parameters.backend}}/
+              accessKeySecret:
+                name: rustfs-s3
+                key: accessKey
+              secretKeySecret:
+                name: rustfs-s3
+                key: secretKey
 
       container:
         image: "{{workflow.parameters.utility_image}}"
