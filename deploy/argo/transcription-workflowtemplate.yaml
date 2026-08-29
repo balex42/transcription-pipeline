@@ -12,8 +12,8 @@ spec:
     parameters:
       - name: image
         value: ghcr.io/balex42/transcription-pipeline:sha-b6b6d90
-      - name: backend
-        value: parakeet
+      - name: backends
+        value: '["parakeet"]'
 
     artifacts:
       - name: recording
@@ -44,27 +44,20 @@ spec:
                 - name: recording
                   from: "{{inputs.artifacts.recording}}"
 
-          - name: transcribe
+          - name: backend
             dependencies:
               - prepare
-            template: transcribe-prepared
+            template: backend-pipeline
+            withParam: "{{workflow.parameters.backends}}"
             arguments:
               parameters:
                 - name: backend
-                  value: "{{workflow.parameters.backend}}"
+                  value: "{{item}}"
               artifacts:
                 - name: prepared
                   from: "{{tasks.prepare.outputs.artifacts.prepared}}"
-          - name: publish
-            dependencies:
-              - transcribe
-            template: publish
-            arguments:
-              artifacts:
                 - name: recording
                   from: "{{inputs.artifacts.recording}}"
-                - name: result
-                  from: "{{tasks.transcribe.outputs.artifacts.result}}"
 
     - name: prepare
       inputs:
@@ -120,8 +113,43 @@ spec:
           - name: work
             mountPath: /work
 
+    - name: backend-pipeline
+      inputs:
+        parameters:
+          - name: backend
+        artifacts:
+          - name: prepared
+          - name: recording
+
+      dag:
+        tasks:
+          - name: transcribe
+            template: transcribe-prepared
+            arguments:
+              parameters:
+                - name: backend
+                  value: "{{inputs.parameters.backend}}"
+              artifacts:
+                - name: prepared
+                  from: "{{inputs.artifacts.prepared}}"
+          - name: publish
+            dependencies:
+              - transcribe
+            template: publish
+            arguments:
+              parameters:
+                - name: backend
+                  value: "{{inputs.parameters.backend}}"
+              artifacts:
+                - name: recording
+                  from: "{{inputs.artifacts.recording}}"
+                - name: result
+                  from: "{{tasks.transcribe.outputs.artifacts.result}}"
+
     - name: publish
       inputs:
+        parameters:
+          - name: backend
         artifacts:
           - name: recording
             path: /work/published/source/recording
@@ -140,7 +168,7 @@ spec:
             artifactGC:
               strategy: Never
             s3:
-              key: transcription-data/jobs/{{workflow.uid}}/
+              key: transcription-data/jobs/{{workflow.uid}}/{{inputs.parameters.backend}}/
 
       container:
         image: "{{workflow.parameters.image}}"
