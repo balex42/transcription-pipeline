@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import shutil
 import time
 from collections.abc import Callable, Iterable
@@ -24,6 +25,7 @@ from speech_transcriber.diarization.pyannote import PyannoteDiarizer
 from speech_transcriber.exporters.json import JsonTranscriptExporter
 from speech_transcriber.exporters.text import TextTranscriptExporter
 from speech_transcriber.models import (
+    ASRRecognitionResult,
     ASRRunMetadata,
     ASRWord,
     AttributedWord,
@@ -31,6 +33,7 @@ from speech_transcriber.models import (
     DiarizationSegment,
     NormalizedAudio,
     PipelineResult,
+    RuntimeProvenance,
     Transcript,
 )
 from speech_transcriber.runtime.device import (
@@ -147,7 +150,17 @@ class TranscriptionPipeline:
         backend: str,
         output_directory: Path,
     ) -> tuple[PipelineResult, ASRRunMetadata]:
-        """Run one ASR backend over prepared recording data and export its result."""
+        """Convenient local composition of recognition and backend-neutral finalization."""
+        recognition = self.recognize_prepared(prepared, transcriber, backend)
+        return self.finalize_prepared(prepared, recognition, output_directory), recognition.metadata
+
+    def recognize_prepared(
+        self,
+        prepared: PreparedRecording,
+        transcriber: Transcriber,
+        backend: str,
+    ) -> ASRRecognitionResult:
+        """Run one backend and return portable ASR words with operational provenance."""
         self._stage("transcribe")
         reset_peak_cuda_memory(getattr(transcriber, "device", self.config.device))
         total_started = time.monotonic()
@@ -172,29 +185,7 @@ class TranscriptionPipeline:
         finally:
             release_model(transcriber)
         total_seconds = time.monotonic() - total_started
-        self._stage("align")
-        attributed = self.aligner.align(words, prepared.diarization)
-        self._stage("turns")
-        turns = self.turn_builder.build(attributed)
-        speakers = sorted({word.speaker for word in attributed if word.speaker != UNKNOWN_SPEAKER})
-        transcript = Transcript(
-            metadata=prepared.audio.metadata,
-            asr_backend=backend,
-            asr_model=transcriber.model_reference,
-            diarization_model=prepared.diarization_model or self.config.pyannote_model,
-            speakers=speakers,
-            words=attributed,
-            turns=turns,
-            language=prepared.language or self.config.language,
-        )
-        result = PipelineResult(
-            transcript=transcript,
-            diarization=prepared.diarization,
-            asr_words=words,
-            output_directory=output_directory,
-        )
-        self._export(result, output_directory)
-        metrics = ASRRunMetadata(
+        metadata = ASRRunMetadata(
             backend=backend,
             model=transcriber.model_reference,
             device=getattr(transcriber, "device", self.config.device),
@@ -208,12 +199,58 @@ class TranscriptionPipeline:
             peak_cuda_memory_reserved_bytes=reserved,
             transformers_version=_package_version("transformers"),
             torch_version=_package_version("torch"),
+            runtime=RuntimeProvenance(
+                name="python",
+                version=_package_version("speech-transcriber"),
+                components={
+                    "torch": _package_version("torch"),
+                    "transformers": _package_version("transformers"),
+                },
+            ),
             backend_metrics=getattr(transcriber, "backend_metrics", {}),
             backend_models=getattr(transcriber, "backend_models", {}),
             backend_configuration=getattr(transcriber, "backend_configuration", {}),
         )
-        LOGGER.info("ASR backend complete", extra=asdict(metrics))
-        return result, metrics
+        LOGGER.info("ASR backend complete", extra=asdict(metadata))
+        return ASRRecognitionResult(words=words, metadata=metadata)
+
+    def finalize_prepared(
+        self,
+        prepared: PreparedRecording,
+        recognition: ASRRecognitionResult,
+        output_directory: Path,
+    ) -> PipelineResult:
+        """Build and export a transcript from prepared and backend-neutral ASR artifacts."""
+        if not math.isclose(
+            recognition.metadata.audio_duration_seconds,
+            prepared.audio.metadata.duration_seconds,
+            rel_tol=0.0,
+            abs_tol=0.001,
+        ):
+            raise ValueError("ASR artifact audio duration does not match the prepared recording")
+        self._stage("align")
+        attributed = self.aligner.align(recognition.words, prepared.diarization)
+        self._stage("turns")
+        turns = self.turn_builder.build(attributed)
+        speakers = sorted({word.speaker for word in attributed if word.speaker != UNKNOWN_SPEAKER})
+        transcript = Transcript(
+            metadata=prepared.audio.metadata,
+            asr_backend=recognition.metadata.backend,
+            asr_model=recognition.metadata.model,
+            diarization_model=prepared.diarization_model or self.config.pyannote_model,
+            speakers=speakers,
+            words=attributed,
+            turns=turns,
+            language=prepared.language or self.config.language,
+        )
+        result = PipelineResult(
+            transcript=transcript,
+            diarization=prepared.diarization,
+            asr_words=recognition.words,
+            output_directory=output_directory,
+        )
+        self._export(result, output_directory)
+        return result
 
     def _export(self, result: PipelineResult, output_directory: Path) -> None:
         self._stage("export")

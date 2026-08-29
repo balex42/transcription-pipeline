@@ -68,17 +68,30 @@ spec:
                 - name: recording
                   from: "{{inputs.artifacts.recording}}"
 
-          - name: transcribe-parakeet
+          - name: recognize-parakeet
             depends: "prepare.Succeeded"
             when: "{{tasks.validate-backends.outputs.parameters.run_parakeet}} == true"
-            template: transcribe-parakeet
+            template: recognize-parakeet
             arguments:
               artifacts:
                 - name: prepared
                   from: "{{tasks.prepare.outputs.artifacts.prepared}}"
 
+          - name: finalize-parakeet
+            depends: "recognize-parakeet.Succeeded"
+            template: finalize
+            arguments:
+              parameters:
+                - name: backend
+                  value: parakeet
+              artifacts:
+                - name: prepared
+                  from: "{{tasks.prepare.outputs.artifacts.prepared}}"
+                - name: asr
+                  from: "{{tasks.recognize-parakeet.outputs.artifacts.asr}}"
+
           - name: publish-parakeet
-            depends: "transcribe-parakeet.Succeeded"
+            depends: "finalize-parakeet.Succeeded"
             template: publish
             arguments:
               parameters:
@@ -86,19 +99,32 @@ spec:
                   value: parakeet
               artifacts:
                 - name: result
-                  from: "{{tasks.transcribe-parakeet.outputs.artifacts.result}}"
+                  from: "{{tasks.finalize-parakeet.outputs.artifacts.result}}"
 
-          - name: transcribe-qwen
+          - name: recognize-qwen
             depends: "prepare.Succeeded"
             when: "{{tasks.validate-backends.outputs.parameters.run_qwen}} == true"
-            template: transcribe-qwen
+            template: recognize-qwen
             arguments:
               artifacts:
                 - name: prepared
                   from: "{{tasks.prepare.outputs.artifacts.prepared}}"
 
+          - name: finalize-qwen
+            depends: "recognize-qwen.Succeeded"
+            template: finalize
+            arguments:
+              parameters:
+                - name: backend
+                  value: qwen
+              artifacts:
+                - name: prepared
+                  from: "{{tasks.prepare.outputs.artifacts.prepared}}"
+                - name: asr
+                  from: "{{tasks.recognize-qwen.outputs.artifacts.asr}}"
+
           - name: publish-qwen
-            depends: "transcribe-qwen.Succeeded"
+            depends: "finalize-qwen.Succeeded"
             template: publish
             arguments:
               parameters:
@@ -106,19 +132,32 @@ spec:
                   value: qwen
               artifacts:
                 - name: result
-                  from: "{{tasks.transcribe-qwen.outputs.artifacts.result}}"
+                  from: "{{tasks.finalize-qwen.outputs.artifacts.result}}"
 
-          - name: transcribe-nemotron
+          - name: recognize-nemotron
             depends: "prepare.Succeeded"
             when: "{{tasks.validate-backends.outputs.parameters.run_nemotron}} == true"
-            template: transcribe-nemotron
+            template: recognize-nemotron
             arguments:
               artifacts:
                 - name: prepared
                   from: "{{tasks.prepare.outputs.artifacts.prepared}}"
 
+          - name: finalize-nemotron
+            depends: "recognize-nemotron.Succeeded"
+            template: finalize
+            arguments:
+              parameters:
+                - name: backend
+                  value: nemotron
+              artifacts:
+                - name: prepared
+                  from: "{{tasks.prepare.outputs.artifacts.prepared}}"
+                - name: asr
+                  from: "{{tasks.recognize-nemotron.outputs.artifacts.asr}}"
+
           - name: publish-nemotron
-            depends: "transcribe-nemotron.Succeeded"
+            depends: "finalize-nemotron.Succeeded"
             template: publish
             arguments:
               parameters:
@@ -126,19 +165,32 @@ spec:
                   value: nemotron
               artifacts:
                 - name: result
-                  from: "{{tasks.transcribe-nemotron.outputs.artifacts.result}}"
+                  from: "{{tasks.finalize-nemotron.outputs.artifacts.result}}"
 
-          - name: transcribe-voxtral
+          - name: recognize-voxtral
             depends: "prepare.Succeeded"
             when: "{{tasks.validate-backends.outputs.parameters.run_voxtral}} == true"
-            template: transcribe-voxtral
+            template: recognize-voxtral
             arguments:
               artifacts:
                 - name: prepared
                   from: "{{tasks.prepare.outputs.artifacts.prepared}}"
 
+          - name: finalize-voxtral
+            depends: "recognize-voxtral.Succeeded"
+            template: finalize
+            arguments:
+              parameters:
+                - name: backend
+                  value: voxtral
+              artifacts:
+                - name: prepared
+                  from: "{{tasks.prepare.outputs.artifacts.prepared}}"
+                - name: asr
+                  from: "{{tasks.recognize-voxtral.outputs.artifacts.asr}}"
+
           - name: publish-voxtral
-            depends: "transcribe-voxtral.Succeeded"
+            depends: "finalize-voxtral.Succeeded"
             template: publish
             arguments:
               parameters:
@@ -146,7 +198,7 @@ spec:
                   value: voxtral
               artifacts:
                 - name: result
-                  from: "{{tasks.transcribe-voxtral.outputs.artifacts.result}}"
+                  from: "{{tasks.finalize-voxtral.outputs.artifacts.result}}"
 
     - name: prepare
       inputs:
@@ -343,7 +395,7 @@ spec:
           - name: work
             mountPath: /work
 
-    - name: transcribe-parakeet
+    - name: recognize-parakeet
       inputs:
         artifacts:
           - name: prepared
@@ -353,12 +405,12 @@ spec:
 
       outputs:
         artifacts:
-          - name: result
-            path: /work/result
+          - name: asr
+            path: /work/asr
             archive:
               none: {}
             s3:
-              key: runs/{{workflow.uid}}/parakeet/
+              key: runs/{{workflow.uid}}/asr/parakeet/
 
       volumes:
         - name: model-cache
@@ -369,13 +421,13 @@ spec:
         image: "{{workflow.parameters.parakeet_image}}"
 
         args:
-          - transcribe-prepared
+          - recognize-prepared
           - --prepared
           - /work/prepared
           - --asr
           - parakeet
           - --output
-          - /work/result
+          - /work/asr
           - --working-directory
           - /work/tmp
           - --device
@@ -406,7 +458,7 @@ spec:
           - name: work
             mountPath: /work
 
-    - name: transcribe-qwen
+    - name: recognize-qwen
       inputs:
         artifacts:
           - name: prepared
@@ -416,12 +468,12 @@ spec:
 
       outputs:
         artifacts:
-          - name: result
-            path: /work/result
+          - name: asr
+            path: /work/asr
             archive:
               none: {}
             s3:
-              key: runs/{{workflow.uid}}/qwen/
+              key: runs/{{workflow.uid}}/asr/qwen/
 
       volumes:
         - name: model-cache
@@ -432,13 +484,13 @@ spec:
         image: "{{workflow.parameters.qwen_image}}"
 
         args:
-          - transcribe-prepared
+          - recognize-prepared
           - --prepared
           - /work/prepared
           - --asr
           - qwen
           - --output
-          - /work/result
+          - /work/asr
           - --working-directory
           - /work/tmp
           - --device
@@ -469,7 +521,7 @@ spec:
           - name: work
             mountPath: /work
 
-    - name: transcribe-nemotron
+    - name: recognize-nemotron
       inputs:
         artifacts:
           - name: prepared
@@ -479,12 +531,12 @@ spec:
 
       outputs:
         artifacts:
-          - name: result
-            path: /work/result
+          - name: asr
+            path: /work/asr
             archive:
               none: {}
             s3:
-              key: runs/{{workflow.uid}}/nemotron/
+              key: runs/{{workflow.uid}}/asr/nemotron/
 
       volumes:
         - name: model-cache
@@ -495,13 +547,13 @@ spec:
         image: "{{workflow.parameters.nemotron_image}}"
 
         args:
-          - transcribe-prepared
+          - recognize-prepared
           - --prepared
           - /work/prepared
           - --asr
           - nemotron
           - --output
-          - /work/result
+          - /work/asr
           - --working-directory
           - /work/tmp
           - --device
@@ -532,7 +584,7 @@ spec:
           - name: work
             mountPath: /work
 
-    - name: transcribe-voxtral
+    - name: recognize-voxtral
       inputs:
         artifacts:
           - name: prepared
@@ -542,12 +594,12 @@ spec:
 
       outputs:
         artifacts:
-          - name: result
-            path: /work/result
+          - name: asr
+            path: /work/asr
             archive:
               none: {}
             s3:
-              key: runs/{{workflow.uid}}/voxtral/
+              key: runs/{{workflow.uid}}/asr/voxtral/
 
       volumes:
         - name: model-cache
@@ -558,13 +610,13 @@ spec:
         image: "{{workflow.parameters.voxtral_image}}"
 
         args:
-          - transcribe-prepared
+          - recognize-prepared
           - --prepared
           - /work/prepared
           - --asr
           - voxtral
           - --output
-          - /work/result
+          - /work/asr
           - --working-directory
           - /work/tmp
           - --device
@@ -594,3 +646,39 @@ spec:
 
           - name: work
             mountPath: /work
+
+    - name: finalize
+      inputs:
+        parameters:
+          - name: backend
+        artifacts:
+          - name: prepared
+            path: /work/prepared
+            mode: 0755
+            recurseMode: true
+          - name: asr
+            path: /work/asr
+            mode: 0755
+            recurseMode: true
+
+      outputs:
+        artifacts:
+          - name: result
+            path: /work/result
+            archive:
+              none: {}
+            s3:
+              key: runs/{{workflow.uid}}/result/{{inputs.parameters.backend}}/
+
+      container:
+        image: "{{workflow.parameters.application_image}}"
+        args:
+          - finalize-prepared
+          - --prepared
+          - /work/prepared
+          - --asr-result
+          - /work/asr
+          - --output
+          - /work/result
+          - --working-directory
+          - /tmp

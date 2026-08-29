@@ -176,6 +176,89 @@ def test_transcribe_prepared_uses_only_asr_and_keeps_input_immutable(
     assert json.loads((output / "transcript.json").read_text(encoding="utf-8"))["metadata"][
         "diarization_model"
     ] == "pyannote/test"
+    assert json.loads((output / "metadata.json").read_text(encoding="utf-8"))["schema_version"] == 1
+
+
+def test_recognize_and_finalize_commands_cross_the_artifact_boundary(
+    tmp_path: Path, monkeypatch: object
+) -> None:
+    source = tmp_path / "normalized.wav"
+    source.write_bytes(b"normalized audio")
+    prepared_directory = tmp_path / "prepared"
+    write_prepared_recording(
+        PreparedRecording(
+            NormalizedAudio(source, AudioMetadata("meeting.wav", 2.0)),
+            [DiarizationSegment("SPEAKER_00", 0.0, 2.0)],
+            tmp_path,
+            diarization_model="pyannote/test",
+            language="de-DE",
+        ),
+        prepared_directory,
+    )
+    transcriber = FakeTranscriber()
+
+    def recognition_pipeline(config: object) -> TranscriptionPipeline:
+        return TranscriptionPipeline(  # type: ignore[arg-type]
+            config,
+            diarizer_factory=lambda: (_ for _ in ()).throw(AssertionError("no diarizer")),
+            transcriber_factory=lambda: transcriber,
+            preprocessor=FakePreprocessor(),
+        )
+
+    monkeypatch.setattr(cli, "create_default_pipeline", recognition_pipeline)  # type: ignore[attr-defined]
+    asr = tmp_path / "asr"
+    assert (
+        cli.main(
+            [
+                "recognize-prepared",
+                "--prepared",
+                str(prepared_directory),
+                "--asr",
+                "parakeet",
+                "--output",
+                str(asr),
+                "--working-directory",
+                str(tmp_path / "work"),
+            ]
+        )
+        == 0
+    )
+    assert {path.name for path in asr.iterdir()} == {"asr_words.json", "metadata.json"}
+    assert transcriber.loaded and transcriber.released
+
+    def finalization_pipeline(config: object) -> TranscriptionPipeline:
+        return TranscriptionPipeline(  # type: ignore[arg-type]
+            config,
+            diarizer_factory=lambda: (_ for _ in ()).throw(AssertionError("no diarizer")),
+            transcriber_factory=lambda: (_ for _ in ()).throw(AssertionError("no ASR backend")),
+            preprocessor=FakePreprocessor(),
+        )
+
+    monkeypatch.setattr(cli, "create_default_pipeline", finalization_pipeline)  # type: ignore[attr-defined]
+    result = tmp_path / "result"
+    assert (
+        cli.main(
+            [
+                "finalize-prepared",
+                "--prepared",
+                str(prepared_directory),
+                "--asr-result",
+                str(asr),
+                "--output",
+                str(result),
+                "--working-directory",
+                str(tmp_path / "work"),
+            ]
+        )
+        == 0
+    )
+    assert {path.name for path in result.iterdir()} == {
+        "transcript.json",
+        "transcript.txt",
+        "asr_words.json",
+        "metadata.json",
+    }
+    assert (result / "metadata.json").read_bytes() == (asr / "metadata.json").read_bytes()
 
 
 def test_new_command_parsing() -> None:
@@ -192,6 +275,30 @@ def test_new_command_parsing() -> None:
             "/tmp/result",
         ]
     )
+    recognize_prepared = parser.parse_args(
+        [
+            "recognize-prepared",
+            "--prepared",
+            "/tmp/prepared",
+            "--asr",
+            "parakeet",
+            "--output",
+            "/tmp/asr",
+        ]
+    )
+    finalize_prepared = parser.parse_args(
+        [
+            "finalize-prepared",
+            "--prepared",
+            "/tmp/prepared",
+            "--asr-result",
+            "/tmp/asr",
+            "--output",
+            "/tmp/result",
+        ]
+    )
 
     assert prepare.input == Path("input.wav")
     assert transcribe_prepared.prepared == Path("/tmp/prepared")
+    assert recognize_prepared.asr == "parakeet"
+    assert finalize_prepared.asr_result == Path("/tmp/asr")

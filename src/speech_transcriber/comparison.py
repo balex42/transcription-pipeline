@@ -8,6 +8,7 @@ from collections.abc import Callable
 from dataclasses import asdict, replace
 from pathlib import Path
 
+from speech_transcriber.asr_artifact import write_asr_result_files
 from speech_transcriber.config import ASR_BACKENDS, PipelineConfig
 from speech_transcriber.errors import UnsupportedASRBackendError
 from speech_transcriber.pipeline import TranscriptionPipeline
@@ -48,19 +49,18 @@ class ASRComparisonRunner:
                     "running comparison backend",
                     extra={"index": index, "total": len(backends), "backend": backend},
                 )
-                result, metrics = self.pipeline.transcribe_prepared(
+                recognition = self.pipeline.recognize_prepared(
                     prepared,
                     self.transcriber_factory(backend_config, device),
                     backend,
+                )
+                self.pipeline.finalize_prepared(
+                    prepared,
+                    recognition,
                     output_directory / backend,
                 )
-                self.pipeline.write_records(
-                    output_directory / backend / "asr_words.json", result.asr_words
-                )
-                (output_directory / backend / "metadata.json").write_text(
-                    json.dumps(asdict(metrics), indent=2) + "\n", encoding="utf-8"
-                )
-                runs.append(asdict(metrics))
+                write_asr_result_files(recognition, output_directory / backend)
+                runs.append(asdict(recognition.metadata))
             metadata = {
                 "source": prepared.audio.metadata.source,
                 "audio_duration_seconds": prepared.audio.metadata.duration_seconds,

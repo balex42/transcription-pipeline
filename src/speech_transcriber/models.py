@@ -125,6 +125,24 @@ class ASRRunMetadata:
     peak_cuda_memory_reserved_bytes: int | None
     transformers_version: str = "unknown"
     torch_version: str = "unknown"
+    runtime: RuntimeProvenance = field(default_factory=lambda: RuntimeProvenance())
     backend_metrics: dict[str, float] = field(default_factory=dict)
     backend_models: dict[str, str] = field(default_factory=dict)
     backend_configuration: dict[str, str | int | float | bool | None] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class RuntimeProvenance:
+    """Runtime details for a recognition implementation, independent of a Python API."""
+
+    name: str = "python"
+    version: str = "unknown"
+    components: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class ASRRecognitionResult:
+    """Backend-neutral ASR output ready for independent transcript finalization."""
+
+    words: list[ASRWord]
+    metadata: ASRRunMetadata

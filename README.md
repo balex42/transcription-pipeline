@@ -180,6 +180,12 @@ With `--keep-intermediate`, generic diarization, ASR words, and attributed words
 
 ### Worker Artifact Contracts
 
+The worker pipeline has three filesystem boundaries: `prepare`, backend-specific recognition, and
+backend-neutral finalization. JSON/files are the cross-container and Argo interoperability contract.
+The Python `Transcriber` protocol is only an internal abstraction for the current Python-native ASR
+implementations; a future vLLM, NVIDIA NIM, Riva, or Triton runtime only needs to produce the same
+recognition artifact and does not need to import or implement that protocol.
+
 `prepare` writes a versioned prepared artifact containing only these files:
 
 ```text
@@ -194,7 +200,24 @@ prepared/
 normalized audio metadata, diarization model provenance, and language. It contains no absolute
 host paths.
 
-Each `transcribe-prepared` task writes exactly these durable result files:
+Each backend-specific `recognize-prepared` task writes a versioned ASR artifact:
+
+```text
+asr/
+├── asr_words.json
+└── metadata.json
+```
+
+`asr_words.json` contains only backend-neutral `ASRWord` records (`text`, absolute `end`, nullable
+absolute `start`, and nullable `confidence`). It never contains speaker attribution, turns,
+pyannote output, backend objects, or absolute paths. `metadata.json` has `schema_version: 1`, the
+relative ASR-word filename, backend/model/device/dtype, timings, RTF, peak GPU memory, backend
+metrics/model references/configuration, and generic runtime provenance (`runtime.name`,
+`runtime.version`, and `runtime.components`). Absolute model paths are reduced to their basename.
+
+`finalize-prepared` needs only `prepared/` and `asr/`; it does not instantiate an ASR backend or
+load model weights. It performs speaker alignment, turn building, and transcript export, preserving
+the ASR metadata in the final result:
 
 ```text
 result/
@@ -205,8 +228,16 @@ result/
 ```
 
 `transcript.json` is the existing canonical transcript schema. `asr_words.json` contains the
-backend-neutral `ASRWord` records. `metadata.json` serializes the existing `ASRRunMetadata`,
-including timings, CUDA peak memory, package versions, and backend metrics/configuration.
+backend-neutral `ASRWord` records. `metadata.json` is the versioned ASR metadata copied from the
+recognition artifact.
+
+For local convenience, `transcribe-prepared` still composes recognition and finalization in one
+process. The independently runnable commands are:
+
+```bash
+speech-transcriber recognize-prepared --prepared /work/prepared --asr parakeet --output /work/asr --device cuda
+speech-transcriber finalize-prepared --prepared /work/prepared --asr-result /work/asr --output /work/result
+```
 
 ## Offline and Air-Gapped Models
 
@@ -271,10 +302,10 @@ podman run --rm --device nvidia.com/gpu=all \
 
 `deploy/argo/transcription-workflowtemplate.yaml` is an example Argo `WorkflowTemplate`. It uses
 one lightweight `validate-backends` task before a GPU-limited `prepare` task. It then fans out one
-GPU-limited `transcribe-prepared` and non-GPU `publish` pair for every selected backend. Each
-backend has an explicit pipeline and image parameter (`parakeet_image`, `qwen_image`,
+GPU-limited `recognize-prepared`, common CPU-only finalization, and non-GPU `publish` chain for
+every selected backend. Each backend has an explicit recognition template and image parameter (`parakeet_image`, `qwen_image`,
 `nemotron_image`, and `voxtral_image`), so a future backend-specific runtime can replace its image
-and command without changing the fan-out DAG. All four currently default to the pinned worker image
+and command as long as it produces the ASR artifact, without changing the fan-out DAG. All four currently default to the pinned worker image
 `ghcr.io/balex42/transcription-pipeline:sha-b6b6d90`.
 
 `backends` must be a JSON array containing only `parakeet`, `qwen`, `nemotron`, or `voxtral`.
@@ -297,17 +328,18 @@ argo submit --from workflowtemplate/speech-transcription --namespace argo \
 ```
 
 The top-level DAG is `validate-backends`, then `prepare` once and `publish-source` once, followed
-by direct `transcribe-parakeet`, `transcribe-qwen`, `transcribe-nemotron`, and `transcribe-voxtral`
-branches when selected. Each selected transcription task leads directly to its own publish task;
-there are no backend dispatcher or pipeline wrapper nodes. `publish-source` is CPU-only, does not
-need prepared audio, and intentionally runs in parallel with `prepare` after validation. Each
-transcription task requests one GPU and invokes its fixed backend name, so with two available GPUs
-two ASR tasks can run concurrently while additional selected backends wait for Kubernetes scheduling.
+by direct `recognize-parakeet`, `recognize-qwen`, `recognize-nemotron`, and `recognize-voxtral`
+branches when selected. Each selected branch is `recognize` (GPU), `finalize` (CPU), then `publish`
+(CPU); there are no backend dispatcher or pipeline wrapper nodes. `publish-source` is CPU-only,
+does not need prepared audio, and intentionally runs in parallel with `prepare` after validation.
+Each recognition task requests one GPU and invokes its fixed backend name, so with two available
+GPUs two ASR tasks can run concurrently while additional selected backends wait for Kubernetes scheduling.
 The workflow adds no inter-backend dependencies, mutexes, semaphores, or parallelism limits. No pod
 loads multiple ASR models.
 
-The default Argo artifact repository stores temporary prepared and ASR artifacts in the
-`argo-artifacts` bucket at `runs/<workflow-uid>/...`. Durable outputs explicitly use the separate
+The default Argo artifact repository stores temporary prepared, ASR, and final-result artifacts in
+the `argo-artifacts` bucket at `runs/<workflow-uid>/prepared/`, `runs/<workflow-uid>/asr/<backend>/`,
+and `runs/<workflow-uid>/result/<backend>/`. Durable outputs explicitly use the separate
 `transcription-data` bucket:
 
 ```text
@@ -329,9 +361,9 @@ the RustFS service endpoint and the existing `rustfs-s3` Secret, rather than inh
 for JSON validation and file-copy tasks. Production or air-gapped deployments should mirror and pin
 that utility image in their internal registry.
 
-Only `prepare` and the four ASR templates declare and mount `speech-model-cache` read-only at
-`/models`; validation and publication pods do not depend on model storage. A ReadWriteOnce PVC can
-be mounted by multiple pods on the same node, so it does not require serializing backend GPU pods.
+Only `prepare` and the four recognition templates declare and mount `speech-model-cache` read-only
+at `/models`; validation, finalization, and publication pods do not depend on model storage.
+A ReadWriteOnce PVC can be mounted by multiple pods on the same node, so it does not require serializing backend GPU pods.
 If selected backend pods must run on different nodes, an RWO volume may prevent multi-node cache
 attachment; use RWX or per-node caches if that becomes a scheduling constraint. The PVC and its
 storage class are configured outside this repository. Retention of durable prefixes is controlled

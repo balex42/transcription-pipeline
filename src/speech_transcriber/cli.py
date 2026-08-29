@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import argparse
-import json
 import logging
 import os
 import sys
-from dataclasses import asdict
 from pathlib import Path
 
+from speech_transcriber.asr_artifact import (
+    load_asr_recognition,
+    write_asr_recognition,
+    write_asr_result_files,
+)
 from speech_transcriber.comparison import ASRComparisonRunner
 from speech_transcriber.config import (
     ASR_BACKENDS,
@@ -36,6 +39,14 @@ def build_parser() -> argparse.ArgumentParser:
         "transcribe-prepared", help="transcribe a prepared recording with one ASR backend"
     )
     _add_transcribe_prepared_options(transcribe_prepared)
+    recognize_prepared = commands.add_parser(
+        "recognize-prepared", help="recognize a prepared recording and write portable ASR output"
+    )
+    _add_transcribe_prepared_options(recognize_prepared)
+    finalize_prepared = commands.add_parser(
+        "finalize-prepared", help="build a transcript from prepared and ASR artifacts"
+    )
+    _add_finalize_prepared_options(finalize_prepared)
     compare = commands.add_parser(
         "compare", help="run several ASR backends against one prepared recording"
     )
@@ -130,6 +141,17 @@ def _add_transcribe_prepared_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--log-level", choices=["DEBUG", "INFO", "WARNING", "ERROR"])
 
 
+def _add_finalize_prepared_options(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--prepared", type=Path, required=True)
+    parser.add_argument("--asr-result", type=Path, required=True)
+    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--working-directory", type=Path)
+    parser.add_argument(
+        "--language", help="transcript language locale (default: prepared artifact language)"
+    )
+    parser.add_argument("--log-level", choices=["DEBUG", "INFO", "WARNING", "ERROR"])
+
+
 def main(argv: list[str] | None = None) -> int:
     """Run the CLI and return a shell-compatible status code."""
     args = build_parser().parse_args(argv)
@@ -157,7 +179,7 @@ def main(argv: list[str] | None = None) -> int:
                 if args.asr == "qwen" else None,
             )
             return 0
-        if args.command == "transcribe-prepared":
+        if args.command in {"transcribe-prepared", "recognize-prepared", "finalize-prepared"}:
             prepared = load_prepared_recording(args.prepared)
             config = _config_from_args(
                 args,
@@ -179,18 +201,25 @@ def main(argv: list[str] | None = None) -> int:
                 write_prepared_recording(prepared, config.output_directory)
             finally:
                 pipeline.cleanup(prepared)
-        elif args.command == "transcribe-prepared":
-            result, metrics = pipeline.transcribe_prepared(
+        elif args.command == "recognize-prepared":
+            recognition = pipeline.recognize_prepared(
                 prepared,
                 pipeline.transcriber_factory(),
                 config.asr_backend,
-                config.output_directory,
             )
-            pipeline.write_records(config.output_directory / "asr_words.json", result.asr_words)
-            (config.output_directory / "metadata.json").write_text(
-                json.dumps(asdict(metrics), ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-                encoding="utf-8",
+            write_asr_recognition(recognition, config.output_directory)
+        elif args.command == "finalize-prepared":
+            recognition = load_asr_recognition(args.asr_result)
+            result = pipeline.finalize_prepared(prepared, recognition, config.output_directory)
+            write_asr_result_files(recognition, result.output_directory or config.output_directory)
+        elif args.command == "transcribe-prepared":
+            recognition = pipeline.recognize_prepared(
+                prepared,
+                pipeline.transcriber_factory(),
+                config.asr_backend,
             )
+            result = pipeline.finalize_prepared(prepared, recognition, config.output_directory)
+            write_asr_result_files(recognition, result.output_directory or config.output_directory)
         else:
             pipeline.run()
         return 0
@@ -207,7 +236,7 @@ def _config_from_args(
 ) -> PipelineConfig:
     overrides = {
         "working_directory": args.working_directory,
-        "device": args.device,
+        "device": getattr(args, "device", None),
         "asr_backend": getattr(args, "asr", None),
         "asr_model": getattr(args, "asr_model", None),
         "qwen_aligner_model": getattr(args, "qwen_aligner_model", None),
