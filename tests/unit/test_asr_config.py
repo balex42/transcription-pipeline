@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from speech_transcriber.config import (
+    DEFAULT_CANARY_MODEL,
     DEFAULT_FASTER_WHISPER_COMPUTE_TYPE,
     DEFAULT_FASTER_WHISPER_MODEL,
     DEFAULT_NEMOTRON_MODEL,
@@ -34,6 +35,7 @@ def test_environment_backend_and_default_model_mapping() -> None:
         make({}, {"ASR_BACKEND": "faster-whisper"}).resolved_asr_model
         == DEFAULT_FASTER_WHISPER_MODEL
     )
+    assert make({}, {"ASR_BACKEND": "canary"}).resolved_asr_model == DEFAULT_CANARY_MODEL
 
 
 def test_faster_whisper_uses_float16_compute_type_by_default() -> None:

@@ -86,10 +86,24 @@ def test_prefetch_faster_whisper_uses_only_the_model_repository(monkeypatch: obj
     ]
 
 
+def test_prefetch_canary_uses_only_its_model_repository(monkeypatch: object) -> None:
+    downloads: list[str] = []
+
+    def snapshot_download(repo: str, **kwargs: object) -> None:
+        downloads.append(repo)
+
+    import huggingface_hub
+
+    monkeypatch.setattr(huggingface_hub, "snapshot_download", snapshot_download)
+
+    assert cli.main(["prefetch-models", "--asr", "canary"]) == 0
+    assert downloads == ["nvidia/canary-1b-v2", DEFAULT_PYANNOTE_MODEL]
+
+
 def test_compare_defaults_to_all_production_backends() -> None:
     parser = cli.build_parser()
     args = parser.parse_args(["compare", "input.wav", "--output", "output"])
-    assert args.models == "parakeet,qwen,nemotron,voxtral,faster-whisper"
+    assert args.models == "parakeet,qwen,nemotron,voxtral,faster-whisper,canary"
 
 
 def test_prepare_command_writes_artifact_and_releases_diarizer(

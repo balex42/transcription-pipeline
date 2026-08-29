@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Protocol, cast
 
 from speech_transcriber.errors import ASROutputError, ModelLoadError
+from speech_transcriber.language import normalize_language
 from speech_transcriber.models import ASRWord, NormalizedAudio, RuntimeProvenance
 from speech_transcriber.transcription.base import Transcriber, TranscriberCapabilities
 
@@ -170,9 +171,7 @@ def whisper_language(language: str | None) -> str | None:
 
     ``None`` leaves language detection to the model.
     """
-    if language is None:
-        return None
-    return language.split("-", 1)[0]
+    return normalize_language(language)
 
 
 def resolve_model_path(model: str) -> str:

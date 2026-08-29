@@ -29,6 +29,10 @@ spec:
       # immutable sha-<commit> tag produced by the container workflow.
       - name: faster_whisper_image
         value: ghcr.io/balex42/transcription-pipeline-faster-whisper:sha-106ea39
+      # Bootstrap tag published by the implementation build. A deployment-only
+      # follow-up pins the immutable sha-<commit> image after CI succeeds.
+      - name: canary_image
+        value: ghcr.io/balex42/transcription-pipeline-canary:main
       - name: backends
         value: '["parakeet"]'
 
@@ -64,6 +68,39 @@ spec:
               artifacts:
                 - name: recording
                   from: "{{inputs.artifacts.recording}}"
+
+          - name: recognize-canary
+            depends: "prepare.Succeeded"
+            when: "{{tasks.validate-backends.outputs.parameters.run_canary}} == true"
+            template: recognize-canary
+            arguments:
+              artifacts:
+                - name: prepared
+                  from: "{{tasks.prepare.outputs.artifacts.prepared}}"
+
+          - name: finalize-canary
+            depends: "recognize-canary.Succeeded"
+            template: finalize
+            arguments:
+              parameters:
+                - name: backend
+                  value: canary
+              artifacts:
+                - name: prepared
+                  from: "{{tasks.prepare.outputs.artifacts.prepared}}"
+                - name: asr
+                  from: "{{tasks.recognize-canary.outputs.artifacts.asr}}"
+
+          - name: publish-canary
+            depends: "finalize-canary.Succeeded"
+            template: publish
+            arguments:
+              parameters:
+                - name: backend
+                  value: canary
+              artifacts:
+                - name: result
+                  from: "{{tasks.finalize-canary.outputs.artifacts.result}}"
 
           - name: publish-source
             # Source publication is CPU-only and intentionally overlaps prepare after validation.
@@ -320,6 +357,9 @@ spec:
           - name: run_faster_whisper
             valueFrom:
               path: /tmp/run_faster_whisper
+          - name: run_canary
+            valueFrom:
+              path: /tmp/run_canary
 
       container:
         image: "{{workflow.parameters.utility_image}}"
@@ -331,7 +371,7 @@ spec:
             import json
             import os
 
-            supported = {"parakeet", "qwen", "nemotron", "voxtral", "faster-whisper"}
+            supported = {"parakeet", "qwen", "nemotron", "voxtral", "faster-whisper", "canary"}
             try:
                 backends = json.loads(os.environ["BACKENDS"])
             except json.JSONDecodeError as error:
@@ -720,6 +760,66 @@ spec:
           - /work/prepared
           - --asr
           - faster-whisper
+          - --output
+          - /work/asr
+          - --working-directory
+          - /work/tmp
+          - --device
+          - cuda
+
+        env:
+          - name: HF_HOME
+            value: /models/huggingface
+
+          - name: HF_HUB_OFFLINE
+            value: "1"
+
+        resources:
+          limits:
+            nvidia.com/gpu: "1"
+
+        volumeMounts:
+          - name: model-cache
+            mountPath: /models
+            readOnly: true
+
+          - name: cache
+            mountPath: /cache
+
+          - name: work
+            mountPath: /work
+
+    - name: recognize-canary
+      inputs:
+        artifacts:
+          - name: prepared
+            path: /work/prepared
+            mode: 0755
+            recurseMode: true
+
+      outputs:
+        artifacts:
+          - name: asr
+            path: /work/asr
+            archive:
+              none: {}
+            s3:
+              key: runs/{{workflow.uid}}/asr/canary/
+
+      volumes:
+        - name: model-cache
+          persistentVolumeClaim:
+            claimName: speech-model-cache
+
+      container:
+        image: "{{workflow.parameters.canary_image}}"
+
+        args:
+          - recognize-prepared
+          - --prepared
+          - /work/prepared
+          - --asr
+          - canary
           - --output
           - /work/asr
           - --working-directory

@@ -67,8 +67,11 @@ def build_parser() -> argparse.ArgumentParser:
     _add_runtime_options(compare, include_asr=False)
     compare.add_argument(
         "--models",
-        default="parakeet,qwen,nemotron,voxtral,faster-whisper",
-        help="comma-separated ASR backends: parakeet, qwen, nemotron, voxtral, faster-whisper",
+        default="parakeet,qwen,nemotron,voxtral,faster-whisper,canary",
+        help=(
+            "comma-separated ASR backends: parakeet, qwen, nemotron, voxtral, "
+            "faster-whisper, canary"
+        ),
     )
     prefetch = commands.add_parser(
         "prefetch-models", help="download models into configured Hugging Face cache"
@@ -89,7 +92,7 @@ def _add_runtime_options(parser: argparse.ArgumentParser, include_asr: bool) -> 
         parser.add_argument(
             "--asr",
             choices=ASR_BACKENDS,
-            help="ASR backend: parakeet, qwen, nemotron, voxtral, faster-whisper",
+            help="ASR backend: parakeet, qwen, nemotron, voxtral, faster-whisper, canary",
         )
         parser.add_argument("--asr-model", help="Hugging Face model ID or local model directory")
     parser.add_argument("--qwen-aligner-model", help="Qwen forced-aligner model ID or local path")

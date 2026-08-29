@@ -19,10 +19,11 @@ def create_transcriber(config: PipelineConfig, device: str) -> Transcriber:
         "nemotron",
         "voxtral",
         "faster-whisper",
+        "canary",
     }:
         raise UnsupportedASRBackendError(
             f"Unsupported ASR backend '{config.asr_backend}'. "
-            "Supported backends: parakeet, qwen, nemotron, voxtral, faster-whisper."
+            "Supported backends: parakeet, qwen, nemotron, voxtral, faster-whisper, canary."
         )
     model = config.resolved_asr_model
     if config.asr_backend == "parakeet":
@@ -71,4 +72,8 @@ def create_transcriber(config: PipelineConfig, device: str) -> Transcriber:
             config.language,
             config.faster_whisper_compute_type,
         )
+    if config.asr_backend == "canary":
+        from speech_transcriber.transcription.canary import CanaryTranscriber
+
+        return CanaryTranscriber(model, device, config.language)
     raise AssertionError("validated backend did not match a registered adapter")

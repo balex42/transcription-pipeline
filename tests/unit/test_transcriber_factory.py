@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from speech_transcriber.config import (
+    DEFAULT_CANARY_MODEL,
     DEFAULT_FASTER_WHISPER_MODEL,
     DEFAULT_NEMOTRON_MODEL,
     DEFAULT_PARAKEET_MODEL,
@@ -14,6 +15,7 @@ from speech_transcriber.config import (
 )
 from speech_transcriber.errors import UnsupportedASRBackendError
 from speech_transcriber.transcription.base import TranscriberCapabilities
+from speech_transcriber.transcription.canary import CanaryTranscriber
 from speech_transcriber.transcription.factory import create_transcriber
 from speech_transcriber.transcription.faster_whisper import FasterWhisperTranscriber
 from speech_transcriber.transcription.nemotron import NemotronTranscriber
@@ -36,6 +38,7 @@ def config(backend: str, model: str | None = None) -> PipelineConfig:
         ("nemotron", NemotronTranscriber, DEFAULT_NEMOTRON_MODEL),
         ("voxtral", VoxtralTranscriber, DEFAULT_VOXTRAL_MODEL),
         ("faster-whisper", FasterWhisperTranscriber, DEFAULT_FASTER_WHISPER_MODEL),
+        ("canary", CanaryTranscriber, DEFAULT_CANARY_MODEL),
     ],
 )
 def test_factory_selects_adapter_and_default_model(
@@ -58,6 +61,10 @@ def test_factory_selects_adapter_and_default_model(
         assert transcriber.capabilities == TranscriberCapabilities(True, True, True, True)
         assert transcriber.compute_type == "float16"
         assert transcriber.language == "de-DE"
+    if backend == "canary":
+        assert transcriber.capabilities == TranscriberCapabilities(True, True, True, True)
+        assert transcriber.source_language == "de"
+        assert transcriber.target_language == "de"
 
 
 def test_voxtral_delay_from_config_is_passed_to_adapter() -> None:

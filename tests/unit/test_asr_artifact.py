@@ -178,8 +178,47 @@ def test_finalization_rejects_a_recognition_for_another_recording(tmp_path: Path
         )
 
 
-def test_finalizer_accepts_a_faster_whisper_artifact_without_backend_specific_logic(
+@pytest.mark.parametrize(
+    ("backend", "model", "runtime", "configuration"),
+    [
+        (
+            "faster-whisper",
+            "Systran/faster-whisper-large-v3",
+            RuntimeProvenance(
+                name="faster-whisper",
+                version="1.2.1",
+                components={"ctranslate2": "4.8.1", "huggingface_hub": "1.28.0"},
+            ),
+            {
+                "language": "de",
+                "compute_type": "float16",
+                "word_timestamps": True,
+                "vad_filter": False,
+            },
+        ),
+        (
+            "canary",
+            "nvidia/canary-1b-v2",
+            RuntimeProvenance(
+                name="nemo",
+                version="3.0.0",
+                components={"torch": "2.12.0+cu132", "cuda": "13.2"},
+            ),
+            {
+                "source_language": "de",
+                "target_language": "de",
+                "timestamps": True,
+                "long_form_mode": "native_dynamic_chunking",
+            },
+        ),
+    ],
+)
+def test_finalizer_accepts_heterogeneous_artifact_without_backend_specific_logic(
     tmp_path: Path,
+    backend: str,
+    model: str,
+    runtime: RuntimeProvenance,
+    configuration: dict[str, str | bool],
 ) -> None:
     audio = tmp_path / "normalized.wav"
     audio.write_bytes(b"normalized audio")
@@ -199,8 +238,8 @@ def test_finalizer_accepts_a_faster_whisper_artifact_without_backend_specific_lo
             ASRWord("welt", end=1.0, start=0.5, confidence=0.95),
         ],
         metadata=ASRRunMetadata(
-            backend="faster-whisper",
-            model="Systran/faster-whisper-large-v3",
+            backend=backend,
+            model=model,
             device="cuda",
             dtype="float16",
             audio_duration_seconds=2.0,
@@ -213,17 +252,8 @@ def test_finalizer_accepts_a_faster_whisper_artifact_without_backend_specific_lo
             normalized_audio_sha256=sha256_file(audio),
             transformers_version="unknown",
             torch_version="unknown",
-            runtime=RuntimeProvenance(
-                name="faster-whisper",
-                version="1.2.1",
-                components={"ctranslate2": "4.8.1", "huggingface_hub": "1.28.0"},
-            ),
-            backend_configuration={
-                "language": "de",
-                "compute_type": "float16",
-                "word_timestamps": True,
-                "vad_filter": False,
-            },
+            runtime=runtime,
+            backend_configuration=configuration,
         ),
     )
     write_asr_recognition(recognition, recognition_directory)
@@ -233,15 +263,15 @@ def test_finalizer_accepts_a_faster_whisper_artifact_without_backend_specific_lo
         prepared,
         load_asr_recognition(recognition_directory),
         tmp_path / "result",
-        expected_backend="faster-whisper",
+        expected_backend=backend,
     )
 
     assert [(word.text, word.speaker) for word in result.transcript.words] == [
         ("hallo", "SPEAKER_00"),
         ("welt", "SPEAKER_00"),
     ]
-    assert result.transcript.asr_backend == "faster-whisper"
-    assert result.transcript.asr_model == "Systran/faster-whisper-large-v3"
+    assert result.transcript.asr_backend == backend
+    assert result.transcript.asr_model == model
     assert (tmp_path / "result" / "transcript.json").is_file()
 
 

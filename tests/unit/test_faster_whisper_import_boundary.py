@@ -38,13 +38,14 @@ def test_recognize_prepared_faster_whisper_imports_no_ml_stack(tmp_path: Path) -
 import builtins
 
 blocked = (
-    "torch", "transformers", "pyannote", "soundfile",
+    "torch", "transformers", "pyannote", "soundfile", "nemo",
     "speech_transcriber.pipeline", "speech_transcriber.diarization",
     "speech_transcriber.audio", "speech_transcriber.runtime",
     "speech_transcriber.transcription.parakeet",
     "speech_transcriber.transcription.qwen",
     "speech_transcriber.transcription.nemotron",
     "speech_transcriber.transcription.voxtral",
+    "speech_transcriber.transcription.canary",
 )
 original_import = builtins.__import__
 

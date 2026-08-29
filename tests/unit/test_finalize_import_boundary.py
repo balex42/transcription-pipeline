@@ -53,7 +53,7 @@ def test_finalize_command_imports_no_ml_or_backend_modules(tmp_path: Path) -> No
 import builtins
 
 blocked = (
-    "numpy", "torch", "transformers", "pyannote", "soundfile",
+    "numpy", "torch", "transformers", "pyannote", "soundfile", "nemo",
     "speech_transcriber.pipeline", "speech_transcriber.transcription",
     "speech_transcriber.diarization", "speech_transcriber.audio", "speech_transcriber.runtime",
 )

@@ -22,8 +22,9 @@ VOXTRAL_MAX_TIMESTAMP_OFFSET_TOKENS = 30
 DEFAULT_FASTER_WHISPER_MODEL = "Systran/faster-whisper-large-v3"
 DEFAULT_FASTER_WHISPER_COMPUTE_TYPE = "float16"
 FASTER_WHISPER_COMPUTE_TYPES = ("float16", "bfloat16", "float32", "int8", "int8_float16")
+DEFAULT_CANARY_MODEL = "nvidia/canary-1b-v2"
 DEFAULT_PYANNOTE_MODEL = "pyannote/speaker-diarization-community-1"
-ASR_BACKENDS = ("parakeet", "qwen", "nemotron", "voxtral", "faster-whisper")
+ASR_BACKENDS = ("parakeet", "qwen", "nemotron", "voxtral", "faster-whisper", "canary")
 QWEN_MAX_ALIGNMENT_DURATION_SECONDS = 300.0
 DEFAULT_PARAKEET_SEGMENT_DURATION = 180.0
 DEFAULT_PARAKEET_SEGMENT_OVERLAP = 15.0
@@ -35,6 +36,7 @@ DEFAULT_ASR_MODELS = {
     "nemotron": DEFAULT_NEMOTRON_MODEL,
     "voxtral": DEFAULT_VOXTRAL_MODEL,
     "faster-whisper": DEFAULT_FASTER_WHISPER_MODEL,
+    "canary": DEFAULT_CANARY_MODEL,
 }
 
 
