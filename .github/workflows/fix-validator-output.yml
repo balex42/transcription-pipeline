@@ -1,0 +1,40 @@
+name: Fix validator output
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/fix-validator-output.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Patch validator output filename
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("deploy/argo/transcription-workflowtemplate.yaml")
+          text = path.read_text(encoding="utf-8")
+          old = 'with open(f"/tmp/run_{backend}", "w", encoding="utf-8") as output:'
+          new = 'with open(f"/tmp/run_{backend.replace(\'-\', \'_\')}", "w", encoding="utf-8") as output:'
+          if old not in text:
+              raise SystemExit("expected validator line not found")
+          path.write_text(text.replace(old, new, 1), encoding="utf-8")
+          PY
+
+      - name: Commit fix and remove one-shot workflow
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add deploy/argo/transcription-workflowtemplate.yaml
+          git rm .github/workflows/fix-validator-output.yml
+          git commit -m "Fix faster-whisper backend validation output"
+          git push
