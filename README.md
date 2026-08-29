@@ -452,23 +452,20 @@ GPU-limited `recognize-prepared`, common CPU-only finalization, and non-GPU `pub
 every selected backend. Each backend has an explicit recognition template and image parameter (`parakeet_image`, `qwen_image`,
 `nemotron_image`, `voxtral_image`, `faster_whisper_image`, and `canary_image`), so a future backend-specific runtime can replace its image
 and command as long as it produces the ASR artifact, without changing the fan-out DAG. The four Transformers backends currently default to the pinned worker image
-`ghcr.io/balex42/transcription-pipeline:sha-106ea39`; `faster_whisper_image` defaults to the
-dedicated `ghcr.io/balex42/transcription-pipeline-faster-whisper` repository. The implementation
-commit temporarily uses the CI-published `main` tag for the dedicated
-`ghcr.io/balex42/transcription-pipeline-canary` image until its immutable deployment pin is made.
+`ghcr.io/balex42/transcription-pipeline:sha-9c9081f`; `faster_whisper_image` defaults to the
+dedicated `ghcr.io/balex42/transcription-pipeline-faster-whisper:sha-9c9081f` repository and
+`canary_image` to the dedicated `ghcr.io/balex42/transcription-pipeline-canary:sha-9c9081f` image.
 
 The WorkflowTemplate and all six Python runtime image parameters form one compatible release pair.
-`sha-106ea39` must be published by the container workflow before applying this template. If it is not
+`sha-9c9081f` must be published by the container workflow before applying this template. If it is not
 available in the target registry, publish that source revision or override every Python runtime image
 parameter with the same schema-v2-compatible immutable release tag or digest. Do not mix schema-v1
 workers with schema-v2 prepared/ASR artifacts; upgrade the template and runtime images together.
 
 The dedicated faster-whisper and Canary images follow the same two-step release process. The implementation commit
 triggers the container workflow, which publishes the dedicated image under the immutable
-`sha-<commit>` tag and the mutable `main` tag. Until the deployment-only follow-up commit pins the
-immutable SHA, `canary_image` references the `main` tag that CI publishes on every main-branch build.
-The follow-up commit then pins `canary_image` to the actual `sha-<commit>` tag and updates the generic
-application image pins to the same revision; because the follow-up commit touches only `deploy/argo/**`,
+`sha-<commit>` tag and the mutable `main` tag. The deployment-only follow-up commit pins the
+immutable SHA; because the follow-up commit touches only `deploy/argo/**`,
 it does not rebuild any image. Do not invent immutable dedicated-runtime SHA tags before CI has built them.
 
 `backends` must be a JSON array containing only `parakeet`, `qwen`, `nemotron`, `voxtral`,

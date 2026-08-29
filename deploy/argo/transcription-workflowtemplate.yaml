@@ -13,19 +13,19 @@ spec:
       - name: utility_image
         value: python:3.11-alpine
       - name: application_image
-        value: ghcr.io/balex42/transcription-pipeline:sha-7e25561
+        value: ghcr.io/balex42/transcription-pipeline:sha-9c9081f
       - name: parakeet_image
-        value: ghcr.io/balex42/transcription-pipeline:sha-7e25561
+        value: ghcr.io/balex42/transcription-pipeline:sha-9c9081f
       - name: qwen_image
-        value: ghcr.io/balex42/transcription-pipeline:sha-7e25561
+        value: ghcr.io/balex42/transcription-pipeline:sha-9c9081f
       - name: nemotron_image
-        value: ghcr.io/balex42/transcription-pipeline:sha-7e25561
+        value: ghcr.io/balex42/transcription-pipeline:sha-9c9081f
       - name: voxtral_image
-        value: ghcr.io/balex42/transcription-pipeline:sha-7e25561
+        value: ghcr.io/balex42/transcription-pipeline:sha-9c9081f
       - name: faster_whisper_image
-        value: ghcr.io/balex42/transcription-pipeline-faster-whisper:sha-7e25561
+        value: ghcr.io/balex42/transcription-pipeline-faster-whisper:sha-9c9081f
       - name: canary_image
-        value: ghcr.io/balex42/transcription-pipeline-canary:sha-7e25561
+        value: ghcr.io/balex42/transcription-pipeline-canary:sha-9c9081f
       - name: backends
         value: '["parakeet","qwen","nemotron","faster-whisper","canary"]'
 
