@@ -27,7 +27,7 @@ spec:
       - name: canary_image
         value: ghcr.io/balex42/transcription-pipeline-canary:sha-736019a
       - name: backends
-        value: '["parakeet","qwen","nemotron","faster-whisper","canary"]'
+        value: '["parakeet","qwen","nemotron","voxtral","faster-whisper","canary"]'
 
     artifacts:
       - name: recording
