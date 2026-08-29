@@ -7,6 +7,7 @@ from speech_transcriber.models import AudioMetadata, DiarizationSegment, Normali
 from speech_transcriber.prepared import (
     PreparedRecording,
     load_prepared_recording,
+    sha256_file,
     write_prepared_recording,
 )
 
@@ -24,6 +25,7 @@ def _write_bundle(tmp_path: Path) -> Path:
         ),
         diarization=[DiarizationSegment("SPEAKER_00", 0.0, 12.5)],
         work_directory=tmp_path,
+        normalized_audio_sha256=sha256_file(normalized),
         diarization_model="pyannote/test",
         language="de-DE",
     )
@@ -46,6 +48,7 @@ def test_prepared_recording_round_trip_uses_relative_paths(tmp_path: Path) -> No
     manifest = json.loads((directory / "prepared.json").read_text(encoding="utf-8"))
     assert manifest["audio"]["file"] == "normalized.wav"
     assert len(manifest["audio"]["sha256"]) == 64
+    assert loaded.normalized_audio_sha256 == manifest["audio"]["sha256"]
 
 
 def test_load_rejects_missing_prepared_manifest(tmp_path: Path) -> None:

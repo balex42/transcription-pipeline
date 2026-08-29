@@ -27,6 +27,7 @@ class PreparedRecording:
     audio: NormalizedAudio
     diarization: list[DiarizationSegment]
     work_directory: Path
+    normalized_audio_sha256: str
     diarization_model: str | None = None
     language: str | None = None
     cleanup_enabled: bool = True
@@ -78,7 +79,7 @@ def write_prepared_recording(prepared: PreparedRecording, destination: Path) -> 
                     "channels": prepared.audio.metadata.channels,
                     "sample_width_bits": prepared.audio.metadata.sample_width_bits,
                     "file": NORMALIZED_AUDIO_FILE,
-                    "sha256": sha256_file(staging / NORMALIZED_AUDIO_FILE),
+                    "sha256": prepared.normalized_audio_sha256,
                 },
                 "diarization": {
                     "file": DIARIZATION_FILE,
@@ -138,6 +139,7 @@ def load_prepared_recording(directory: Path) -> PreparedRecording:
         audio=NormalizedAudio(normalized_path, metadata),
         diarization=diarization,
         work_directory=directory,
+        normalized_audio_sha256=expected_sha256,
         diarization_model=_string(diarization_info.get("model"), "diarization.model"),
         language=_string(manifest.get("language"), "language"),
         cleanup_enabled=False,

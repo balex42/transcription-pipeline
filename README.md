@@ -206,7 +206,8 @@ prepared/
 `normalized.wav` is 16 kHz mono 16-bit PCM WAV. `diarization.json` contains the canonical
 `DiarizationSegment` records. `prepared.json` has `schema_version: 2`, relative filenames,
 normalized audio metadata, a SHA-256 digest of `normalized.wav`, diarization model provenance, and
-language. It contains no absolute host paths. The digest is recomputed when the artifact is loaded.
+language. It contains no absolute host paths. The digest is verified when the artifact is loaded,
+retained on `PreparedRecording`, and reused by recognition and finalization without rereading the WAV.
 
 Each backend-specific `recognize-prepared` task writes a versioned ASR artifact:
 
@@ -317,7 +318,13 @@ GPU-limited `recognize-prepared`, common CPU-only finalization, and non-GPU `pub
 every selected backend. Each backend has an explicit recognition template and image parameter (`parakeet_image`, `qwen_image`,
 `nemotron_image`, and `voxtral_image`), so a future backend-specific runtime can replace its image
 and command as long as it produces the ASR artifact, without changing the fan-out DAG. All four currently default to the pinned worker image
-`ghcr.io/balex42/transcription-pipeline:sha-b6b6d90`.
+`ghcr.io/balex42/transcription-pipeline:sha-9119123`.
+
+The WorkflowTemplate and all five Python runtime image parameters form one compatible release pair.
+`sha-9119123` must be published by the container workflow before applying this template. If it is not
+available in the target registry, publish that source revision or override every Python runtime image
+parameter with the same schema-v2-compatible immutable release tag or digest. Do not mix schema-v1
+workers with schema-v2 prepared/ASR artifacts; upgrade the template and runtime images together.
 
 `backends` must be a JSON array containing only `parakeet`, `qwen`, `nemotron`, or `voxtral`.
 The pre-prepare validator rejects malformed or empty arrays, unsupported names, and duplicates, then
@@ -374,6 +381,12 @@ the RustFS service endpoint and the existing `rustfs-s3` Secret, rather than inh
 `argo-artifacts` connection. `utility_image` defaults to the lightweight `python:3.11-alpine` image
 for JSON validation and file-copy tasks. Production or air-gapped deployments should mirror and pin
 that utility image in their internal registry.
+
+The container GitHub Actions workflow uses an explicit application-input allowlist. Changes limited to
+Markdown or deployment manifests, including `deploy/argo/**`, do not build an image. Changes to
+`src/**`, `Containerfile`, `.containerignore`, `pyproject.toml`, `uv.lock`, or the container workflow
+do. Version-tag pushes and manual dispatch remain build triggers, so an image-tag-only Argo update
+does not create a follow-up image build.
 
 Only `prepare` and the four recognition templates declare and mount `speech-model-cache` read-only
 at `/models`; validation, finalization, and publication pods do not depend on model storage.

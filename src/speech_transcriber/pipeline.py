@@ -110,6 +110,7 @@ class TranscriptionPipeline:
             NormalizedAudio(normalized, metadata),
             diarization,
             job_directory,
+            normalized_audio_sha256=sha256_file(normalized),
             diarization_model=self.config.pyannote_model,
             language=self.config.language,
         )
@@ -177,7 +178,7 @@ class TranscriptionPipeline:
             real_time_factor=total_seconds / prepared.audio.metadata.duration_seconds,
             peak_cuda_memory_allocated_bytes=allocated,
             peak_cuda_memory_reserved_bytes=reserved,
-            normalized_audio_sha256=sha256_file(prepared.audio.path),
+            normalized_audio_sha256=prepared.normalized_audio_sha256,
             transformers_version=_package_version("transformers"),
             torch_version=_package_version("torch"),
             runtime=RuntimeProvenance(

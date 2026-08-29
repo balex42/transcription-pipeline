@@ -25,7 +25,7 @@ from speech_transcriber.models import (
     PipelineResult,
     Transcript,
 )
-from speech_transcriber.prepared import PreparedRecording, sha256_file
+from speech_transcriber.prepared import PreparedRecording
 from speech_transcriber.turns.builder import TurnBuilder
 
 LOGGER = logging.getLogger(__name__)
@@ -65,7 +65,7 @@ class TranscriptFinalizer:
             abs_tol=0.001,
         ):
             raise ValueError("ASR artifact audio duration does not match the prepared recording")
-        if recognition.metadata.normalized_audio_sha256 != sha256_file(prepared.audio.path):
+        if recognition.metadata.normalized_audio_sha256 != prepared.normalized_audio_sha256:
             raise ValueError(
                 "ASR artifact normalized audio SHA-256 does not match the prepared recording"
             )

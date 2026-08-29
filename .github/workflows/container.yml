@@ -2,8 +2,22 @@ name: Container image
 
 on:
   pull_request:
+    paths:
+      - "src/**"
+      - "Containerfile"
+      - ".containerignore"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/container.yml"
   push:
     branches: [main]
+    paths:
+      - "src/**"
+      - "Containerfile"
+      - ".containerignore"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/container.yml"
     tags: ["v*"]
   workflow_dispatch:
 

@@ -24,7 +24,6 @@ from speech_transcriber.errors import TranscriberError
 from speech_transcriber.finalization import TranscriptFinalizer
 from speech_transcriber.prepared import (
     load_prepared_recording,
-    sha256_file,
     write_prepared_recording,
 )
 
@@ -208,7 +207,7 @@ def main(argv: list[str] | None = None) -> int:
             recognition = load_asr_recognition(
                 args.asr_result,
                 expected_backend=args.expected_backend,
-                expected_normalized_audio_sha256=sha256_file(prepared.audio.path),
+                expected_normalized_audio_sha256=prepared.normalized_audio_sha256,
             )
             result = TranscriptFinalizer(config).finalize_prepared(
                 prepared,

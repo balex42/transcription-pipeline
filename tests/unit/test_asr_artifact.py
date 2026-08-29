@@ -127,6 +127,7 @@ def test_finalization_uses_only_prepared_and_recognition_artifacts(tmp_path: Pat
         audio=NormalizedAudio(audio, AudioMetadata("meeting.wav", 2.0)),
         diarization=[DiarizationSegment("SPEAKER_00", 0.0, 2.0)],
         work_directory=tmp_path,
+        normalized_audio_sha256=sha256_file(audio),
         diarization_model="pyannote/test",
         language="de-DE",
         cleanup_enabled=False,
@@ -162,6 +163,7 @@ def test_finalization_rejects_a_recognition_for_another_recording(tmp_path: Path
         audio=NormalizedAudio(audio, AudioMetadata("meeting.wav", 2.0)),
         diarization=[],
         work_directory=tmp_path,
+        normalized_audio_sha256=sha256_file(audio),
         diarization_model="pyannote/test",
         language="de-DE",
     )

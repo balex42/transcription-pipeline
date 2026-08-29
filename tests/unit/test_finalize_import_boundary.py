@@ -23,6 +23,7 @@ def test_finalize_command_imports_no_ml_or_backend_modules(tmp_path: Path) -> No
             audio=NormalizedAudio(normalized, AudioMetadata("meeting.wav", 2.0)),
             diarization=[DiarizationSegment("SPEAKER_00", 0.0, 2.0)],
             work_directory=tmp_path,
+            normalized_audio_sha256=sha256_file(normalized),
             diarization_model="pyannote/test",
             language="de-DE",
         ),

@@ -2,10 +2,11 @@ import json
 from pathlib import Path
 
 from speech_transcriber import cli
+from speech_transcriber import pipeline as pipeline_module
 from speech_transcriber.config import DEFAULT_PYANNOTE_MODEL, DEFAULT_QWEN_ALIGNER_MODEL
 from speech_transcriber.models import ASRWord, AudioMetadata, DiarizationSegment, NormalizedAudio
 from speech_transcriber.pipeline import TranscriptionPipeline
-from speech_transcriber.prepared import PreparedRecording, write_prepared_recording
+from speech_transcriber.prepared import PreparedRecording, sha256_file, write_prepared_recording
 from speech_transcriber.transcription.base import TranscriberCapabilities
 
 
@@ -124,6 +125,7 @@ def test_transcribe_prepared_uses_only_asr_and_keeps_input_immutable(
             NormalizedAudio(source, AudioMetadata("meeting.wav", 2.0)),
             [DiarizationSegment("SPEAKER_00", 0.0, 2.0)],
             tmp_path,
+            normalized_audio_sha256=sha256_file(source),
             diarization_model="pyannote/test",
             language="de-DE",
         ),
@@ -145,6 +147,10 @@ def test_transcribe_prepared_uses_only_asr_and_keeps_input_immutable(
         )
 
     monkeypatch.setattr(cli, "create_default_pipeline", pipeline_factory)  # type: ignore[attr-defined]
+    def unexpected_hash(_: Path) -> str:
+        raise AssertionError("recognition must reuse the prepared digest")
+
+    monkeypatch.setattr(pipeline_module, "sha256_file", unexpected_hash)
     output = tmp_path / "result"
 
     assert (
@@ -190,6 +196,7 @@ def test_recognize_and_finalize_commands_cross_the_artifact_boundary(
             NormalizedAudio(source, AudioMetadata("meeting.wav", 2.0)),
             [DiarizationSegment("SPEAKER_00", 0.0, 2.0)],
             tmp_path,
+            normalized_audio_sha256=sha256_file(source),
             diarization_model="pyannote/test",
             language="de-DE",
         ),
