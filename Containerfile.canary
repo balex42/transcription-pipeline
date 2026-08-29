@@ -32,12 +32,15 @@ COPY src ./src
 # The base's Conda Python already provides torch==2.12.0+cu132. Keep that
 # tested CUDA build visible to an isolated app venv rather than replacing it,
 # then install the locked NeMo ASR runtime and the project itself.
-RUN uv venv --python python --system-site-packages /app/.venv \
-    && UV_CACHE_DIR=/tmp/uv-cache uv export --frozen --no-dev --extra canary-runtime \
-        --no-emit-project --format requirements-txt --output-file /tmp/requirements.txt \
-    && UV_CACHE_DIR=/tmp/uv-cache uv pip install --python /app/.venv/bin/python \
-        --require-hashes -r /tmp/requirements.txt \
-    && uv pip install --python /app/.venv/bin/python --no-deps . \
+RUN uv venv --python python --system-site-packages /app/.venv
+
+RUN uv export --frozen --no-dev --extra canary-runtime --no-emit-project \
+    --format requirements-txt --emit-index-url --output-file /tmp/requirements.txt
+
+RUN UV_CACHE_DIR=/tmp/uv-cache uv pip install --python /app/.venv/bin/python \
+    --require-hashes -r /tmp/requirements.txt
+
+RUN uv pip install --python /app/.venv/bin/python --no-deps . \
     && rm -rf /tmp/uv-cache /tmp/requirements.txt
 
 # The container runs as an arbitrary non-root UID that is normally a member of group 0.
