@@ -270,16 +270,17 @@ podman run --rm --device nvidia.com/gpu=all \
 `deploy/k8s/job.example.yaml` is a generic `batch/v1` Job that requests one GPU and demonstrates the same mounted-local-model offline mode on any Kubernetes cluster. No model weights or secrets are baked into the image.
 
 `deploy/argo/transcription-workflowtemplate.yaml` is an example Argo `WorkflowTemplate`. It uses
-one GPU-limited `prepare` task, then fans out one GPU-limited `transcribe-prepared` and non-GPU
-`publish` pair for every selected backend. Each backend has an explicit pipeline and image
-parameter (`parakeet_image`, `qwen_image`, `nemotron_image`, and `voxtral_image`), so a future
-backend-specific runtime can replace its image and command without changing the fan-out DAG. All
-four currently default to the pinned worker image
+one lightweight `validate-backends` task before a GPU-limited `prepare` task. It then fans out one
+GPU-limited `transcribe-prepared` and non-GPU `publish` pair for every selected backend. Each
+backend has an explicit pipeline and image parameter (`parakeet_image`, `qwen_image`,
+`nemotron_image`, and `voxtral_image`), so a future backend-specific runtime can replace its image
+and command without changing the fan-out DAG. All four currently default to the pinned worker image
 `ghcr.io/balex42/transcription-pipeline:sha-b6b6d90`.
 
 `backends` must be a JSON array containing only `parakeet`, `qwen`, `nemotron`, or `voxtral`.
-It is expanded with Argo `withParam`; a comma-separated value is invalid and rejected before any
-ASR command runs. Select one backend:
+It is expanded with Argo `withParam`. The pre-prepare validator rejects malformed or empty arrays,
+unsupported names, and duplicates. A comma-separated value is invalid and fails before normalization,
+diarization, or any ASR command runs. Select one backend:
 
 ```bash
 argo submit --from workflowtemplate/speech-transcription --namespace argo \
@@ -294,18 +295,34 @@ argo submit --from workflowtemplate/speech-transcription --namespace argo \
   -a recording=/path/to/recording.m4a
 ```
 
-The topology is `prepare` once, then one independent validation, transcription, and publication
-path per selected backend. Each transcription task requests one GPU and invokes its fixed backend
-name, so with two available GPUs two ASR tasks can run concurrently while additional selected
-backends wait for Kubernetes scheduling. No pod loads multiple ASR models.
+The topology is `validate-backends`, then `prepare` once and `publish-source` once, then one
+independent transcription and publication path per selected backend. Each transcription task
+requests one GPU and invokes its fixed backend name, so with two available GPUs two ASR tasks can
+run concurrently while additional selected backends wait for Kubernetes scheduling. No pod loads
+multiple ASR models.
 
-Argo uses workflow-UID-scoped keys below `runs/` for temporary prepared and ASR artifacts. The
-publish step retains each canonical result at
-`transcription-data/jobs/<workflow-uid>/<backend>/`, containing `source/recording`,
-`transcript.txt`, `transcript.json`, `asr_words.json`, and `metadata.json`.
-Configure the cluster artifact repository and the `speech-model-cache` PVC outside this repository;
-the template contains no object-storage credentials or storage commands. Retention of the canonical
-prefix is controlled by the RustFS bucket lifecycle policy.
+The default Argo artifact repository stores temporary prepared and ASR artifacts in the
+`argo-artifacts` bucket at `runs/<workflow-uid>/...`. Durable outputs explicitly use the separate
+`transcription-data` bucket:
+
+```text
+jobs/<workflow-uid>/
+  source/recording
+  parakeet/transcript.json
+  parakeet/transcript.txt
+  parakeet/asr_words.json
+  parakeet/metadata.json
+  qwen/...
+  nemotron/...
+  voxtral/...
+```
+
+The source recording is published once per workflow; backend publication tasks only copy their own
+four result files from a non-overlapping input directory. `utility_image` defaults to the lightweight
+`python:3.11-alpine` image for JSON validation and file-copy tasks. Configure the cluster artifact
+repository and the `speech-model-cache` PVC outside this repository; the template contains no
+object-storage credentials or storage commands. Retention of durable prefixes is controlled by the
+RustFS bucket lifecycle policy.
 
 ## Verification
 

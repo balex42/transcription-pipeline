@@ -12,6 +12,8 @@ spec:
     parameters:
       - name: application_image
         value: ghcr.io/balex42/transcription-pipeline:sha-b6b6d90
+      - name: utility_image
+        value: python:3.11-alpine
       - name: parakeet_image
         value: ghcr.io/balex42/transcription-pipeline:sha-b6b6d90
       - name: qwen_image
@@ -45,8 +47,26 @@ spec:
 
       dag:
         tasks:
+          - name: validate-backends
+            template: validate-backends
+            arguments:
+              parameters:
+                - name: backends
+                  value: "{{workflow.parameters.backends}}"
+
           - name: prepare
+            dependencies:
+              - validate-backends
             template: prepare
+            arguments:
+              artifacts:
+                - name: recording
+                  from: "{{inputs.artifacts.recording}}"
+
+          - name: publish-source
+            dependencies:
+              - validate-backends
+            template: publish-source
             arguments:
               artifacts:
                 - name: recording
@@ -64,8 +84,6 @@ spec:
               artifacts:
                 - name: prepared
                   from: "{{tasks.prepare.outputs.artifacts.prepared}}"
-                - name: recording
-                  from: "{{inputs.artifacts.recording}}"
 
     - name: prepare
       inputs:
@@ -127,15 +145,8 @@ spec:
           - name: backend
         artifacts:
           - name: prepared
-          - name: recording
 
       steps:
-        - - name: validate-backend
-            template: validate-backend
-            arguments:
-              parameters:
-                - name: backend
-                  value: "{{inputs.parameters.backend}}"
         - - name: parakeet
             template: parakeet-pipeline
             when: "{{inputs.parameters.backend}} == parakeet"
@@ -143,8 +154,6 @@ spec:
               artifacts:
                 - name: prepared
                   from: "{{inputs.artifacts.prepared}}"
-                - name: recording
-                  from: "{{inputs.artifacts.recording}}"
           - name: qwen
             template: qwen-pipeline
             when: "{{inputs.parameters.backend}} == qwen"
@@ -152,8 +161,6 @@ spec:
               artifacts:
                 - name: prepared
                   from: "{{inputs.artifacts.prepared}}"
-                - name: recording
-                  from: "{{inputs.artifacts.recording}}"
           - name: nemotron
             template: nemotron-pipeline
             when: "{{inputs.parameters.backend}} == nemotron"
@@ -161,8 +168,6 @@ spec:
               artifacts:
                 - name: prepared
                   from: "{{inputs.artifacts.prepared}}"
-                - name: recording
-                  from: "{{inputs.artifacts.recording}}"
           - name: voxtral
             template: voxtral-pipeline
             when: "{{inputs.parameters.backend}} == voxtral"
@@ -170,34 +175,41 @@ spec:
               artifacts:
                 - name: prepared
                   from: "{{inputs.artifacts.prepared}}"
-                - name: recording
-                  from: "{{inputs.artifacts.recording}}"
 
-    - name: validate-backend
+    - name: validate-backends
       inputs:
         parameters:
-          - name: backend
+          - name: backends
 
       container:
-        image: "{{workflow.parameters.application_image}}"
+        image: "{{workflow.parameters.utility_image}}"
         command:
-          - /bin/sh
-          - -ec
+          - python
+          - -c
         args:
           - |
-            case "$BACKEND" in
-              parakeet|qwen|nemotron|voxtral) ;;
-              *) printf 'unsupported backend: %s\n' "$BACKEND" >&2; exit 2 ;;
-            esac
+            import json
+            import os
+
+            supported = {"parakeet", "qwen", "nemotron", "voxtral"}
+            try:
+                backends = json.loads(os.environ["BACKENDS"])
+            except json.JSONDecodeError as error:
+                raise SystemExit(f"backends must be a JSON array: {error}")
+            if not isinstance(backends, list) or not backends:
+                raise SystemExit("backends must be a non-empty JSON array")
+            if any(not isinstance(backend, str) or backend not in supported for backend in backends):
+                raise SystemExit(f"unsupported backend selection: {backends!r}")
+            if len(set(backends)) != len(backends):
+                raise SystemExit(f"duplicate backend selection: {backends!r}")
         env:
-          - name: BACKEND
-            value: "{{inputs.parameters.backend}}"
+          - name: BACKENDS
+            value: "{{inputs.parameters.backends}}"
 
     - name: parakeet-pipeline
       inputs:
         artifacts:
           - name: prepared
-          - name: recording
 
       dag:
         tasks:
@@ -216,8 +228,6 @@ spec:
                 - name: backend
                   value: parakeet
               artifacts:
-                - name: recording
-                  from: "{{inputs.artifacts.recording}}"
                 - name: result
                   from: "{{tasks.transcribe.outputs.artifacts.result}}"
 
@@ -225,7 +235,6 @@ spec:
       inputs:
         artifacts:
           - name: prepared
-          - name: recording
 
       dag:
         tasks:
@@ -244,8 +253,6 @@ spec:
                 - name: backend
                   value: qwen
               artifacts:
-                - name: recording
-                  from: "{{inputs.artifacts.recording}}"
                 - name: result
                   from: "{{tasks.transcribe.outputs.artifacts.result}}"
 
@@ -253,7 +260,6 @@ spec:
       inputs:
         artifacts:
           - name: prepared
-          - name: recording
 
       dag:
         tasks:
@@ -272,8 +278,6 @@ spec:
                 - name: backend
                   value: nemotron
               artifacts:
-                - name: recording
-                  from: "{{inputs.artifacts.recording}}"
                 - name: result
                   from: "{{tasks.transcribe.outputs.artifacts.result}}"
 
@@ -281,7 +285,6 @@ spec:
       inputs:
         artifacts:
           - name: prepared
-          - name: recording
 
       dag:
         tasks:
@@ -300,21 +303,47 @@ spec:
                 - name: backend
                   value: voxtral
               artifacts:
-                - name: recording
-                  from: "{{inputs.artifacts.recording}}"
                 - name: result
                   from: "{{tasks.transcribe.outputs.artifacts.result}}"
+
+    - name: publish-source
+      inputs:
+        artifacts:
+          - name: recording
+            path: /work/source/recording
+            mode: 0644
+
+      outputs:
+        artifacts:
+          - name: published-source
+            path: /work/published
+            archive:
+              none: {}
+            artifactGC:
+              strategy: Never
+            s3:
+              bucket: transcription-data
+              key: jobs/{{workflow.uid}}/source/
+
+      container:
+        image: "{{workflow.parameters.utility_image}}"
+        command:
+          - /bin/sh
+          - -ec
+        args:
+          - mkdir -p /work/published && test -f /work/source/recording && cp /work/source/recording /work/published/recording
+
+        volumeMounts:
+          - name: work
+            mountPath: /work
 
     - name: publish
       inputs:
         parameters:
           - name: backend
         artifacts:
-          - name: recording
-            path: /work/published/source/recording
-            mode: 0644
           - name: result
-            path: /work/published
+            path: /work/result
             mode: 0755
             recurseMode: true
 
@@ -327,15 +356,21 @@ spec:
             artifactGC:
               strategy: Never
             s3:
-              key: transcription-data/jobs/{{workflow.uid}}/{{inputs.parameters.backend}}/
+              bucket: transcription-data
+              key: jobs/{{workflow.uid}}/{{inputs.parameters.backend}}/
 
       container:
-        image: "{{workflow.parameters.application_image}}"
+        image: "{{workflow.parameters.utility_image}}"
         command:
           - /bin/sh
           - -ec
         args:
-          - test -s /work/published/transcript.json && test -s /work/published/metadata.json
+          - |
+            mkdir -p /work/published
+            for file in transcript.json transcript.txt asr_words.json metadata.json; do
+              test -f "/work/result/$file"
+              cp "/work/result/$file" "/work/published/$file"
+            done
 
         volumeMounts:
           - name: work
