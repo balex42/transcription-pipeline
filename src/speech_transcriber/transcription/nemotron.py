@@ -68,6 +68,7 @@ class NemotronTranscriber(Transcriber):
             "language": language,
             "num_lookahead_tokens": lookahead,
             "streaming": True,
+            "timestamp_mode": "rnnt_token_emission_frames",
         }
         self._state = NemotronStreamingState()
 
@@ -260,7 +261,6 @@ def aggregate_nemotron_tokens(entries: list[dict[str, object]], duration: float)
         if all(character in trailing for character in piece):
             if text:
                 text += piece
-                end = end_time
             continue
         if is_boundary and text:
             emit()

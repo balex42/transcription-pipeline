@@ -94,7 +94,7 @@ def test_nemotron_uses_one_cache_aware_generation_for_all_stream_buffers(tmp_pat
 
     assert [(word.text, word.start, word.end) for word in words] == [
         ("Guten", 0.0, 0.16),
-        ("Morgen,", 0.16, 0.32),
+        ("Morgen,", 0.16, 0.24),
     ]
     assert len(model.calls) == 1
     assert model.calls[0]["input_features"] == ["feature-1", "feature-2", "feature-3"]
@@ -150,7 +150,7 @@ def test_token_aggregation_handles_german_punctuation_and_subwords() -> None:
         ("fährt", 0.16, 0.24),
         ("OpenShift-Cluster", 0.24, 0.56),
         ("Straße", 0.56, 0.64),
-        ("3,5.", 0.64, 0.96),
+        ("3,5.", 0.64, 0.88),
     ]
 
 
@@ -228,5 +228,55 @@ def test_token_aggregation_starts_opening_punctuation_after_boundary() -> None:
     )
     assert [(word.text, word.start, word.end) for word in words] == [
         ("Ergebnis", 0.0, 0.08),
-        ("(neu)", 0.16, 0.4),
+        ("(neu)", 0.16, 0.32),
+    ]
+
+
+def test_token_aggregation_does_not_extend_words_to_trailing_punctuation_frames() -> None:
+    words = aggregate_nemotron_tokens(
+        [
+            {"token": " zu", "start": 0.0, "end": 0.08},
+            {"token": "kommen", "start": 0.08, "end": 0.16},
+            {"token": ".", "start": 0.16, "end": 0.24},
+            {"token": " sein", "start": 0.24, "end": 0.32},
+            {"token": ".", "start": 0.32, "end": 0.4},
+            {"token": " Beispiel", "start": 0.4, "end": 0.48},
+            {"token": "?", "start": 0.48, "end": 0.56},
+        ],
+        1.0,
+    )
+
+    assert [(word.text, word.start, word.end) for word in words] == [
+        ("zukommen.", 0.0, 0.16),
+        ("sein.", 0.24, 0.32),
+        ("Beispiel?", 0.4, 0.48),
+    ]
+
+
+def test_token_aggregation_ignores_leading_punctuation_and_keeps_multiple_trailing_marks() -> None:
+    words = aggregate_nemotron_tokens(
+        [
+            {"token": ".", "start": 0.0, "end": 0.08},
+            {"token": " Wort", "start": 0.08, "end": 0.16},
+            {"token": "?", "start": 0.16, "end": 0.24},
+            {"token": "!", "start": 0.24, "end": 0.32},
+        ],
+        1.0,
+    )
+
+    assert [(word.text, word.start, word.end) for word in words] == [
+        ("Wort?!", 0.08, 0.16)
+    ]
+    assert aggregate_nemotron_tokens(
+        [{"token": "!", "start": 0.0, "end": 0.08}], 1.0
+    ) == []
+
+
+def test_token_aggregation_keeps_same_token_punctuation_timestamp() -> None:
+    words = aggregate_nemotron_tokens(
+        [{"token": " sein.", "start": 0.24, "end": 0.32}], 1.0
+    )
+
+    assert [(word.text, word.start, word.end) for word in words] == [
+        ("sein.", 0.24, 0.32)
     ]
