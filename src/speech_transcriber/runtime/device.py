@@ -36,11 +36,18 @@ def inference_dtype(device: str) -> tuple[object, str]:
 
 
 def reset_peak_cuda_memory(device: str) -> None:
-    """Reset per-run CUDA peak accounting when CUDA is the selected device."""
+    """Reset per-run CUDA peak accounting when CUDA is initialized.
+
+    A Torch build without a usable CUDA runtime (CPU-only wheels, runners) is
+    a metrics no-op rather than a recognition failure; real-GPU behavior is
+    unchanged.
+    """
     if device != "cuda":
         return
     import torch
 
+    if not torch.cuda.is_available():
+        return
     torch.cuda.reset_peak_memory_stats()
 
 
@@ -50,6 +57,8 @@ def peak_cuda_memory(device: str) -> tuple[int | None, int | None]:
         return None, None
     import torch
 
+    if not torch.cuda.is_available():
+        return None, None
     return torch.cuda.max_memory_allocated(), torch.cuda.max_memory_reserved()
 
 
