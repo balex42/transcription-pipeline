@@ -18,6 +18,7 @@ runtime = [
   "librosa==0.11.0",
   "mistral-common[audio]==1.10.0",
   "numpy==2.2.6",
+  "peft==0.18.1",
   "pyannote.audio==4.0.7",
   "soundfile==0.14.0",
   "torch==2.8.0",
@@ -39,6 +40,7 @@ dev = [
   "mypy==1.18.2",
   "pytest==8.4.2",
   "ruff==0.12.12",
+  "peft==0.18.1",
 ]
 
 [project.scripts]

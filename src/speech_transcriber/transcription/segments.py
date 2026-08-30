@@ -36,3 +36,41 @@ def reconcile_segment_words(
                 )
             )
     return sorted(merged, key=lambda item: (item.end, item.start or item.end))
+
+
+def reconcile_segment_end_words(
+    segments: list[AudioSegment], words_by_segment: dict[int, list[ASRWord]]
+) -> list[ASRWord]:
+    """Reconcile segmented end-only words without inventing word starts.
+
+    Backends whose native timestamps carry only word end times (start is
+    ``None``) must keep ``start`` unset after rebasing; substituting the
+    segment start would fabricate acoustic boundaries this pipeline never
+    measured. Ownership uses the rebased end timestamp against the same
+    deterministic midpoint boundaries as :func:`reconcile_segment_words`.
+    """
+    merged: list[ASRWord] = []
+    for index, segment in enumerate(segments):
+        previous_boundary = (
+            float("-inf")
+            if index == 0
+            else (segments[index - 1].end + segment.start) / 2
+        )
+        next_boundary = (
+            float("inf")
+            if index == len(segments) - 1
+            else (segment.end + segments[index + 1].start) / 2
+        )
+        for word in words_by_segment.get(segment.index, []):
+            absolute_end = min(max(segment.start + word.end, segment.start), segment.end)
+            if absolute_end < previous_boundary or absolute_end >= next_boundary:
+                continue
+            merged.append(
+                ASRWord(
+                    text=word.text,
+                    start=None,
+                    end=absolute_end,
+                    confidence=word.confidence,
+                )
+            )
+    return sorted(merged, key=lambda item: item.end)

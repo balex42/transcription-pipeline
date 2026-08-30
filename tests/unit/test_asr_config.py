@@ -7,6 +7,9 @@ from speech_transcriber.config import (
     DEFAULT_CANARY_MODEL,
     DEFAULT_FASTER_WHISPER_COMPUTE_TYPE,
     DEFAULT_FASTER_WHISPER_MODEL,
+    DEFAULT_GRANITE_MODEL,
+    DEFAULT_GRANITE_SEGMENT_DURATION,
+    DEFAULT_GRANITE_SEGMENT_OVERLAP,
     DEFAULT_NEMOTRON_MODEL,
     DEFAULT_NEMOTRON_NUM_LOOKAHEAD_TOKENS,
     DEFAULT_PARAKEET_MODEL,
@@ -184,6 +187,70 @@ def test_qwen_rejects_segments_above_forced_alignment_limit() -> None:
         make({"asr_backend": "qwen", "qwen_segment_duration": 301})
 
 
-def test_obsolete_granite_configuration_fails_clearly() -> None:
-    with pytest.raises(ValueError, match="GRANITE_MODEL is no longer supported"):
-        make({}, {"GRANITE_MODEL": "/models/granite"})
+def test_obsolete_granite_rejection_is_removed() -> None:
+    """Granite is supported again; GRANITE_MODEL values no longer fail the config."""
+    config = make({}, {"GRANITE_MODEL": "/models/granite"})
+    assert config.resolved_asr_model == DEFAULT_PARAKEET_MODEL
+
+
+def test_granite_uses_the_official_repository_by_default() -> None:
+    config = make({"asr_backend": "granite"})
+    assert config.asr_backend == "granite"
+    assert config.resolved_asr_model == DEFAULT_GRANITE_MODEL
+
+
+def test_granite_environment_backend_maps_to_its_default_model() -> None:
+    assert make({}, {"ASR_BACKEND": "granite"}).resolved_asr_model == DEFAULT_GRANITE_MODEL
+
+
+def test_granite_explicit_asr_model_override_wins() -> None:
+    config = make({"asr_backend": "granite"}, {"ASR_MODEL": "/models/granite"})
+    assert config.resolved_asr_model == "/models/granite"
+
+
+def test_granite_defaults_to_180_second_segments_with_15_second_overlap() -> None:
+    config = make({"asr_backend": "granite"})
+    assert (
+        config.granite_segment_duration,
+        config.granite_segment_overlap,
+    ) == (DEFAULT_GRANITE_SEGMENT_DURATION, DEFAULT_GRANITE_SEGMENT_OVERLAP) == (180.0, 15.0)
+
+
+def test_granite_segment_settings_allow_overrides() -> None:
+    assert make({}, {"GRANITE_SEGMENT_DURATION": "120"}).granite_segment_duration == 120.0
+    assert make({}, {"GRANITE_SEGMENT_OVERLAP": "20"}).granite_segment_overlap == 20.0
+    assert make(
+        {"asr_backend": "granite", "granite_segment_duration": 90, "granite_segment_overlap": 10}
+    ).granite_segment_duration == 90.0
+
+
+@pytest.mark.parametrize("duration", [0, -5])
+def test_granite_rejects_nonpositive_segment_duration(duration: float) -> None:
+    with pytest.raises(ValueError, match="granite segment overlap"):
+        make({"asr_backend": "granite", "granite_segment_duration": duration})
+
+
+@pytest.mark.parametrize("overlap", [-1, 180, 181])
+def test_granite_rejects_invalid_segment_overlap(overlap: float) -> None:
+    with pytest.raises(ValueError, match="granite segment overlap"):
+        make({"asr_backend": "granite", "granite_segment_overlap": overlap})
+
+
+def test_granite_does_not_share_the_parakeet_or_qwen_segment_settings() -> None:
+    config = make(
+        {"asr_backend": "granite"},
+        {
+            "PARAKEET_SEGMENT_DURATION": "60",
+            "PARAKEET_SEGMENT_OVERLAP": "5",
+            "QWEN_SEGMENT_DURATION": "60",
+        },
+    )
+    assert (config.granite_segment_duration, config.granite_segment_overlap) == (180.0, 15.0)
+    assert (config.parakeet_segment_duration, config.parakeet_segment_overlap) == (60.0, 5.0)
+    assert config.qwen_segment_duration == 60.0
+
+
+def test_granite_participates_in_comparison_mode() -> None:
+    from speech_transcriber.config import COMPARE_BACKENDS
+
+    assert "granite" in COMPARE_BACKENDS

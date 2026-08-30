@@ -24,6 +24,7 @@ flowchart TD
     transcriber --> voxtral[Voxtral\nnative streaming]
     transcriber --> faster_whisper[Faster Whisper\nCTranslate2 native word timestamps]
     transcriber --> canary[Canary\nNeMo native word timestamps]
+    transcriber --> granite[Granite\nTransformers word-end timestamps]
     parakeet --> words[Global ASRWord list]
     primeline --> words
     qwen --> words
@@ -31,6 +32,7 @@ flowchart TD
     voxtral --> words
     faster_whisper --> words
     canary --> words
+    granite --> words
     words --> align[SpeakerAligner]
     timeline --> align
     align --> turns[TurnBuilder]
@@ -48,6 +50,7 @@ Audio segmentation is not part of the generic pipeline. Each ASR backend owns it
 - `voxtral`: `mistralai/Voxtral-Mini-4B-Realtime-2602`. Native Transformers cache-aware streaming in one continuous `generate()` session using processor-defined buffers and EOF padding. `[STREAMING_WORD]` token positions provide approximate emission-group end times; starts remain unset for speaker alignment to infer.
 - `faster-whisper`: `Systran/faster-whisper-large-v3`. A distinct heterogeneous runtime using the native `faster-whisper` / CTranslate2 stack, not Transformers. It is not a restoration of the previously removed Transformers Whisper backend. Native word start/end timestamps and word probabilities map directly to canonical `ASRWord` records; no forced alignment is used. GPU recognition defaults to `float16` compute type; VAD is disabled by default (`vad_filter=False`) because the pipeline already normalizes the full recording and diarizes it separately with pyannote. The configured language is reduced to a Whisper base code (`de-DE` -> `de`); without a language, the model detects it and the detected language/probability is recorded in backend metadata.
 - `canary`: `nvidia/canary-1b-v2` (CC BY 4.0). A distinct NVIDIA NeMo / PyTorch batch recognition runtime for multilingual ASR, including German (`de`). It performs transcription only: `source_lang` and `target_lang` are both the normalized configured language. The adapter splits the normalized WAV into deterministic non-overlapping PCM chunks (default 10 seconds, exact frame boundaries), transcribes them sequentially with a single model load, and rebases native `Hypothesis.timestamp["word"]` records to recording-global `word`, `start`, and `end` values, including punctuation/capitalization; Canary exposes no stable native per-word confidence, so canonical confidence is `null`. No forced alignment, translation, speaker attribution, or manual timestamp de-duplication is used.
+- `granite`: `ibm-granite/granite-speech-4.1-2b-plus`. IBM Granite Speech 4.1 Plus used strictly as an ASR backend through the official Transformers implementation (`AutoProcessor` + `AutoModelForSpeechSeq2Seq`, mapped to `GraniteSpeechPlusForConditionalGeneration` in the pinned release). Timestamp mode transcribes only: Granite's `[Speaker N]` prompt mode is intentionally unused, and pyannote plus the common finalizer remain the only speaker authority. Native word-end timestamps arrive as centisecond `[T:N]` tags emitted with the last three digits, wrapping modulo 1000 centiseconds (10 seconds); the adapter unwraps the rollover deterministically and emits end-only `ASRWord` values (`start=None`, no forced alignment, canonical confidence `null`). Timestamp mode provides no punctuation or capitalization. Long audio uses one invariant internal overlapping segmentation (180-second segments, 15-second overlap) with segment-local ends rebased to recording-global times and never filled with segment starts. The model's bundled audio LoRA requires `peft`, which is part of the generic runtime.
 - Diarization: `pyannote/speaker-diarization-community-1` runs once over the normalized full recording.
 
 Nemotron word intervals are aggregates of RNNT token emission times, not manually aligned acoustic boundaries. Leading-space tokenizer markers start words; trailing punctuation attaches to the preceding word; opening punctuation attaches to the following lexical token.
@@ -68,6 +71,7 @@ The pipeline is language-agnostic. The default ASR language is `de-DE` and can b
 | torchcodec | `0.7.0` |
 | transformers | `5.13.0` |
 | accelerate | `1.12.0` |
+| peft | `0.18.1` |
 | librosa | `0.11.0` |
 | mistral-common | `1.10.0` with `audio` extra |
 | pyannote.audio | `4.0.7` |
@@ -109,13 +113,14 @@ speech-transcriber transcribe audio.m4a --asr nemotron --output ./result/nemotro
 speech-transcriber transcribe audio.m4a --asr voxtral --output ./result/voxtral --device cuda
 speech-transcriber transcribe audio.m4a --asr faster-whisper --output ./result/faster-whisper --device cuda
 speech-transcriber transcribe audio.m4a --asr canary --output ./result/canary --device cuda
+speech-transcriber transcribe audio.m4a --asr granite --output ./result/granite --device cuda
 ```
 
-Compare the five backends installed in the generic runtime with one normalization and one diarization pass:
+Compare the six backends installed in the generic runtime with one normalization and one diarization pass:
 
 ```bash
 speech-transcriber compare audio.m4a \
-  --models parakeet,primeline,qwen,nemotron,voxtral \
+  --models parakeet,primeline,qwen,nemotron,voxtral,granite \
   --output ./comparison --device cuda
 ```
 
@@ -143,7 +148,7 @@ speech-transcriber transcribe-prepared \
   --device cuda
 ```
 
-Repeat `transcribe-prepared` with `primeline`, `qwen`, `nemotron`, `voxtral`, `faster-whisper`, or `canary`. The command does not
+Repeat `transcribe-prepared` with `primeline`, `qwen`, `nemotron`, `voxtral`, `faster-whisper`, `canary`, or `granite`. The command does not
 normalize audio or initialize pyannote, and it never removes or modifies the prepared input.
 Argo Workflows should transfer `/work/prepared` and each backend result through its configured
 artifact repository; the application only reads and writes local filesystem paths.
@@ -161,6 +166,8 @@ PARAKEET_SEGMENT_DURATION
 PARAKEET_SEGMENT_OVERLAP
 QWEN_SEGMENT_DURATION
 QWEN_SEGMENT_OVERLAP
+GRANITE_SEGMENT_DURATION
+GRANITE_SEGMENT_OVERLAP
 NEMOTRON_NUM_LOOKAHEAD_TOKENS
 CANARY_CHUNK_DURATION
 VOXTRAL_DELAY_MS
@@ -178,7 +185,7 @@ HF_HOME
 HF_TOKEN
 ```
 
-Equivalent CLI flags include `--parakeet-segment-duration`, `--qwen-segment-duration`, `--nemotron-num-lookahead-tokens`, `--faster-whisper-compute-type`, and `--canary-chunk-duration`. There is intentionally no global `--chunk-duration` or `CHUNK_DURATION`: those old settings were removed because they incorrectly coupled backend implementations.
+Equivalent CLI flags include `--parakeet-segment-duration`, `--qwen-segment-duration`, `--granite-segment-duration`, `--nemotron-num-lookahead-tokens`, `--faster-whisper-compute-type`, and `--canary-chunk-duration`. There is intentionally no global `--chunk-duration` or `CHUNK_DURATION`: those old settings were removed because they incorrectly coupled backend implementations.
 
 Nemotron validates an explicit lookahead through the loaded processor. Batch transcription defaults to 13 lookahead tokens; set `NEMOTRON_NUM_LOOKAHEAD_TOKENS` or `--nemotron-num-lookahead-tokens` to select another supported latency/accuracy trade-off. The checkpoint derives its first/subsequent streaming buffer sizes and latency from model/processor configuration.
 
@@ -191,6 +198,8 @@ Primeline records `timestamps=true`, `batch_size=1`, `inference_mode=single_pass
 Canary records `timestamps=true`, `batch_size=1`, `inference_mode=sequential_non_overlapping_chunks`, the configured `chunk_duration_seconds` (default 10.0, override with `--canary-chunk-duration` or `CANARY_CHUNK_DURATION`), `chunk_count`, requested language, normalized source language, and same-language ASR target language. Its generic runtime provenance is `nemo` with installed `nemo-toolkit`, PyTorch, and CUDA versions.
 
 Canary recognition uses exactly one inference path for every recording length. The normalized 16 kHz mono PCM WAV is split into deterministic non-overlapping chunks by exact frame arithmetic (`frames_per_chunk = round(chunk_duration * 16000)`); the model is loaded once and each chunk is transcribed sequentially with native word timestamps rebased to recording-global positions (`chunk_start_frame / sample_rate + local_timestamp`). Recordings shorter than one chunk produce a single short chunk through identical machinery. Chunk boundaries depend only on audio frames, never on diarization. Canary records `inference_mode=sequential_non_overlapping_chunks` rather than `native_dynamic_chunking` because the application performs the chunking.
+
+Granite records `timestamp_mode=word_end_centiseconds`, `timestamp_rollover_centiseconds=1000`, the configured `segment_duration_seconds` and `segment_overlap_seconds` (defaults 180/15, override with `--granite-segment-duration`, `--granite-segment-overlap`, `GRANITE_SEGMENT_DURATION`, or `GRANITE_SEGMENT_OVERLAP`), `max_new_tokens=4096`, `speaker_attribution=false`, `forced_alignment=false`, and `do_sample=false`. Its backend models record the resolved snapshot revision; its metrics record segment count, generated word count, decoded timestamp tags, rollover count, and ignored silence markers; its runtime provenance is `transformers` with installed Transformers, PyTorch, and PEFT versions. Granite timestamp mode emits centisecond end timestamps with a 10-second modulo rollover that the adapter unwraps internally; lexical terms without a closing tag, non-monotonic output, or a truncated `max_new_tokens` generation fail instead of producing a silent partial transcript. `_` silence marks are counted as timing records, never emitted as words. Speaker attribution is exclusively downstream pyannote work; Granite's own `[Speaker N]` mode is deliberately not used.
 
 ## Output and Metrics
 
@@ -334,6 +343,7 @@ HF_TOKEN=hf_... speech-transcriber prefetch-models --asr nemotron
 HF_TOKEN=hf_... speech-transcriber prefetch-models --asr voxtral
 HF_TOKEN=hf_... speech-transcriber prefetch-models --asr faster-whisper
 HF_TOKEN=hf_... speech-transcriber prefetch-models --asr canary
+HF_TOKEN=hf_... speech-transcriber prefetch-models --asr granite
 ```
 
 Qwen prefetch includes the configured Qwen forced-aligner artifact. The faster-whisper
@@ -353,9 +363,11 @@ before loading. A repository ID is resolved to the cached snapshot selected by `
 missing, exactly one cached snapshot is used deterministically, and ambiguous or missing caches
 fail instead of triggering an online lookup. Air-gapped success therefore requires the full
 prefetched repository: Voxtral's snapshot must contain everything `AutoProcessor` and
-`VoxtralRealtimeForConditionalGeneration` read. An absolute path to an existing local model
-directory or file (for example `/models/voxtral-mini-4b-realtime-2602`) is always used directly
-and bypasses the cache layout entirely.
+`VoxtralRealtimeForConditionalGeneration` read. Granite's snapshot must contain everything
+`AutoProcessor` and `AutoModelForSpeechSeq2Seq` read, including the bundled PEFT audio-LoRA
+adapter files; the resolved snapshot path is passed identically to both. An absolute path to an
+existing local model directory or file (for example `/models/voxtral-mini-4b-realtime-2602`) is
+always used directly and bypasses the cache layout entirely.
 
 Also obtain the accepted pyannote artifact through the approved process. Transfer approved artifacts and externally generated checksums through the air gap. A production volume can use:
 
@@ -369,7 +381,8 @@ Also obtain the accepted pyannote artifact through the approved process. Transfe
 ├── nemotron-3.5-asr-streaming-0.6b/
 ├── voxtral-mini-4b-realtime-2602/
 ├── faster-whisper-large-v3/
-└── canary-1b-v2/
+├── canary-1b-v2/
+└── granite-speech-4.1-2b-plus/
 ```
 
 Run with mounted local paths and no runtime network access:
@@ -479,15 +492,16 @@ podman run --rm --device nvidia.com/gpu=all \
 one lightweight `validate-backends` task before a GPU-limited `prepare` task. It then fans out one
 GPU-limited `recognize-prepared`, common CPU-only finalization, and non-GPU `publish` chain for
 every selected backend. Each backend has an explicit recognition template and image parameter (`parakeet_image`, `qwen_image`,
-`nemotron_image`, `voxtral_image`, `faster_whisper_image`, and `canary_image`), so a future backend-specific runtime can replace its image
-and command as long as it produces the ASR artifact, without changing the fan-out DAG. The four Transformers backends currently default to the pinned worker image
+`nemotron_image`, `voxtral_image`, `faster_whisper_image`, `canary_image`, and `granite_image`), so a future backend-specific runtime can replace its image
+and command as long as it produces the ASR artifact, without changing the fan-out DAG. The five Transformers backends currently default to the pinned worker image
 `ghcr.io/balex42/transcription-pipeline:sha-c8e67c5`; `faster_whisper_image` defaults to the
 dedicated `ghcr.io/balex42/transcription-pipeline-faster-whisper:sha-c8e67c5` repository and
 `canary_image` to the dedicated `ghcr.io/balex42/transcription-pipeline-canary:sha-c8e67c5` image.
 `primeline_image` defaults to the same dedicated NeMo image as `canary_image` because Primeline
-shares the Canary NeMo ASR runtime stack.
+shares the Canary NeMo ASR runtime stack. `granite_image` defaults to the generic pinned worker
+image because Granite runs on the generic Transformers stack plus PEFT.
 
-The WorkflowTemplate and all seven Python runtime image parameters form one compatible release pair.
+The WorkflowTemplate and all eight Python runtime image parameters form one compatible release pair.
 `sha-c8e67c5` must be published by the container workflow before applying this template. If it is not
 available in the target registry, publish that source revision or override every Python runtime image
 parameter with the same schema-v2-compatible immutable release tag or digest. Do not mix schema-v1
@@ -500,7 +514,7 @@ immutable SHA; because the follow-up commit touches only `deploy/argo/**`,
 it does not rebuild any image. Do not invent immutable dedicated-runtime SHA tags before CI has built them.
 
 `backends` must be a JSON array containing only `parakeet`, `primeline`, `qwen`, `nemotron`,
-`voxtral`, `faster-whisper`, or `canary`.
+`voxtral`, `faster-whisper`, `canary`, or `granite`.
 The pre-prepare validator rejects malformed or empty arrays, unsupported names, and duplicates, then
 emits one boolean output per backend to condition the six direct DAG branches. A comma-separated
 value is invalid and fails before normalization, diarization, or any ASR command runs. Select one
@@ -521,7 +535,7 @@ argo submit --from workflowtemplate/speech-transcription --namespace argo \
 
 The top-level DAG is `validate-backends`, then `prepare` once and `publish-source` once, followed
 by direct `recognize-parakeet`, `recognize-qwen`, `recognize-nemotron`, `recognize-voxtral`,
-`recognize-faster-whisper`, and `recognize-canary`
+`recognize-faster-whisper`, `recognize-canary`, and `recognize-granite`
 branches when selected. Each selected branch is `recognize` (GPU), `finalize` (CPU), then `publish`
 (CPU); there are no backend dispatcher or pipeline wrapper nodes. `publish-source` is CPU-only,
 does not need prepared audio, and intentionally runs in parallel with `prepare` after validation.
@@ -552,6 +566,7 @@ jobs/<workflow-uid>/
   voxtral/...
   faster-whisper/...
   canary/...
+  granite/...
 ```
 
 The source recording is published once per workflow; backend publication tasks only copy their own
@@ -574,7 +589,7 @@ tmpfs mount that reproduces the Argo `emptyDir` behavior. Version-tag pushes and
 triggers, so an image-tag-only Argo update does not create a follow-up image build. Each image has
 its own immutable `sha-<commit>` tag namespace.
 
-Only `prepare` and the seven recognition templates declare and mount `speech-model-cache` read-only
+Only `prepare` and the eight recognition templates declare and mount `speech-model-cache` read-only
 at `/models`; validation, finalization, and publication pods do not depend on model storage.
 A ReadWriteOnce PVC can be mounted by multiple pods on the same node, so it does not require serializing backend GPU pods.
 If selected backend pods must run on different nodes, an RWO volume may prevent multi-node cache

@@ -103,7 +103,7 @@ def test_prefetch_canary_uses_only_its_model_repository(monkeypatch: object) -> 
 def test_compare_defaults_to_generic_runtime_backends() -> None:
     parser = cli.build_parser()
     args = parser.parse_args(["compare", "input.wav", "--output", "output"])
-    assert args.models == "parakeet,primeline,qwen,nemotron,voxtral"
+    assert args.models == "parakeet,primeline,qwen,nemotron,voxtral,granite"
 
 
 def test_compare_rejects_heterogeneous_backends_before_creating_pipeline(
