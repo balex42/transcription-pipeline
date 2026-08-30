@@ -219,10 +219,10 @@ def test_segment_reconciliation_rebases_ends_and_keeps_start_none() -> None:
     )
 
     assert [(word.text, word.start, word.end) for word in words] == [("Hallo", None, 181.25)]
-    assert metrics == {
-        "seam_deduplicated_words": 0.0,
-        "reconciliation_clipped_word_ends": 0.0,
-    }
+    assert metrics["seam_deduplicated_words"] == 0.0
+    assert metrics["seam_match_count"] == 0.0
+    assert metrics["seam_words_recovered"] == 0.0
+    assert metrics["reconciliation_clipped_word_ends"] == 0.0
 
 
 def test_segment_reconciliation_never_fills_starts_with_segment_starts() -> None:
@@ -279,8 +279,8 @@ def test_segment_reconciliation_deduplicates_overlap_words() -> None:
     ]
 
 
-def test_segment_reconciliation_deduplicates_seam_runs_when_clocks_disagree() -> None:
-    """Overlap words shared across a seam keep one copy even off-midpoint."""
+def test_segment_reconciliation_seam_match_without_surviving_duplicates() -> None:
+    """Clocks agreeing at a seam matches words but needs no seam action."""
     segments = [segment(0.0, 180.0, 0), segment(165.0, 345.0, 1)]
     words, metrics = reconcile_segment_end_words(
         segments,
@@ -303,8 +303,9 @@ def test_segment_reconciliation_deduplicates_seam_runs_when_clocks_disagree() ->
         },
     )
 
-    # The b-side copies are dropped in favor of the earlier segment even
-    # though seg1's copies would own the midpoint range.
+    # The b copies rebase onto the a timestamps; midpoint (172.5) already
+    # gives every word exactly one survivor, so the seam match only emits
+    # telemetry and drops nothing.
     assert [(word.text, word.end) for word in words] == [
         ("weit", 171.47),
         ("weit", 171.66),
@@ -313,34 +314,80 @@ def test_segment_reconciliation_deduplicates_seam_runs_when_clocks_disagree() ->
         ("fenster", 172.29),
         ("gelehnt", 172.60),
     ]
-    assert metrics["seam_deduplicated_words"] == 5.0
+    assert metrics["seam_matched_words"] == 5.0
+    assert metrics["seam_deduplicated_words"] == 0.0
+    assert metrics["seam_clock_offset_seconds"] == 0.0
 
 
-def test_segment_reconciliation_protects_earlier_copy_beyond_midpoint() -> None:
-    """A matched run's earlier copy survives even past the midpoint boundary."""
+def test_segment_reconciliation_drops_duplicates_when_clocks_disagree() -> None:
+    """Off-midpoint duplicates from a later clock keep only the a copy."""
     segments = [segment(0.0, 180.0, 0), segment(165.0, 345.0, 1)]
-    words, _ = reconcile_segment_end_words(
+    words, metrics = reconcile_segment_end_words(
         segments,
         {
             0: [
-                ASRWord(text="eins", start=None, end=100.0),
+                ASRWord(text="hat", start=None, end=170.62),
+                ASRWord(text="sich", start=None, end=170.77),
+                ASRWord(text="da", start=None, end=170.98),
+                ASRWord(text="weit", start=None, end=171.25),
+                ASRWord(text="weit", start=None, end=171.42),
+                ASRWord(text="aus", start=None, end=171.56),
+                ASRWord(text="dem", start=None, end=171.70),
+                ASRWord(text="fenster", start=None, end=172.06),
+                ASRWord(text="gelehnt", start=None, end=172.38),
+            ],
+            # The same physical words, one second later on seg1's clock, so
+            # the b copies of aus/dem/fenster/gelehnt rebase past the
+            # midpoint where both sides would otherwise survive.
+            1: [
+                ASRWord(text="hat", start=None, end=6.62),
+                ASRWord(text="sich", start=None, end=6.77),
+                ASRWord(text="da", start=None, end=6.98),
+                ASRWord(text="weit", start=None, end=7.25),
+                ASRWord(text="weit", start=None, end=7.42),
+                ASRWord(text="aus", start=None, end=7.56),
+                ASRWord(text="dem", start=None, end=7.70),
+                ASRWord(text="fenster", start=None, end=8.06),
+                ASRWord(text="gelehnt", start=None, end=8.38),
+                ASRWord(text="er", start=None, end=8.46),
+            ],
+        },
+    )
+
+    texts = [word.text for word in words]
+    for token in ("hat", "aus", "dem", "fenster", "gelehnt", "er"):
+        assert texts.count(token) == 1, texts
+    assert metrics["seam_match_count"] == 1.0
+    assert metrics["seam_deduplicated_words"] == 4.0
+    assert metrics["seam_clock_offset_seconds"] == -1.0
+
+
+def test_segment_reconciliation_protects_earlier_copy_beyond_midpoint() -> None:
+    """A matched run midpoint would lose on both sides keeps one survivor."""
+    segments = [segment(0.0, 180.0, 0), segment(165.0, 345.0, 1)]
+    words, metrics = reconcile_segment_end_words(
+        segments,
+        {
+            0: [
                 ASRWord(text="zwei", start=None, end=173.0),
                 ASRWord(text="drei", start=None, end=173.5),
             ],
+            # Seg1's clock runs two seconds ahead, so its copies rebase to
+            # 167/167.5, below the midpoint where seg1 no longer owns them,
+            # while the a copies sit beyond the midpoint where seg0 no
+            # longer owns them: plain midpoint would lose both words.
             1: [
-                ASRWord(text="zwei", start=None, end=8.0),
-                ASRWord(text="drei", start=None, end=8.5),
+                ASRWord(text="zwei", start=None, end=2.0),
+                ASRWord(text="drei", start=None, end=2.5),
                 ASRWord(text="vier", start=None, end=9.0),
             ],
         },
     )
 
-    assert [(word.text, word.end) for word in words] == [
-        ("eins", 100.0),
-        ("zwei", 173.0),
-        ("drei", 173.5),
-        ("vier", 174.0),
-    ]
+    texts = [word.text for word in words]
+    assert texts.count("zwei") == 1
+    assert texts.count("drei") == 1
+    assert metrics["seam_words_recovered"] == 2.0
 
 
 def test_segment_reconciliation_requires_multi_word_run_for_dedup() -> None:

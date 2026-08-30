@@ -321,6 +321,29 @@ def test_recognition_device_passes_explicit_values_without_torch() -> None:
     assert cli._recognition_device("cpu") == "cpu"
 
 
+def test_memory_metrics_skip_faster_whisper_and_non_cuda_devices() -> None:
+    """The torch-free faster-whisper image must never construct Torch metrics."""
+    assert cli._memory_metrics("cuda", "faster-whisper") is None
+    assert cli._memory_metrics("cpu", "granite") is None
+
+
+def test_memory_metrics_use_torch_runtime_for_generic_backends(monkeypatch: object) -> None:
+    """Torch-bearing backends get CUDA peak accounting through the adapter."""
+
+    class FakeMetrics:
+        def __init__(self, device: str) -> None:
+            self.device = device
+
+    import speech_transcriber.runtime.device as device_module
+
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        device_module, "TorchMemoryMetrics", FakeMetrics
+    )
+    metrics = cli._memory_metrics("cuda", "granite")
+    assert isinstance(metrics, FakeMetrics)
+    assert metrics.device == "cuda"
+
+
 def test_new_command_parsing() -> None:
     parser = cli.build_parser()
     prepare = parser.parse_args(["prepare", "input.wav", "--output", "/tmp/prepared"])
