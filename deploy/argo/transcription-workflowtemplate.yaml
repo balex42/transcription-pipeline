@@ -13,21 +13,21 @@ spec:
       - name: utility_image
         value: python:3.11-alpine
       - name: application_image
-        value: ghcr.io/balex42/transcription-pipeline:sha-736019a
+        value: ghcr.io/balex42/transcription-pipeline:sha-c8e67c5
       - name: parakeet_image
-        value: ghcr.io/balex42/transcription-pipeline:sha-736019a
+        value: ghcr.io/balex42/transcription-pipeline:sha-c8e67c5
       - name: qwen_image
-        value: ghcr.io/balex42/transcription-pipeline:sha-736019a
+        value: ghcr.io/balex42/transcription-pipeline:sha-c8e67c5
       - name: nemotron_image
-        value: ghcr.io/balex42/transcription-pipeline:sha-736019a
+        value: ghcr.io/balex42/transcription-pipeline:sha-c8e67c5
       - name: voxtral_image
-        value: ghcr.io/balex42/transcription-pipeline:sha-736019a
+        value: ghcr.io/balex42/transcription-pipeline:sha-c8e67c5
       - name: primeline_image
-        value: ghcr.io/balex42/transcription-pipeline-canary:sha-736019a
+        value: ghcr.io/balex42/transcription-pipeline-canary:sha-c8e67c5
       - name: faster_whisper_image
-        value: ghcr.io/balex42/transcription-pipeline-faster-whisper:sha-736019a
+        value: ghcr.io/balex42/transcription-pipeline-faster-whisper:sha-c8e67c5
       - name: canary_image
-        value: ghcr.io/balex42/transcription-pipeline-canary:sha-736019a
+        value: ghcr.io/balex42/transcription-pipeline-canary:sha-c8e67c5
       - name: backends
         value: '["parakeet","primeline","qwen","nemotron","voxtral","faster-whisper","canary"]'
 

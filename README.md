@@ -481,14 +481,14 @@ GPU-limited `recognize-prepared`, common CPU-only finalization, and non-GPU `pub
 every selected backend. Each backend has an explicit recognition template and image parameter (`parakeet_image`, `qwen_image`,
 `nemotron_image`, `voxtral_image`, `faster_whisper_image`, and `canary_image`), so a future backend-specific runtime can replace its image
 and command as long as it produces the ASR artifact, without changing the fan-out DAG. The four Transformers backends currently default to the pinned worker image
-`ghcr.io/balex42/transcription-pipeline:sha-736019a`; `faster_whisper_image` defaults to the
-dedicated `ghcr.io/balex42/transcription-pipeline-faster-whisper:sha-736019a` repository and
-`canary_image` to the dedicated `ghcr.io/balex42/transcription-pipeline-canary:sha-736019a` image.
+`ghcr.io/balex42/transcription-pipeline:sha-c8e67c5`; `faster_whisper_image` defaults to the
+dedicated `ghcr.io/balex42/transcription-pipeline-faster-whisper:sha-c8e67c5` repository and
+`canary_image` to the dedicated `ghcr.io/balex42/transcription-pipeline-canary:sha-c8e67c5` image.
 `primeline_image` defaults to the same dedicated NeMo image as `canary_image` because Primeline
 shares the Canary NeMo ASR runtime stack.
 
 The WorkflowTemplate and all seven Python runtime image parameters form one compatible release pair.
-`sha-736019a` must be published by the container workflow before applying this template. If it is not
+`sha-c8e67c5` must be published by the container workflow before applying this template. If it is not
 available in the target registry, publish that source revision or override every Python runtime image
 parameter with the same schema-v2-compatible immutable release tag or digest. Do not mix schema-v1
 workers with schema-v2 prepared/ASR artifacts; upgrade the template and runtime images together.
