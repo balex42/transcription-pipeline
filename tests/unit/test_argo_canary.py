@@ -12,7 +12,7 @@ def test_canary_argo_branch_uses_dedicated_gpu_recognition_and_common_finalizer(
         for parameter in document["spec"]["arguments"]["parameters"]
     }
 
-    assert parameters["canary_image"] == "ghcr.io/balex42/transcription-pipeline-canary:sha-f425d6e"
+    assert parameters["canary_image"] == "ghcr.io/balex42/transcription-pipeline-canary:sha-fd9b008"
 
     validator = templates["validate-backends"]
     output_paths = {
@@ -64,7 +64,7 @@ def test_primeline_argo_branch_uses_nemo_image_gpu_recognition_and_common_finali
     }
 
     assert parameters["primeline_image"] == (
-        "ghcr.io/balex42/transcription-pipeline-canary:sha-f425d6e"
+        "ghcr.io/balex42/transcription-pipeline-canary:sha-fd9b008"
     )
     assert parameters["backends"] == (
         '["parakeet","primeline","qwen","nemotron","voxtral","faster-whisper","canary"]'
