@@ -102,7 +102,7 @@ def test_granite_segment_settings_from_config_are_passed_to_adapter() -> None:
     assert transcriber.segment_overlap == 10.0
 
 
-def test_granite_imports_stay_lazy_without_transformers_or_peft() -> None:
+def test_granite_imports_stay_lazy_without_transformers_or_torch() -> None:
     """Factory construction must not import Transformers, Torch, or PEFT."""
     command = """
 import builtins, sys

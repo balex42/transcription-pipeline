@@ -1773,27 +1773,6 @@ wheels = [
 ]
 
 [[package]]
-name = "peft"
-version = "0.18.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "accelerate" },
-    { name = "huggingface-hub" },
-    { name = "numpy" },
-    { name = "packaging" },
-    { name = "psutil" },
-    { name = "pyyaml" },
-    { name = "safetensors" },
-    { name = "torch" },
-    { name = "tqdm" },
-    { name = "transformers" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/d8/48/147b3ea999560b40a34fd78724c7777aa9d18409c2250bdcaf9c4f2db7fc/peft-0.18.1.tar.gz", hash = "sha256:2dd0d6bfce936d1850e48aaddbd250941c5c02fc8ef3237cd8fd5aac35e0bae2", size = 635030, upload-time = "2026-01-09T13:08:01.136Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/b3/14/b4e3f574acf349ae6f61f9c000a77f97a3b315b4bb6ad03791e79ae4a568/peft-0.18.1-py3-none-any.whl", hash = "sha256:0bf06847a3551e3019fc58c440cffc9a6b73e6e2962c95b52e224f77bbdb50f1", size = 556960, upload-time = "2026-01-09T13:07:55.865Z" },
-]
-
-[[package]]
 name = "pillow"
 version = "12.3.0"
 source = { registry = "https://pypi.org/simple" }
@@ -2786,7 +2765,6 @@ dev = [
     { name = "mistral-common", extra = ["audio"] },
     { name = "mypy" },
     { name = "numpy" },
-    { name = "peft" },
     { name = "pyannote-audio" },
     { name = "pytest" },
     { name = "ruff" },
@@ -2801,7 +2779,6 @@ runtime = [
     { name = "librosa" },
     { name = "mistral-common", extra = ["audio"] },
     { name = "numpy" },
-    { name = "peft" },
     { name = "pyannote-audio" },
     { name = "soundfile" },
     { name = "torch" },
@@ -2821,8 +2798,6 @@ requires-dist = [
     { name = "mypy", marker = "extra == 'dev'", specifier = "==1.18.2" },
     { name = "numpy", marker = "extra == 'dev'", specifier = "==2.2.6" },
     { name = "numpy", marker = "extra == 'runtime'", specifier = "==2.2.6" },
-    { name = "peft", marker = "extra == 'dev'", specifier = "==0.18.1" },
-    { name = "peft", marker = "extra == 'runtime'", specifier = "==0.18.1" },
     { name = "pyannote-audio", marker = "extra == 'dev'", specifier = "==4.0.7" },
     { name = "pyannote-audio", marker = "extra == 'runtime'", specifier = "==4.0.7" },
     { name = "pytest", marker = "extra == 'dev'", specifier = "==8.4.2" },

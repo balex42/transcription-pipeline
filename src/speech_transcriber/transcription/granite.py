@@ -33,6 +33,10 @@ from speech_transcriber.transcription.segments import reconcile_segment_end_word
 
 LOGGER = logging.getLogger(__name__)
 
+GRANITE_SYSTEM_PROMPT = (
+    "Knowledge Cutoff Date: April 2024.\nToday's Date: December 19, 2024.\n"
+    "You are Granite, developed by IBM. You are a helpful AI assistant"
+)
 GRANITE_TIMESTAMP_PROMPT = (
     "<|audio|> Timestamps: Transcribe the speech. "
     "After each word, add a timestamp tag showing the end time in centiseconds, "
@@ -42,6 +46,11 @@ GRANITE_TIMESTAMP_TAG = re.compile(r"\[T:(\d+)\]")
 GRANITE_SILENCE_MARKER = "_"
 GRANITE_MAX_NEW_TOKENS = 4096
 GRANITE_ROLLOVER_CENTISECONDS = 1000
+GRANITE_TIMESTAMP_MAX_CENTISECONDS = 999
+# Parser-side sanity ceiling for segment-local word ends. The reconciliation
+# step reports the exact out-of-segment clip count; anything beyond this
+# fallback would indicate corrupt output for even the widest configuration.
+GRANITE_SEGMENT_DURATION_FALLBACK = 3600.0
 
 
 class _GraniteTokenizer(Protocol):
@@ -110,7 +119,7 @@ class GraniteTranscriber(Transcriber):
         self.runtime_provenance = RuntimeProvenance(
             name="transformers",
             version="unknown",
-            components={"torch": "unknown", "peft": "unknown"},
+            components={"torch": "unknown"},
         )
 
     def load(self) -> None:
@@ -127,6 +136,7 @@ class GraniteTranscriber(Transcriber):
         lexical_count = 0
         silence_count = 0
         timestamp_count = 0
+        parser_clips = 0
         try:
             for segment in segments:
                 text = self._generate_segment(processor, model, segment)
@@ -136,6 +146,7 @@ class GraniteTranscriber(Transcriber):
                 lexical_count += len(metadata.words)
                 silence_count += metadata.silence_marker_count
                 timestamp_count += metadata.timestamp_count
+                parser_clips += metadata.clip_count
         except ASROutputError:
             raise
         except Exception as error:
@@ -143,37 +154,48 @@ class GraniteTranscriber(Transcriber):
                 "Granite recognition failed for "
                 f"{audio.path} with model {self.model_reference}: {error}"
             ) from error
-        words = reconcile_segment_end_words(segments, words_by_segment)
+        words, seam = reconcile_segment_end_words(segments, words_by_segment)
         self.backend_metrics["generated_word_count"] = float(lexical_count)
         self.backend_metrics["timestamp_tags_decoded"] = float(timestamp_count)
         self.backend_metrics["timestamp_rollovers"] = float(rollovers)
         self.backend_metrics["silence_markers_ignored"] = float(silence_count)
+        self.backend_metrics["parser_clipped_word_ends"] = float(parser_clips)
         self.backend_metrics["word_count"] = float(len(words))
+        self.backend_metrics.update(seam)
         return words
 
     def _generate_segment(
         self, processor: _GraniteProcessor, model: Any, segment: Any
     ) -> str:
-        """Run timestamp-mode generation for one PCM segment and decode its text."""
+        """Run timestamp-mode generation for one PCM segment and decode its text.
+
+        This mirrors IBM's official Granite Speech example: system prompt plus
+        user prompt rendered through the chat template, one batched processor
+        call with ``device=`` (no manual ``sampling_rate`` forwarding, which
+        the processor would pass to the tokenizer), and deterministic
+        single-beam decoding.
+        """
         import torch
 
         dtype, _ = inference_dtype(self.device)
         # The <|audio|> placeholder inside the prompt text is expanded by the
         # processor against the passed audio, following the official Granite
         # Speech chat-template transcription recipe.
-        conversation: list[dict[str, object]] = [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": GRANITE_TIMESTAMP_PROMPT},
-                ],
-            }
-        ]
-        prompt = _apply_chat_template(processor, conversation)
+        system_message: dict[str, object] = {
+            "role": "system",
+            "content": GRANITE_SYSTEM_PROMPT,
+        }
+        user_message: dict[str, object] = {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": GRANITE_TIMESTAMP_PROMPT},
+            ],
+        }
+        prompt = _apply_chat_template(processor, [system_message, user_message])
         inputs = processor(
             prompt,
             audio=[segment.audio],
-            sampling_rate=segment.sample_rate,
+            device=self.device,
             return_tensors="pt",
         )
         inputs = inputs.to(self.device, dtype=dtype)
@@ -181,6 +203,7 @@ class GraniteTranscriber(Transcriber):
             output = model.generate(
                 **inputs,
                 do_sample=False,
+                num_beams=1,
                 max_new_tokens=GRANITE_MAX_NEW_TOKENS,
                 return_dict_in_generate=True,
             )
@@ -224,10 +247,7 @@ class GraniteTranscriber(Transcriber):
             self.runtime_provenance = RuntimeProvenance(
                 name="transformers",
                 version=_package_version("transformers"),
-                components={
-                    "torch": _package_version("torch"),
-                    "peft": _package_version("peft"),
-                },
+                components={"torch": _package_version("torch")},
             )
             return model, processor
         except Exception as error:
@@ -272,6 +292,7 @@ class GraniteTimestampMetadata:
     timestamp_count: int
     rollover_count: int
     silence_marker_count: int
+    clip_count: int = 0
 
 
 @dataclass
@@ -287,10 +308,12 @@ def parse_granite_timestamp_words(text: str) -> GraniteTimestampMetadata:
     ``[T:N]`` tags close the preceding lexical word with its END time in
     centiseconds. Only the last three digits are emitted, so the count wraps
     every 1000 centiseconds (10 seconds) and is unwrapped by tracking the
-    accumulated rollover count. ``_`` marks are Granite's silence markers:
-    timing records that are never transcript words and never close a lexical
-    word. Lexical text without a following valid timestamp is model output
-    corruption and raises ``ASROutputError`` instead of guessing timestamps.
+    accumulated rollover count. Tags above 999 cannot be modulo-1000 output
+    and indicate model corruption, which raises ``ASROutputError`` instead of
+    guessing. ``_`` marks are Granite's silence markers: timing records that
+    are never transcript words and never close a lexical word. Lexical text
+    without a following valid timestamp is model output corruption and raises
+    ``ASROutputError`` instead of guessing timestamps.
     """
     words: list[ASRWord] = []
     pending: _PendingWord | None = None
@@ -298,6 +321,7 @@ def parse_granite_timestamp_words(text: str) -> GraniteTimestampMetadata:
     previous_end_cs = -1
     rollover_wraps = 0
     silence_markers = 0
+    clip_count = 0
     # True while a `_` marker awaits its own closing [T:N] tag.
     pending_silence = False
 
@@ -305,6 +329,11 @@ def parse_granite_timestamp_words(text: str) -> GraniteTimestampMetadata:
         tag_match = GRANITE_TIMESTAMP_TAG.fullmatch(token)
         if tag_match is not None:
             raw_centiseconds = int(tag_match.group(1))
+            if raw_centiseconds > GRANITE_TIMESTAMP_MAX_CENTISECONDS:
+                raise ASROutputError(
+                    "Granite timestamp tag [T:"
+                    f"{raw_centiseconds}] exceeds the three-digit modulo-1000 range"
+                )
             absolute_end, rollover_wraps = _unwrap_timestamp(
                 raw_centiseconds, previous_end_cs, rollover_wraps
             )
@@ -322,8 +351,14 @@ def parse_granite_timestamp_words(text: str) -> GraniteTimestampMetadata:
                     f"unwrapping: '{pending.text}' ends at {absolute_end / 100:.2f}s "
                     f"before {previous_end_cs / 100:.2f}s"
                 )
+            if absolute_end / 100 > GRANITE_SEGMENT_DURATION_FALLBACK:
+                # Beyond any configured segment the tag cannot be right;
+                # clamp and surface it through diagnostics instead of
+                # silently emitting bogus word ends.
+                clip_count += 1
+                absolute_end = int(GRANITE_SEGMENT_DURATION_FALLBACK * 100)
             words.append(ASRWord(text=pending.text, start=None, end=absolute_end / 100))
-            previous_end_cs = absolute_end
+            previous_end_cs = max(previous_end_cs, absolute_end)
             pending = None
             continue
         for piece in token.split():
@@ -343,9 +378,10 @@ def parse_granite_timestamp_words(text: str) -> GraniteTimestampMetadata:
         raise ASROutputError(f"Granite lexical term '{pending.text}' has no closing timestamp tag")
     return GraniteTimestampMetadata(
         words=words,
-        timestamp_count=len(words),
+        timestamp_count=int(text.count("[T:")),
         rollover_count=rollover_wraps,
         silence_marker_count=silence_markers,
+        clip_count=clip_count,
     )
 
 

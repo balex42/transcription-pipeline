@@ -98,6 +98,30 @@ def test_silence_markers_never_become_words_or_close_words() -> None:
     assert metadata.silence_marker_count == 1
 
 
+def test_silence_tag_timestamps_count_towards_timestamp_count() -> None:
+    """The true tag total includes silence markers, matching generated tokens."""
+    metadata = parse_granite_timestamp_words("hallo [T:45] _ [T:120] welt [T:200]")
+
+    assert metadata.timestamp_count == 3
+    assert metadata.silence_marker_count == 1
+
+
+def test_out_of_range_timestamp_tag_fails_instead_of_guessing() -> None:
+    """Tags above 999 cannot be modulo-1000 output and indicate corruption."""
+    with pytest.raises(ASROutputError, match=r"exceeds the three-digit modulo-1000 range"):
+        parse_granite_timestamp_words("hallo [T:1450] welt [T:1620]")
+
+
+def test_tag_after_silence_never_closes_a_lexical_word() -> None:
+    """A `_` timing record does not consume the pending word's later tag."""
+    metadata = parse_granite_timestamp_words("hallo _ [T:200] welt [T:300]")
+
+    assert [(word.text, word.end) for word in metadata.words] == [
+        ("hallo", 2.0),
+        ("welt", 3.0),
+    ]
+
+
 def test_leading_silence_marker_is_ignored() -> None:
     metadata = parse_granite_timestamp_words("_ [T:60] hallo [T:120]")
 
@@ -107,11 +131,12 @@ def test_leading_silence_marker_is_ignored() -> None:
 
 def test_word_searches_including_multibyte_text_are_preserved() -> None:
     metadata = parse_granite_timestamp_words(
-        "Zuckersteuer [T:830] Bundesländer [T:1450] 'rum [T:1620]"
+        "Zuckersteuer [T:830] Bundesländer [T:950] 'rum [T:620]"
     )
 
     assert [word.text for word in metadata.words] == ["Zuckersteuer", "Bundesländer", "'rum"]
     assert all(word.start is None for word in metadata.words)
+    assert metadata.timestamp_count == 3
 
 
 @pytest.mark.parametrize(
@@ -189,16 +214,20 @@ def test_punctuation_is_not_required_by_the_parser() -> None:
 
 def test_segment_reconciliation_rebases_ends_and_keeps_start_none() -> None:
     segments = [segment(180.0, 360.0)]
-    words = reconcile_segment_end_words(
+    words, metrics = reconcile_segment_end_words(
         segments, {0: [ASRWord(text="Hallo", start=None, end=1.25)]}
     )
 
     assert [(word.text, word.start, word.end) for word in words] == [("Hallo", None, 181.25)]
+    assert metrics == {
+        "seam_deduplicated_words": 0.0,
+        "reconciliation_clipped_word_ends": 0.0,
+    }
 
 
 def test_segment_reconciliation_never_fills_starts_with_segment_starts() -> None:
-    segments = [segment(0.0, 180.0), segment(165.0, 345.0, index=1)]
-    words = reconcile_segment_end_words(
+    segments = [segment(0.0, 180.0, 0), segment(165.0, 345.0, 1)]
+    words, _ = reconcile_segment_end_words(
         segments,
         {
             0: [
@@ -213,6 +242,7 @@ def test_segment_reconciliation_never_fills_starts_with_segment_starts() -> None
     )
 
     # Overlap midpoint is (165 + 180) / 2 = 172.5; ownership is by rebased end.
+    # No lexical seam match (single shared token), so midpoint rules apply.
     assert [(word.text, word.start, word.end) for word in words] == [
         ("eins", None, 170.0),
         ("zwei", None, 175.0),
@@ -226,11 +256,11 @@ def segment_words(text: str, *ends: float) -> list[ASRWord]:
 
 def test_segment_reconciliation_deduplicates_overlap_words() -> None:
     segments = [
-        segment(0.0, 180.0),
-        segment(165.0, 345.0, index=1),
-        segment(330.0, 460.0, index=2),
+        segment(0.0, 180.0, 0),
+        segment(165.0, 345.0, 1),
+        segment(330.0, 460.0, 2),
     ]
-    words = reconcile_segment_end_words(
+    words, _ = reconcile_segment_end_words(
         segments,
         {
             0: segment_words("s0", 171.0, 179.0),
@@ -249,15 +279,123 @@ def test_segment_reconciliation_deduplicates_overlap_words() -> None:
     ]
 
 
+def test_segment_reconciliation_deduplicates_seam_runs_when_clocks_disagree() -> None:
+    """Overlap words shared across a seam keep one copy even off-midpoint."""
+    segments = [segment(0.0, 180.0, 0), segment(165.0, 345.0, 1)]
+    words, metrics = reconcile_segment_end_words(
+        segments,
+        {
+            0: [
+                ASRWord(text="weit", start=None, end=171.47),
+                ASRWord(text="weit", start=None, end=171.66),
+                ASRWord(text="aus", start=None, end=171.80),
+                ASRWord(text="dem", start=None, end=171.93),
+                ASRWord(text="fenster", start=None, end=172.29),
+            ],
+            1: [
+                ASRWord(text="weit", start=None, end=6.47),
+                ASRWord(text="weit", start=None, end=6.66),
+                ASRWord(text="aus", start=None, end=6.80),
+                ASRWord(text="dem", start=None, end=6.93),
+                ASRWord(text="fenster", start=None, end=7.29),
+                ASRWord(text="gelehnt", start=None, end=7.60),
+            ],
+        },
+    )
+
+    # The b-side copies are dropped in favor of the earlier segment even
+    # though seg1's copies would own the midpoint range.
+    assert [(word.text, word.end) for word in words] == [
+        ("weit", 171.47),
+        ("weit", 171.66),
+        ("aus", 171.80),
+        ("dem", 171.93),
+        ("fenster", 172.29),
+        ("gelehnt", 172.60),
+    ]
+    assert metrics["seam_deduplicated_words"] == 5.0
+
+
+def test_segment_reconciliation_protects_earlier_copy_beyond_midpoint() -> None:
+    """A matched run's earlier copy survives even past the midpoint boundary."""
+    segments = [segment(0.0, 180.0, 0), segment(165.0, 345.0, 1)]
+    words, _ = reconcile_segment_end_words(
+        segments,
+        {
+            0: [
+                ASRWord(text="eins", start=None, end=100.0),
+                ASRWord(text="zwei", start=None, end=173.0),
+                ASRWord(text="drei", start=None, end=173.5),
+            ],
+            1: [
+                ASRWord(text="zwei", start=None, end=8.0),
+                ASRWord(text="drei", start=None, end=8.5),
+                ASRWord(text="vier", start=None, end=9.0),
+            ],
+        },
+    )
+
+    assert [(word.text, word.end) for word in words] == [
+        ("eins", 100.0),
+        ("zwei", 173.0),
+        ("drei", 173.5),
+        ("vier", 174.0),
+    ]
+
+
+def test_segment_reconciliation_requires_multi_word_run_for_dedup() -> None:
+    """A single shared token is not enough to deduplicate a seam."""
+    segments = [segment(0.0, 180.0, 0), segment(165.0, 345.0, 1)]
+    words, metrics = reconcile_segment_end_words(
+        segments,
+        {
+            0: [
+                ASRWord(text="eins", start=None, end=171.0),
+                ASRWord(text="und", start=None, end=173.0),
+            ],
+            1: [
+                ASRWord(text="und", start=None, end=6.0),
+                ASRWord(text="zwei", start=None, end=9.0),
+            ],
+        },
+    )
+
+    # Midpoint at 172.5 decides both single-token copies without a seam match:
+    # seg0's "und" (173.0) lands beyond it and seg1's copy rebases below it.
+    assert [(word.text, word.end) for word in words] == [
+        ("eins", 171.0),
+        ("zwei", 174.0),
+    ]
+    assert metrics["seam_deduplicated_words"] == 0.0
+
+
+def test_segment_reconciliation_counts_clipped_word_ends() -> None:
+    segments = [segment(0.0, 180.0, 0)]
+    words, metrics = reconcile_segment_end_words(
+        segments,
+        {
+            0: [
+                ASRWord(text="wort", start=None, end=99.0),
+                ASRWord(text="x", start=None, end=500.0),
+            ]
+        },
+    )
+
+    assert [(word.text, word.end) for word in words] == [("wort", 99.0), ("x", 180.0)]
+    assert metrics["reconciliation_clipped_word_ends"] == 1.0
+
+
 def test_segment_reconciliation_first_and_last_segments_have_open_boundaries() -> None:
-    segments = [segment(0.0, 100.0)]
-    words = reconcile_segment_end_words(segments, {0: [ASRWord(text="wort", start=None, end=99.0)]})
+    segments = [segment(0.0, 100.0, 0)]
+    words, _ = reconcile_segment_end_words(
+        segments, {0: [ASRWord(text="wort", start=None, end=99.0)]}
+    )
     assert [(word.text, word.end) for word in words] == [("wort", 99.0)]
 
 
 def test_segment_reconciliation_global_ends_stay_monotonic() -> None:
-    segments = [segment(0.0, 50.0), segment(35.0, 85.0, index=1)]
-    words = reconcile_segment_end_words(
+    segments = [segment(0.0, 50.0, 0), segment(35.0, 85.0, 1)]
+    words, _ = reconcile_segment_end_words(
         segments,
         {
             0: [ASRWord(text="a", start=None, end=10.0), ASRWord(text="b", start=None, end=42.0)],
@@ -366,12 +504,16 @@ class _ShapedShape:
 
 
 class FakeTokenizer:
+    def __init__(self) -> None:
+        self.calls: list[tuple[list[dict[str, object]], dict[str, object]]] = []
+
     def apply_chat_template(
         self, conversation: list[dict[str, object]], **kwargs: object
     ) -> str:
+        self.calls.append((conversation, kwargs))
         assert kwargs.get("add_generation_prompt") is True
         assert kwargs.get("tokenize") is False
-        content = conversation[0]["content"]
+        content = conversation[-1]["content"]
         assert isinstance(content, list)
         text = content[-1]["text"]
         assert isinstance(text, str)
@@ -406,6 +548,16 @@ class FakeGenerateModel:
     def generate(self, **kwargs: object) -> object:
         self.calls.append(kwargs)
         return _GraniteOutput()
+
+
+class FakeSegmenter:
+    """Stand-in that returns prebuilt segments without touching disk."""
+
+    def __init__(self, segments: list[AudioSegment]) -> None:
+        self.segments = segments
+
+    def segment(self, _: NormalizedAudio) -> list[AudioSegment]:
+        return self.segments
 
 
 class _GraniteOutput:
@@ -453,9 +605,33 @@ def test_generate_uses_official_recipe_with_deterministic_timestamp_prompt() -> 
     assert text == "hallo [T:45] welt [T:82]"
     call = processor.calls[0]
     assert "Timestamps: Transcribe the speech" in str(call["text"])
-    assert call["sampling_rate"] == 16000
+    assert call["audio"] == [segment.audio]
+    assert "sampling_rate" not in call
     assert model.calls[0]["do_sample"] is False
+    assert model.calls[0]["num_beams"] == 1
     assert model.calls[0]["max_new_tokens"] == transcriber.backend_configuration["max_new_tokens"]
+
+
+def test_generate_sends_official_system_and_timestamp_user_prompts() -> None:
+    import numpy as np
+
+    transcriber, processor, model = loaded_transcriber()
+    segment = AudioSegment(
+        index=0, start=0.0, end=1.0, audio=np.zeros(16000, dtype="float32")
+    )
+
+    transcriber._generate_segment(processor, model, segment)
+
+    conversation, _ = processor.tokenizer.calls[0]
+    assert [entry["role"] for entry in conversation] == ["system", "user"]
+    assert conversation[0]["content"] == (
+        "Knowledge Cutoff Date: April 2024.\nToday's Date: December 19, 2024.\n"
+        "You are Granite, developed by IBM. You are a helpful AI assistant"
+    )
+    user_content = conversation[1]["content"]
+    assert isinstance(user_content, list)
+    prompt_text = user_content[0]["text"]
+    assert "Timestamps: Transcribe the speech" in str(prompt_text)
 
 
 def test_snapshot_resolution_feeds_one_local_path_to_processor_and_model(
@@ -493,7 +669,7 @@ def test_snapshot_resolution_feeds_one_local_path_to_processor_and_model(
         assert kwargs.get("trust_remote_code") is False
         assert kwargs.get("local_files_only") is True
     assert transcriber.backend_models["model_snapshot"] == "abc123"
-    assert transcriber.runtime_provenance.components["peft"] != "unknown"
+    assert "peft" not in transcriber.runtime_provenance.components
 
 
 def test_load_wraps_transformers_failures_as_model_load_errors(
@@ -516,6 +692,25 @@ def test_load_wraps_transformers_failures_as_model_load_errors(
 
     with pytest.raises(ModelLoadError, match="could not load Granite model"):
         transcriber._load()
+
+
+def test_transcribe_reports_full_timestamp_tag_and_seam_diagnostics(tmp_path: Path) -> None:
+    import numpy as np
+
+    transcriber, _, _ = loaded_transcriber()
+    transcriber._segmenter = FakeSegmenter(
+        [AudioSegment(index=0, start=0.0, end=180.0, audio=np.zeros(16, dtype="float32"))]
+    )
+    transcriber._processor = FakeProcessor("wort [T:45] _ [T:120] welt [T:82]")
+    transcriber._model = FakeGenerateModel()
+
+    words = transcriber.transcribe(audio(tmp_path, 180.0))
+
+    assert len(words) == 2
+    assert transcriber.backend_metrics["timestamp_tags_decoded"] == 3.0
+    assert transcriber.backend_metrics["silence_markers_ignored"] == 1.0
+    assert transcriber.backend_metrics["seam_deduplicated_words"] == 0.0
+    assert transcriber.backend_metrics["reconciliation_clipped_word_ends"] == 0.0
 
 
 def test_release_drops_model_and_processor() -> None:

@@ -55,8 +55,8 @@ builtins.__import__ = guarded_import
 
 class FakeTokenizer:
     def apply_chat_template(self, conversation, **kwargs):
-        content = conversation[0]["content"]
-        return content[-1]["text"]
+        content = conversation[-1]["content"]
+        return content[-1]["text"] if isinstance(content, list) else str(content)
 
 class FakeProcessor:
     def __init__(self):
@@ -162,15 +162,17 @@ print("ok")
     assert completed.stdout.strip().endswith("ok")
 
 
-def test_peft_is_available_with_transformers_in_the_generic_runtime() -> None:
-    """Granite's audio LoRA requires peft at import time alongside transformers."""
+def test_peft_is_no_longer_required_by_the_generic_runtime() -> None:
+    """The cached Granite checkpoint ships without an adapter, so peft is gone."""
     command = """
-import peft
+import speech_transcriber
 import transformers
 import torch
-import speech_transcriber
-from transformers.utils import is_peft_available
-assert is_peft_available()
+try:
+    import peft
+    raise SystemExit("peft must not be installed in the generic runtime")
+except ImportError:
+    pass
 print("ok")
 """
     import subprocess

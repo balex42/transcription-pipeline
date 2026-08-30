@@ -31,6 +31,7 @@ from speech_transcriber.prepared import (
 
 if TYPE_CHECKING:
     from speech_transcriber.pipeline import TranscriptionPipeline
+    from speech_transcriber.recognition import MemoryMetrics
 
 
 def create_default_pipeline(config: PipelineConfig) -> TranscriptionPipeline:
@@ -252,9 +253,10 @@ def main(argv: list[str] | None = None) -> int:
             from speech_transcriber.recognition import RecognitionRunner
             from speech_transcriber.transcription.factory import create_transcriber
 
-            recognition = RecognitionRunner().recognize(
+            device = _recognition_device(config.device)
+            recognition = RecognitionRunner(_memory_metrics(device)).recognize(
                 prepared,
-                create_transcriber(config, _recognition_device(config.device)),
+                create_transcriber(config, device),
                 config.asr_backend,
             )
             write_asr_recognition(recognition, config.output_directory)
@@ -316,6 +318,20 @@ def _recognition_device(requested: str) -> str:
     except OSError:
         return "cpu"
     return "cuda"
+
+
+def _memory_metrics(device: str) -> MemoryMetrics | None:
+    """Return CUDA peak accounting when Torch is importable on this path.
+
+    The dedicated faster-whisper image has no Torch, so its CLI path never
+    constructs the metrics adapter; the generic runtime gains per-backend
+    CUDA peaks in recognition metadata.
+    """
+    try:
+        from speech_transcriber.runtime.device import TorchMemoryMetrics
+    except ImportError:
+        return None
+    return TorchMemoryMetrics(device) if device == "cuda" else None
 
 
 def _config_from_args(
