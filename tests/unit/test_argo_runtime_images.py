@@ -210,3 +210,47 @@ def test_prepare_task_uses_the_canonical_prepare_command() -> None:
     assert args[0] == "prepare"
     assert args[1] == "/input/recording"
     assert args[args.index("--output") + 1] == "/work/prepared"
+
+
+def test_worker_invocations_parse_with_the_real_cli() -> None:
+    """Every GPU/utility task's args must be valid CLI arguments.
+
+    Guards against Argo/CLI drift: a flag the parser does not accept makes
+    every finalize task exit 2 before any work happens.
+    """
+
+    from speech_transcriber.cli import build_parser
+
+    templates, _ = load()
+    parser = build_parser()
+    tasks = {
+        **{f"recognize-{b}": "recognize" for b in BACKEND_IMAGES},
+        "prepare": "prepare",
+    }
+
+    for name, command in tasks.items():
+        args = templates[name]["container"]["args"]
+        assert args[0] == command, name
+        try:
+            parser.parse_args(args)
+        except SystemExit as error:  # pragma: no cover - failure message
+            raise AssertionError(f"invalid {command} args in {name}: {args}") from error
+
+
+def test_finalize_invocations_parse_with_the_real_cli() -> None:
+    """Finalize runs via the shared template with a parameterized backend."""
+
+    from speech_transcriber.cli import build_parser
+
+    templates, _ = load()
+    parser = build_parser()
+    args = templates["finalize"]["container"]["args"]
+    assert args[0] == "finalize"
+    # Resolve the backend parameter placeholder to a concrete value for parsing.
+    parsed = [
+        "parakeet" if value == "{{inputs.parameters.backend}}" else value for value in args
+    ]
+    try:
+        parser.parse_args(parsed)
+    except SystemExit as error:  # pragma: no cover - failure message
+        raise AssertionError(f"invalid finalize args in template: {args}") from error

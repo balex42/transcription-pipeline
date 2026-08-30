@@ -968,5 +968,3 @@ spec:
           - "{{inputs.parameters.backend}}"
           - --output
           - /work/result
-          - --working-directory
-          - /tmp
