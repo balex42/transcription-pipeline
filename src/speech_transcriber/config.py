@@ -23,7 +23,6 @@ VOXTRAL_MAX_TIMESTAMP_OFFSET_TOKENS = 30
 DEFAULT_FASTER_WHISPER_MODEL = "Systran/faster-whisper-large-v3"
 DEFAULT_FASTER_WHISPER_COMPUTE_TYPE = "float16"
 FASTER_WHISPER_COMPUTE_TYPES = ("float16", "bfloat16", "float32", "int8", "int8_float16")
-FASTER_WHISPER_COMPUTE_TYPES = ("float16", "bfloat16", "float32", "int8", "int8_float16")
 DEFAULT_PRIMELINE_MODEL = "primeline/parakeet-primeline"
 DEFAULT_CANARY_MODEL = "nvidia/canary-1b-v2"
 DEFAULT_CANARY_CHUNK_DURATION_SECONDS = 10.0
@@ -49,12 +48,6 @@ BACKEND_RUNTIMES: Final[dict[str, ASRRuntime]] = {
     "voxtral": "transformers",
     "faster-whisper": "ctranslate2",
 }
-TRANSFORMERS_BACKENDS: Final = tuple(
-    backend for backend in ASR_BACKENDS if BACKEND_RUNTIMES[backend] == "transformers"
-)
-# Local same-process comparison can only run backends whose runtime is installed
-# in the Transformers environment; heterogeneous comparisons belong to Argo.
-COMPARE_BACKENDS: Final = TRANSFORMERS_BACKENDS
 QWEN_MAX_ALIGNMENT_DURATION_SECONDS = 300.0
 DEFAULT_PARAKEET_SEGMENT_DURATION = 180.0
 DEFAULT_PARAKEET_SEGMENT_OVERLAP = 15.0

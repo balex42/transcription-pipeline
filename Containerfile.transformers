@@ -38,5 +38,9 @@ RUN python -m pip install --no-cache-dir uv==0.11.32 \
 COPY container/uid-entrypoint.sh /usr/local/bin/uid-entrypoint
 USER 1001
 RUN /usr/local/bin/uid-entrypoint /app/.venv/bin/python -c "import os, pwd; print(pwd.getpwuid(os.getuid()))"
+# Worker-surface smoke test: this image owns prepare, recognition, and finalization.
+RUN /usr/local/bin/uid-entrypoint /app/.venv/bin/python -m speech_transcriber prepare --help >/dev/null
+RUN /usr/local/bin/uid-entrypoint /app/.venv/bin/python -m speech_transcriber recognize --help >/dev/null
+RUN /usr/local/bin/uid-entrypoint /app/.venv/bin/python -m speech_transcriber finalize --help >/dev/null
 ENTRYPOINT ["/usr/local/bin/uid-entrypoint", "/app/.venv/bin/python", "-m", "speech_transcriber"]
 CMD ["--help"]

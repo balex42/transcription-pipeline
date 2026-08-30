@@ -2,7 +2,7 @@
 #
 # This image is intentionally independent of the Transformers ASR stack: it
 # installs only its dedicated runtime lock plus the backend-neutral code needed
-# to load prepared artifacts, run recognize-prepared, and write ASR artifacts.
+# to load prepared artifacts, run recognize, and write ASR artifacts.
 # It is not a restoration of the removed Transformers Whisper backend.
 #
 # CTranslate2 GPU wheels require CUDA 12.x and cuDNN 9 at runtime; the base
@@ -55,5 +55,7 @@ COPY container/uid-entrypoint.sh /usr/local/bin/uid-entrypoint
 USER 1001
 RUN /usr/local/bin/uid-entrypoint /app/.venv/bin/python -c "import os, pwd, builtins; print(pwd.getpwuid(os.getuid()))"
 RUN /usr/local/bin/uid-entrypoint /app/.venv/bin/python -c "import speech_transcriber.transcription.faster_whisper, ctranslate2, faster_whisper; print('ctranslate2 runtime ok')"
+# Worker-surface smoke test: recognize runs without Torch or preparation/finalization ML dependencies.
+RUN /usr/local/bin/uid-entrypoint /app/.venv/bin/python -m speech_transcriber recognize --help >/dev/null
 ENTRYPOINT ["/usr/local/bin/uid-entrypoint", "/app/.venv/bin/python", "-m", "speech_transcriber"]
 CMD ["--help"]

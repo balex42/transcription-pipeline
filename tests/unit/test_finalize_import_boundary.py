@@ -67,8 +67,8 @@ def guarded_import(name, globals=None, locals=None, fromlist=(), level=0):
 builtins.__import__ = guarded_import
 from speech_transcriber.cli import main
 raise SystemExit(main([
-    "finalize-prepared", "--prepared", {str(prepared)!r},
-    "--asr-result", {str(asr)!r}, "--expected-backend", "faster-whisper",
+    "finalize", "--prepared", {str(prepared)!r},
+    "--asr", {str(asr)!r}, "--backend", "faster-whisper",
     "--output", {str(result)!r},
 ]))
 """

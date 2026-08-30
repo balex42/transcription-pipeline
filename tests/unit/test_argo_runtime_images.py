@@ -173,3 +173,40 @@ def test_validator_script_still_supports_all_backends() -> None:
                     "canary"):
         assert f'"{backend}"' in script
     assert "backend.replace('-', '_')" in script
+
+
+def test_recognition_tasks_use_the_canonical_recognize_command() -> None:
+    templates, _ = load()
+
+    for backend in BACKEND_IMAGES:
+        args = templates[f"recognize-{backend}"]["container"]["args"]
+        assert args[0] == "recognize", backend
+        assert "--prepared" in args and "--backend" in args, backend
+        assert args[args.index("--prepared") + 1] == "/work/prepared"
+        assert args[args.index("--backend") + 1] == backend
+        # Legacy spellings must not survive anywhere in the template.
+        assert "recognize-prepared" not in args
+        assert "--asr" not in args or args[args.index("--asr") - 1] == "finalize"
+
+
+def test_finalize_task_uses_the_canonical_finalize_command() -> None:
+    templates, _ = load()
+
+    args = templates["finalize"]["container"]["args"]
+    assert args[0] == "finalize"
+    assert "--prepared" in args and "--asr" in args and "--backend" in args
+    assert args[args.index("--asr") + 1] == "/work/asr"
+    assert args[args.index("--backend") + 1] == "{{inputs.parameters.backend}}"
+    raw = TEMPLATE_PATH.read_text(encoding="utf-8")
+    for stale in ("finalize-prepared", "recognize-prepared", "--asr-result",
+                  "--expected-backend"):
+        assert stale not in raw
+
+
+def test_prepare_task_uses_the_canonical_prepare_command() -> None:
+    templates, _ = load()
+
+    args = templates["prepare"]["container"]["args"]
+    assert args[0] == "prepare"
+    assert args[1] == "/input/recording"
+    assert args[args.index("--output") + 1] == "/work/prepared"

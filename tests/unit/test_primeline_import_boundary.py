@@ -67,8 +67,8 @@ from speech_transcriber.transcription import primeline
 primeline._restore_primeline_model = lambda model_path, device: FakeModel()
 from speech_transcriber.cli import main
 raise SystemExit(main([
-    "recognize-prepared", "--prepared", {str(prepared)!r},
-    "--asr", "primeline", "--asr-model", {str(model)!r},
+    "recognize", "--prepared", {str(prepared)!r},
+    "--backend", "primeline", "--model", {str(model)!r},
     "--output", {str(asr)!r}, "--device", "cuda",
 ]))
 """

@@ -1,22 +1,26 @@
-"""Prove Canary recognition requires only its NeMo runtime and neutral code."""
+"""Prove Parakeet recognition requires only its NeMo runtime and neutral code.
+
+The real ``recognize`` CLI path runs in a subprocess whose import guard fails
+if it imports pyannote, the Transformers ASR stack, CTranslate2, preparation,
+or finalization modules.
+"""
 
 import subprocess
 import sys
+import wave
 from pathlib import Path
 
 from speech_transcriber.models import AudioMetadata, DiarizationSegment, NormalizedAudio
 from speech_transcriber.prepared import PreparedRecording, sha256_file, write_prepared_recording
 
 
-def test_recognize_prepared_canary_imports_no_unrelated_asr_runtime(tmp_path: Path) -> None:
-    import wave
-
+def test_recognize_parakeet_imports_no_unrelated_runtime(tmp_path: Path) -> None:
     normalized = tmp_path / "normalized.wav"
     with wave.open(str(normalized), "wb") as target:
         target.setnchannels(1)
         target.setsampwidth(2)
-        target.setframerate(16000)
-        target.writeframes(b"\x00\x00" * 16000)
+        target.setframerate(16_000)
+        target.writeframes(b"\x00\x00" * 16_000)
     prepared = tmp_path / "prepared"
     write_prepared_recording(
         PreparedRecording(
@@ -30,17 +34,21 @@ def test_recognize_prepared_canary_imports_no_unrelated_asr_runtime(tmp_path: Pa
         prepared,
     )
     asr = tmp_path / "asr"
-    model = tmp_path / "canary-1b-v2.nemo"
+    model = tmp_path / "parakeet-tdt-0.6b-v3.nemo"
     model.write_bytes(b"trusted model")
     command = f"""
 import builtins
 
 blocked = (
-    "faster_whisper", "ctranslate2", "speech_transcriber.pipeline",
-    "speech_transcriber.audio", "speech_transcriber.diarization",
-    "speech_transcriber.runtime", "speech_transcriber.transcription.parakeet",
-    "speech_transcriber.transcription.qwen", "speech_transcriber.transcription.nemotron",
+    "pyannote", "transformers", "faster_whisper", "ctranslate2",
+    "speech_transcriber.preparation", "speech_transcriber.finalization",
+    "speech_transcriber.audio.preprocess",
+    "speech_transcriber.transcription.primeline",
+    "speech_transcriber.transcription.canary",
+    "speech_transcriber.transcription.qwen",
+    "speech_transcriber.transcription.nemotron",
     "speech_transcriber.transcription.voxtral",
+    "speech_transcriber.transcription.faster_whisper",
 )
 original_import = builtins.__import__
 
@@ -51,26 +59,22 @@ def guarded_import(name, globals=None, locals=None, fromlist=(), level=0):
 
 builtins.__import__ = guarded_import
 
+import numpy as np
+
 class Hypothesis:
     timestamp = {{"word": [{{"word": "Hallo!", "start": 0.0, "end": 0.5}}]}}
 
 class FakeModel:
-    def transcribe(self, audio, **kwargs):
-        assert kwargs == {{
-            "batch_size": 1,
-            "return_hypotheses": True,
-            "source_lang": "de",
-            "target_lang": "de",
-            "timestamps": True,
-        }}
+    def transcribe(self, audio_arrays, **kwargs):
+        assert isinstance(audio_arrays[0], np.ndarray)
         return [Hypothesis()]
 
-from speech_transcriber.transcription import canary
-canary._restore_canary_model = lambda model_path, device: FakeModel()
+from speech_transcriber.transcription import parakeet
+parakeet._restore_parakeet_model = lambda model_path, device: FakeModel()
 from speech_transcriber.cli import main
 raise SystemExit(main([
     "recognize", "--prepared", {str(prepared)!r},
-    "--backend", "canary", "--model", {str(model)!r},
+    "--backend", "parakeet", "--model", {str(model)!r},
     "--output", {str(asr)!r}, "--device", "cuda",
 ]))
 """

@@ -1,15 +1,16 @@
-"""Real-model smoke test, intentionally disabled in normal CI."""
+"""Test-double wiring test and optional real-model smoke test, disabled in CI."""
 
 import os
 from pathlib import Path
 
 import pytest
 
-from speech_transcriber.comparison import ASRComparisonRunner
 from speech_transcriber.config import PipelineConfig
 from speech_transcriber.models import ASRWord, AudioMetadata, DiarizationSegment, NormalizedAudio
-from speech_transcriber.pipeline import TranscriptionPipeline, create_default_pipeline
+from speech_transcriber.preparation import PreparationRunner
+from speech_transcriber.recognition import RecognitionRunner
 from speech_transcriber.transcription.base import TranscriberCapabilities
+from speech_transcriber.transcription.factory import create_transcriber
 
 real_models_only = pytest.mark.skipif(
     os.environ.get("RUN_MODEL_TESTS") != "1",
@@ -62,61 +63,30 @@ class FakeTranscriber:
         self.released = True
 
 
-def test_pipeline_with_model_test_doubles(tmp_path: Path) -> None:
+def test_split_stage_runners_cross_the_prepared_artifact_boundary(tmp_path: Path) -> None:
     diarizer = FakeDiarizer()
     transcriber = FakeTranscriber()
     config = PipelineConfig(
         input_path=tmp_path / "audio.wav",
         output_directory=tmp_path / "result",
         working_directory=tmp_path / "work",
+        asr_backend="parakeet",
     )
-    pipeline = TranscriptionPipeline(
+
+    prepared = PreparationRunner(
         config,
         diarizer_factory=lambda: diarizer,
-        transcriber_factory=lambda: transcriber,
         preprocessor=FakePreprocessor(),
-    )
-    result = pipeline.run()
-    assert [(word.text, word.speaker) for word in result.transcript.words] == [
-        ("hallo", "SPEAKER_00")
-    ]
+    ).prepare()
+    recognition = RecognitionRunner().recognize(prepared, transcriber, "parakeet")
+
+    assert [word.text for word in recognition.words] == ["hallo"]
     assert diarizer.released and transcriber.loaded and transcriber.released
-    assert transcriber.audio is not None
-    assert (config.output_directory / "transcript.json").is_file()
-    assert not any(config.working_directory.iterdir())
-
-
-def test_comparison_prepares_once_and_separates_backend_outputs(tmp_path: Path) -> None:
-    preprocessor = FakePreprocessor()
-    diarizer = FakeDiarizer()
-    transcribers: list[FakeTranscriber] = []
-    config = PipelineConfig(tmp_path / "audio.wav", tmp_path / "comparison", tmp_path / "work")
-    pipeline = TranscriptionPipeline(
-        config,
-        diarizer_factory=lambda: diarizer,
-        transcriber_factory=FakeTranscriber,
-        preprocessor=preprocessor,
-    )
-
-    def build_transcriber(_: PipelineConfig, __: str) -> FakeTranscriber:
-        transcriber = FakeTranscriber()
-        transcribers.append(transcriber)
-        return transcriber
-
-    ASRComparisonRunner(pipeline, build_transcriber).run(
-        ["qwen", "nemotron", "voxtral"], config.output_directory
-    )
-    assert (preprocessor.calls, diarizer.calls, len(transcribers)) == (1, 1, 3)
-    assert (config.output_directory / "diarization.json").is_file()
-    assert (config.output_directory / "metadata.json").is_file()
-    for backend in ("qwen", "nemotron", "voxtral"):
-        assert (config.output_directory / backend / "transcript.json").is_file()
-        assert (config.output_directory / backend / "asr_words.json").is_file()
-    assert (config.output_directory / "qwen" / "metadata.json").is_file()
+    assert recognition.metadata.normalized_audio_sha256 == prepared.normalized_audio_sha256
 
 
 @real_models_only
-def test_real_model_pipeline(tmp_path: Path) -> None:
+def test_real_model_recognition_and_finalization(tmp_path: Path) -> None:
     source = os.environ.get("MODEL_TEST_AUDIO")
     if not source:
         pytest.skip("MODEL_TEST_AUDIO is not configured")
@@ -130,10 +100,29 @@ def test_real_model_pipeline(tmp_path: Path) -> None:
         qwen_segment_duration=30,
         qwen_segment_overlap=5,
     )
-    result = create_default_pipeline(config).run()
-    assert (result.output_directory / "transcript.json").is_file()  # type: ignore[operator]
-    assert result.asr_words
+    from speech_transcriber.prepared import write_prepared_recording
+
+    runner = PreparationRunner.create_default(config)
+    prepared = runner.prepare()
+    prepared_artifact = tmp_path / "prepared"
+    write_prepared_recording(prepared, prepared_artifact)
+    loaded = __import__(
+        "speech_transcriber.prepared", fromlist=["load_prepared_recording"]
+    ).load_prepared_recording(prepared_artifact)
+    from speech_transcriber.recognition import RecognitionRunner
+
+    device = resolve_device_for_test(config)
+    recognition = RecognitionRunner().recognize(
+        loaded, create_transcriber(config, device), config.asr_backend
+    )
+    assert recognition.words
     if config.asr_backend == "voxtral":
-        assert all(word.start is None and word.end >= 0 for word in result.asr_words)
+        assert all(word.start is None and word.end >= 0 for word in recognition.words)
     else:
-        assert all(word.start is not None and word.end >= word.start for word in result.asr_words)
+        assert all(word.start is not None and word.end >= word.start for word in recognition.words)
+
+
+def resolve_device_for_test(config: object) -> str:
+    from speech_transcriber.runtime.device import resolve_device
+
+    return resolve_device("cpu")

@@ -1,6 +1,11 @@
 # Speech Transcription Pipeline
 
-Local, batch-friendly speech transcription with anonymous pyannote Community-1 diarization. It has no summarization, API service, remote inference, or vLLM dependency. Base artifact/finalization paths have no NeMo dependency; the NeMo runtime image installs NeMo only for its recognition tasks.
+Argo Workflows orchestrates a prepare/recognize/finalize worker pipeline for speaker-attributed
+speech transcription with anonymous pyannote Community-1 diarization. Runtime containers execute
+the workers; filesystem artifacts connect them. The CLI is a worker/debug interface with exactly
+four commands (`prepare`, `recognize`, `finalize`, `prefetch`), not a second orchestration system.
+It has no summarization, API service, remote inference, or vLLM dependency. Base artifact
+paths have no NeMo dependency; the NeMo runtime image installs NeMo only for its recognition tasks.
 
 ## Backend and runtime identity
 
@@ -15,8 +20,6 @@ Backends are the application's domain abstraction; runtimes are a deployment det
 The authoritative in-code mapping is `BACKEND_RUNTIMES` in `src/speech_transcriber/config.py`.
 
 ## License
-
-This project is licensed under the [Apache License 2.0](LICENSE). Model weights are not distributed with this repository and remain subject to the licenses and terms of their respective providers.
 
 This project is licensed under the [Apache License 2.0](LICENSE). Model weights are not distributed with this repository and remain subject to the licenses and terms of their respective providers.
 
@@ -111,60 +114,12 @@ subtree from the exported NeMo requirements rather than replacing the base runti
 NeMo version includes native timestamp support for all three of its backends; the model card's
 historical instruction to install NeMo from `main` is not used.
 
-## Commands
-
-### Local
-
-```bash
-speech-transcriber transcribe audio.m4a --asr parakeet --output ./result/parakeet --device cuda
-speech-transcriber transcribe audio.m4a --asr primeline --output ./result/primeline --device cuda
-speech-transcriber transcribe audio.m4a --asr qwen --output ./result/qwen --device cuda
-speech-transcriber transcribe audio.m4a --asr nemotron --output ./result/nemotron --device cuda
-speech-transcriber transcribe audio.m4a --asr voxtral --output ./result/voxtral --device cuda
-speech-transcriber transcribe audio.m4a --asr faster-whisper --output ./result/faster-whisper --device cuda
-speech-transcriber transcribe audio.m4a --asr canary --output ./result/canary --device cuda
-```
-
-Compare the three Transformers-runtime backends with one normalization and one diarization pass:
-
-```bash
-speech-transcriber compare audio.m4a \
-  --models qwen,nemotron,voxtral \
-  --output ./comparison --device cuda
-```
-
-Comparison executes ASR backends sequentially and releases each model before loading the next one. It does not force common segments on models with incompatible long-form behavior. Local comparison is restricted to the Transformers runtime (`qwen`, `nemotron`, `voxtral`); NeMo and CTranslate2 backends are not installed in that environment. Use the Argo fan-out for heterogeneous comparisons involving parakeet, primeline, canary, or faster-whisper; no one local Python environment is expected to import all runtime stacks.
-
-### Argo-Style Split Execution
-
-Prepare once on a writable work volume. This normalizes the input and runs pyannote exactly once:
-
-```bash
-speech-transcriber prepare meeting.wav \
-  --output /work/prepared \
-  --working-directory /work/tmp \
-  --device cuda
-```
-
-Run one independent ASR task for each backend using the prepared directory as a read-only input:
-
-```bash
-speech-transcriber transcribe-prepared \
-  --prepared /work/prepared \
-  --asr parakeet \
-  --output /work/parakeet \
-  --working-directory /work/tmp \
-  --device cuda
-```
-
-Repeat `transcribe-prepared` with `primeline`, `qwen`, `nemotron`, `voxtral`, `faster-whisper`, or `canary`. The command does not
-normalize audio or initialize pyannote, and it never removes or modifies the prepared input.
-Argo Workflows should transfer `/work/prepared` and each backend result through its configured
-artifact repository; the application only reads and writes local filesystem paths.
-
 ### Backend Configuration
 
-CLI values override environment values, which override defaults.
+CLI values override environment values, which override defaults. Environment variables apply
+to the worker commands that read them: `recognize` accepts the backend selection flags and the
+per-backend settings, `prepare` accepts the diarization settings, and `prefetch` accepts the
+model selections.
 
 ```text
 ASR_BACKEND
@@ -192,7 +147,7 @@ HF_HOME
 HF_TOKEN
 ```
 
-Equivalent CLI flags include `--parakeet-segment-duration`, `--qwen-segment-duration`, `--nemotron-num-lookahead-tokens`, `--faster-whisper-compute-type`, and `--canary-chunk-duration`. There is intentionally no global `--chunk-duration` or `CHUNK_DURATION`: those old settings were removed because they incorrectly coupled backend implementations.
+Equivalent CLI flags include `--backend`, `--model`, `--parakeet-segment-duration`, `--qwen-segment-duration`, `--nemotron-num-lookahead-tokens`, `--faster-whisper-compute-type`, and `--canary-chunk-duration`. There is intentionally no global `--chunk-duration` or `CHUNK_DURATION`: those old settings were removed because they incorrectly coupled backend implementations.
 
 Nemotron validates an explicit lookahead through the loaded processor. Batch transcription defaults to 13 lookahead tokens; set `NEMOTRON_NUM_LOOKAHEAD_TOKENS` or `--nemotron-num-lookahead-tokens` to select another supported latency/accuracy trade-off. The checkpoint derives its first/subsequent streaming buffer sizes and latency from model/processor configuration.
 
@@ -212,25 +167,11 @@ Canary recognition uses exactly one inference path for every recording length. T
 
 `OUTPUT/transcript.json` is the canonical versioned output. Its word timestamps are seconds from the beginning of the normalized recording and are compatible with the pyannote timeline.
 
-```text
-comparison/
-├── diarization.json
-├── metadata.json
-├── parakeet/
-│   ├── asr_words.json
-│   ├── metadata.json
-│   ├── transcript.json
-│   └── transcript.txt
-├── qwen/
-├── nemotron/
-├── voxtral/
-├── faster-whisper/
-└── canary/
-```
-
 Each backend metadata file records model/device/dtype, load time, ASR time, total backend time, RTF, peak CUDA memory, backend configuration, and backend-specific metrics. Forced-alignment backends record recognition, recognizer release, aligner load, alignment, and aligner release timings; Qwen also records interpolated timestamps plus clipped/dropped trailing-boundary words and their maximum overflow. Nemotron records language, lookahead, streaming latency, and `stream_buffers_processed`; Voxtral records native delay, right padding, stream buffer counts, and any `inferred_final_emission_groups` used for an unmarked EOF tail. Faster Whisper records the resolved cached model path, detected language/probability, and its CTranslate2 runtime provenance. Canary records its local `.nemo` filename, sequential non-overlapping chunk configuration (mode, chunk duration, chunk count), source/target languages, word count, and NeMo/PyTorch/CUDA provenance.
 
-With `--keep-intermediate`, generic diarization, ASR words, and attributed words are retained under `OUTPUT/intermediate`. Backend-specific state remains internal and is never added to the canonical transcript schema.
+In production, Argo stores one `result/<backend>/` set per selected backend in the durable bucket; the backend fan-out is documented in the Argo section below.
+
+The `KEEP_INTERMEDIATE_FILES=1` environment variable retains generic diarization, ASR words, and attributed words under `OUTPUT/intermediate` and keeps the preparation work directory. Backend-specific state remains internal and is never added to the canonical transcript schema.
 
 ### Worker Artifact Contracts
 
@@ -243,12 +184,11 @@ recognition artifact and does not need to import or implement that protocol.
 Recognition is orchestrated by the backend-neutral `RecognitionRunner`, which owns model load and
 transcription timing, RTF, release lifecycle, normalized-audio SHA propagation, runtime provenance,
 and backend metrics/configuration. It never imports PyTorch, Transformers, pyannote, audio
-normalization, or any backend implementation, so the CTranslate2 image runs
-`recognize-prepared` without the Transformers ASR stack installed and the NeMo image
-runs it without the preparation/pyannote stack. Torch-backed CUDA memory statistics are
-provided to the runner only by the ML-oriented pipeline path; the CTranslate2 runtime, which has
-no Torch, records `None` for those fields. `TranscriptionPipeline` composes prepare + recognition +
-finalization for local convenience and delegates recognition to the same runner.
+normalization, or any backend implementation, so the CTranslate2 image runs `recognize`
+without the Transformers ASR stack installed and the NeMo image runs it without the
+preparation/pyannote stack. Torch-backed CUDA memory statistics are constructed by the
+`recognize` CLI when Torch is importable; the CTranslate2 runtime, which has no Torch, records
+`None` for those fields. Preparation is owned by the `PreparationRunner` stage module.
 
 Finalization is a backend-neutral CPU component. Its import path contains only artifact contracts,
 speaker alignment, turn building, and transcript exporters: it does not import ASR backend modules,
@@ -270,7 +210,7 @@ normalized audio metadata, a SHA-256 digest of `normalized.wav`, diarization mod
 language. It contains no absolute host paths. The digest is verified when the artifact is loaded,
 retained on `PreparedRecording`, and reused by recognition and finalization without rereading the WAV.
 
-Each backend-specific `recognize-prepared` task writes a versioned ASR artifact:
+Each backend's `recognize` task writes a versioned ASR artifact:
 
 ```text
 asr/
@@ -286,7 +226,7 @@ timings, RTF, peak GPU memory, backend metrics/model references/configuration, a
 provenance (`runtime.name`, `runtime.version`, and `runtime.components`). Loaders reject absolute
 paths in external metadata and allow finite signed backend metrics such as log probabilities.
 
-`finalize-prepared` needs only `prepared/` and `asr/`; it does not instantiate an ASR backend, load
+`finalize` needs only `prepared/` and `asr/`; it does not instantiate an ASR backend, load
 model weights, or import backend implementations. It checks both the normalized-audio SHA-256 and the
 required expected backend before speaker alignment, turn building, and transcript export, preserving
 the ASR metadata in the final result:
@@ -303,53 +243,18 @@ result/
 backend-neutral `ASRWord` records. `metadata.json` is the versioned ASR metadata copied from the
 recognition artifact.
 
-For local convenience, `transcribe-prepared` still composes recognition and finalization in one
-process. The independently runnable commands are:
-
-```bash
-speech-transcriber recognize-prepared --prepared /work/prepared --asr parakeet --output /work/asr --device cuda
-speech-transcriber finalize-prepared --prepared /work/prepared --asr-result /work/asr \
-  --expected-backend parakeet --output /work/result
-```
-
-A `faster-whisper` smoke run uses the same split commands with the CTranslate2 runtime:
-
-```bash
-speech-transcriber recognize-prepared \
-  --prepared /work/prepared \
-  --asr faster-whisper \
-  --output /work/asr \
-  --working-directory /work/tmp \
-  --device cuda
-speech-transcriber finalize-prepared --prepared /work/prepared --asr-result /work/asr \
-  --expected-backend faster-whisper --output /work/result
-```
-
-A Canary smoke run uses the same artifact boundary with the NeMo runtime:
-
-```bash
-speech-transcriber recognize-prepared \
-  --prepared /work/prepared \
-  --asr canary \
-  --output /work/asr \
-  --working-directory /work/tmp \
-  --device cuda
-speech-transcriber finalize-prepared --prepared /work/prepared --asr-result /work/asr \
-  --expected-backend canary --output /work/result
-```
-
 ## Offline and Air-Gapped Models
 
 On an approved connected staging system, prefetch artifacts:
 
 ```bash
-HF_TOKEN=hf_... speech-transcriber prefetch-models --asr parakeet
-HF_TOKEN=hf_... speech-transcriber prefetch-models --asr primeline
-HF_TOKEN=hf_... speech-transcriber prefetch-models --asr qwen
-HF_TOKEN=hf_... speech-transcriber prefetch-models --asr nemotron
-HF_TOKEN=hf_... speech-transcriber prefetch-models --asr voxtral
-HF_TOKEN=hf_... speech-transcriber prefetch-models --asr faster-whisper
-HF_TOKEN=hf_... speech-transcriber prefetch-models --asr canary
+HF_TOKEN=hf_... speech-transcriber prefetch --backend parakeet
+HF_TOKEN=hf_... speech-transcriber prefetch --backend primeline
+HF_TOKEN=hf_... speech-transcriber prefetch --backend qwen
+HF_TOKEN=hf_... speech-transcriber prefetch --backend nemotron
+HF_TOKEN=hf_... speech-transcriber prefetch --backend voxtral
+HF_TOKEN=hf_... speech-transcriber prefetch --backend faster-whisper
+HF_TOKEN=hf_... speech-transcriber prefetch --backend canary
 ```
 
 Qwen prefetch includes the configured Qwen forced-aligner artifact. The `faster-whisper` backend's
@@ -399,7 +304,7 @@ TRANSFORMERS_OFFLINE=1 \
 ASR_BACKEND=nemotron \
 ASR_MODEL=/models/nemotron-3.5-asr-streaming-0.6b \
 PYANNOTE_MODEL=/models/pyannote-community-1 \
-speech-transcriber transcribe /data/audio.m4a --output /data/result --device cuda
+speech-transcriber prepare /data/audio.m4a --output /data/prepared --device cuda
 ```
 
 With all required artifacts mounted locally, inference performs no network access, telemetry, NVIDIA API calls, or remote-code loading. The CTranslate2 recognition image resolves the cached snapshot path under `HF_HOME` and passes it directly to `WhisperModel`, so the read-only model cache is never copied into the pod's ephemeral filesystem. The NeMo backends each resolve `refs/main` to the cache's matching snapshot and restore the exact expected `.nemo` checkpoint (`parakeet-tdt-0.6b-v3.nemo`, `2_95_WER.nemo`, `canary-1b-v2.nemo`) directly with `ASRModel.restore_from()`, rather than calling `from_pretrained()` with an online-style repository ID. When `HF_HUB_OFFLINE=1` and a model is absent, recognition fails with an explicit cache-miss error instead of silently attempting a repository lookup.
@@ -477,21 +382,19 @@ podman run --rm --device nvidia.com/gpu=all \
   -e HF_HOME=/models/huggingface -e HF_HUB_OFFLINE=1 \
   -v "$PWD/prepared:/work/prepared:ro,Z" -v "$PWD/asr:/work/asr:Z" \
   -v "$PWD/cache:/cache:Z" -v "$PWD/models:/models:ro,Z" \
-  speech-transcriber-nemo:local recognize-prepared \
-  --prepared /work/prepared --asr canary --output /work/asr \
-  --working-directory /work/tmp --device cuda
+  speech-transcriber-nemo:local recognize \
+  --prepared /work/prepared --backend canary \
+  --output /work/asr --working-directory /work/tmp --device cuda
 ```
 
 ```bash
 podman run --rm --device nvidia.com/gpu=all \
   --userns=keep-id --user "$(id -u):$(id -g)" \
   -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 \
-  -e ASR_BACKEND=nemotron \
-  -e ASR_MODEL=/models/nemotron-3.5-asr-streaming-0.6b \
   -e PYANNOTE_MODEL=/models/pyannote-community-1 \
-  -v "$PWD/input:/input:ro,Z" -v "$PWD/result:/output:Z" \
-  -v "$PWD/work:/work:Z" -v "$PWD/models:/models:ro,Z" \
-  speech-transcriber-transformers:local transcribe /input/audio.m4a \
+  -v "$PWD/input:/input:ro,Z" -v "$PWD/prepared:/output:Z" \
+  -v "$PWD/cache:/cache:Z" -v "$PWD/models:/models:ro,Z" \
+  speech-transcriber-transformers:local prepare /input/audio.m4a \
   --output /output --working-directory /work --device cuda
 ```
 
@@ -499,7 +402,7 @@ podman run --rm --device nvidia.com/gpu=all \
 
 `deploy/argo/transcription-workflowtemplate.yaml` is an example Argo `WorkflowTemplate`. It uses
 one lightweight `validate-backends` task before a GPU-limited `prepare` task. It then fans out one
-GPU-limited `recognize-prepared`, common CPU-only finalization, and non-GPU `publish` chain for
+GPU-limited `recognize`, common CPU-only finalization, and non-GPU `publish` chain for
 every selected backend. Image parameters are runtime-oriented (`transformers_image`, `nemo_image`,
 and `ctranslate2_image`), while each backend keeps an explicit recognition template, so a future
 runtime image can be replaced as long as it produces the ASR artifact, without changing the fan-out
@@ -555,7 +458,7 @@ the `nemo_image` parameter; `recognize-qwen`, `recognize-nemotron`, and `recogni
 reuse the common backend-neutral `finalize` template with the Transformers image and request no GPU
 and mount no model cache.
 
-Each Argo finalization task passes its fixed backend as `--expected-backend`; a recognition artifact
+Each Argo finalization task passes its fixed backend as `--backend`; a recognition artifact
 from a different backend or normalized recording fails before publication.
 
 The default Argo artifact repository stores temporary prepared, ASR, and final-result artifacts in

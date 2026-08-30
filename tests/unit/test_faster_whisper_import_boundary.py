@@ -1,7 +1,7 @@
 """Prove faster-whisper recognition runs without Torch/Transformers/pyannote.
 
 The dedicated faster-whisper image installs only the faster-whisper-runtime
-dependency set. This test runs the real ``recognize-prepared`` CLI path in a
+dependency set. This test runs the real ``recognize`` CLI path in a
 subprocess whose import guard fails if the recognition path imports Torch,
 Transformers, pyannote, or unrelated ASR backend modules.
 """
@@ -87,8 +87,8 @@ from speech_transcriber.transcription import faster_whisper as fw
 fw._create_whisper_model = lambda model_path, device, compute_type: FakeModel()
 from speech_transcriber.cli import main
 raise SystemExit(main([
-    "recognize-prepared", "--prepared", {str(prepared)!r},
-    "--asr", "faster-whisper", "--output", {str(asr)!r},
+    "recognize", "--prepared", {str(prepared)!r},
+    "--backend", "faster-whisper", "--output", {str(asr)!r},
     "--device", "cuda",
 ]))
 """

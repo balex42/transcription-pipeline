@@ -1,13 +1,65 @@
+"""Worker CLI contract: four commands, explicit backend selection, artifact flow."""
+
 import json
 from pathlib import Path
 
+import pytest
+
 from speech_transcriber import cli
-from speech_transcriber import pipeline as pipeline_module
-from speech_transcriber.config import DEFAULT_PYANNOTE_MODEL, DEFAULT_QWEN_ALIGNER_MODEL
+from speech_transcriber.config import DEFAULT_PYANNOTE_MODEL
 from speech_transcriber.models import ASRWord, AudioMetadata, DiarizationSegment, NormalizedAudio
-from speech_transcriber.pipeline import TranscriptionPipeline
 from speech_transcriber.prepared import PreparedRecording, sha256_file, write_prepared_recording
 from speech_transcriber.transcription.base import TranscriberCapabilities
+
+PUBLIC_COMMANDS = ("prepare", "recognize", "finalize", "prefetch")
+REMOVED_COMMANDS = (
+    "transcribe",
+    "transcribe-prepared",
+    "recognize-prepared",
+    "finalize-prepared",
+    "compare",
+    "prefetch-models",
+)
+
+
+def write_prepared_fixture(tmp_path: Path) -> tuple[Path, Path]:
+    """Write a minimal prepared artifact and return (prepared, source)."""
+    source = tmp_path / "normalized.wav"
+    source.write_bytes(b"normalized audio")
+    prepared_directory = tmp_path / "prepared"
+    write_prepared_recording(
+        PreparedRecording(
+            NormalizedAudio(source, AudioMetadata("meeting.wav", 2.0)),
+            [DiarizationSegment("SPEAKER_00", 0.0, 2.0)],
+            tmp_path,
+            normalized_audio_sha256=sha256_file(source),
+            diarization_model="pyannote/test",
+            language="de-DE",
+        ),
+        prepared_directory,
+    )
+    return prepared_directory, source
+
+
+class FakeTranscriber:
+    def __init__(self) -> None:
+        self.device = "cpu"
+        self.dtype_name = "float32"
+        self.model_reference = "fake/asr"
+        self.capabilities = TranscriberCapabilities(True, True, True, True)
+        self.loaded = False
+        self.load_calls = 0
+        self.released = False
+
+    def load(self) -> None:
+        self.loaded = True
+        self.load_calls += 1
+
+    def transcribe(self, _: NormalizedAudio) -> list[ASRWord]:
+        return [ASRWord("hallo", 0.5, start=0.0)]
+
+    def release(self) -> None:
+        self.released = True
 
 
 class FakePreprocessor:
@@ -34,116 +86,127 @@ class FakeDiarizer:
         self.released = True
 
 
-class FakeTranscriber:
-    def __init__(self) -> None:
-        self.device = "cpu"
-        self.dtype_name = "float32"
-        self.model_reference = "fake/asr"
-        self.capabilities = TranscriberCapabilities(True, True, True, True)
-        self.loaded = False
-        self.load_calls = 0
-        self.released = False
-
-    def load(self) -> None:
-        self.loaded = True
-        self.load_calls += 1
-
-    def transcribe(self, _: NormalizedAudio) -> list[ASRWord]:
-        return [ASRWord("hallo", 0.5, start=0.0)]
-
-    def release(self) -> None:
-        self.released = True
-
-
-def test_prefetch_qwen_includes_the_forced_aligner(monkeypatch: object) -> None:
-    calls: list[tuple[str, str, str | None]] = []
-
-    def prefetch(asr: str, pyannote: str, aligner: str | None) -> None:
-        calls.append((asr, pyannote, aligner))
-
-    monkeypatch.setattr(cli, "_prefetch", prefetch)  # type: ignore[attr-defined]
-
-    assert cli.main(["prefetch-models", "--asr", "qwen"]) == 0
-    assert calls == [
-        ("Qwen/Qwen3-ASR-1.7B-hf", DEFAULT_PYANNOTE_MODEL, DEFAULT_QWEN_ALIGNER_MODEL)
-    ]
-
-
-def test_prefetch_faster_whisper_uses_only_the_model_repository(monkeypatch: object) -> None:
-    downloads: list[str] = []
-
-    def snapshot_download(repo: str, **kwargs: object) -> None:
-        downloads.append(repo)
-
-    import huggingface_hub
-
-    monkeypatch.setattr(huggingface_hub, "snapshot_download", snapshot_download)
-
-    assert cli.main(["prefetch-models", "--asr", "faster-whisper"]) == 0
-    assert downloads == [
-        "Systran/faster-whisper-large-v3",
-        DEFAULT_PYANNOTE_MODEL,
-    ]
-
-
-def test_prefetch_canary_uses_only_its_model_repository(monkeypatch: object) -> None:
-    downloads: list[str] = []
-
-    def snapshot_download(repo: str, **kwargs: object) -> None:
-        downloads.append(repo)
-
-    import huggingface_hub
-
-    monkeypatch.setattr(huggingface_hub, "snapshot_download", snapshot_download)
-
-    assert cli.main(["prefetch-models", "--asr", "canary"]) == 0
-    assert downloads == ["nvidia/canary-1b-v2", DEFAULT_PYANNOTE_MODEL]
-
-
-def test_compare_defaults_to_the_transformers_runtime_backends() -> None:
+def test_parser_exposes_exactly_the_four_worker_commands() -> None:
     parser = cli.build_parser()
-    args = parser.parse_args(["compare", "input.wav", "--output", "output"])
-    assert args.models == "qwen,nemotron,voxtral"
+    subcommands = next(
+        action for action in parser._actions if action.dest == "command"  # noqa: SLF001
+    ).choices  # type: ignore[attr-defined]
+
+    assert set(subcommands) == set(PUBLIC_COMMANDS)
 
 
-def test_compare_rejects_heterogeneous_backends_before_creating_pipeline(
-    monkeypatch: object,
-) -> None:
-    def unexpected_pipeline(_: object) -> object:
-        raise AssertionError("heterogeneous compare must fail before creating the generic pipeline")
+@pytest.mark.parametrize("command", REMOVED_COMMANDS)
+def test_removed_commands_fail_parsing(command: str) -> None:
+    parser = cli.build_parser()
 
-    monkeypatch.setattr(cli, "create_default_pipeline", unexpected_pipeline)  # type: ignore[attr-defined]
+    with pytest.raises(SystemExit):
+        parser.parse_args([command])
 
-    assert (
-        cli.main(
-            [
-                "compare",
-                "input.wav",
-                "--models",
-                "faster-whisper,canary",
-                "--output",
-                "output",
-            ]
-        )
-        == 1
+
+def test_recognize_requires_prepared_backend_and_output() -> None:
+    parser = cli.build_parser()
+
+    for missing in (
+        ["recognize", "--backend", "parakeet", "--output", "asr"],
+        ["recognize", "--prepared", "prepared", "--output", "asr"],
+        ["recognize", "--prepared", "prepared", "--backend", "parakeet"],
+    ):
+        with pytest.raises(SystemExit):
+            parser.parse_args(missing)
+
+
+def test_recognize_accepts_no_default_backend() -> None:
+    args = cli.build_parser().parse_args(
+        ["recognize", "--prepared", "prepared", "--backend", "parakeet", "--output", "asr"]
     )
+
+    assert args.backend == "parakeet"
+
+
+def test_finalize_requires_prepared_asr_backend_and_output() -> None:
+    parser = cli.build_parser()
+
+    for missing in (
+        ["finalize", "--asr", "asr", "--backend", "parakeet", "--output", "result"],
+        ["finalize", "--prepared", "prepared", "--backend", "parakeet", "--output", "result"],
+        ["finalize", "--prepared", "prepared", "--asr", "asr", "--output", "result"],
+        ["finalize", "--prepared", "prepared", "--asr", "asr", "--backend", "parakeet"],
+    ):
+        with pytest.raises(SystemExit):
+            parser.parse_args(missing)
+
+
+def test_prefetch_requires_an_explicit_backend() -> None:
+    parser = cli.build_parser()
+
+    with pytest.raises(SystemExit):
+        parser.parse_args(["prefetch"])
+
+
+def test_prepare_exposes_no_backend_specific_recognition_options() -> None:
+    prepare = cli.subcommands(cli.build_parser())["prepare"]
+    prepare_options = {option for action in prepare._actions for option in action.option_strings}  # noqa: SLF001
+
+    # Exact worker surface: input, output, work dir, device, diarization, language, logging.
+    assert prepare_options == {
+        "-h",
+        "--help",
+        "--output",
+        "--working-directory",
+        "--device",
+        "--pyannote-model",
+        "--language",
+        "--num-speakers",
+        "--min-speakers",
+        "--max-speakers",
+        "--log-level",
+    }
+
+
+def test_finalize_exposes_no_recognition_or_diarization_options() -> None:
+    finalize = cli.subcommands(cli.build_parser())["finalize"]
+    options = {option for action in finalize._actions for option in action.option_strings}  # noqa: SLF001
+
+    # Canonical worker surface: prepared/asr/backend/output plus language/log-level only.
+    assert options == {
+        "-h",
+        "--help",
+        "--prepared",
+        "--asr",
+        "--backend",
+        "--output",
+        "--language",
+        "--log-level",
+    }
+
+
+@pytest.mark.parametrize("backend", cli.BACKEND_TEST_IDS)
+def test_recognize_supports_every_public_backend(backend: str) -> None:
+    args = cli.build_parser().parse_args(
+        ["recognize", "--prepared", "prepared", "--backend", backend, "--output", "asr"]
+    )
+
+    assert args.backend == backend
 
 
 def test_prepare_command_writes_artifact_and_releases_diarizer(
-    tmp_path: Path, monkeypatch: object
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     preprocessor = FakePreprocessor()
     diarizer = FakeDiarizer()
 
-    def pipeline_factory(config: object) -> TranscriptionPipeline:
-        return TranscriptionPipeline(  # type: ignore[arg-type]
-            config,
+    def runner_factory(config: object) -> object:
+        from speech_transcriber.preparation import PreparationRunner
+
+        return PreparationRunner(
+            config,  # type: ignore[arg-type]
             diarizer_factory=lambda: diarizer,
-            transcriber_factory=FakeTranscriber,
             preprocessor=preprocessor,
         )
 
-    monkeypatch.setattr(cli, "create_default_pipeline", pipeline_factory)  # type: ignore[attr-defined]
+    monkeypatch.setattr(
+        "speech_transcriber.preparation.PreparationRunner.create_default", runner_factory
+    )
     output = tmp_path / "prepared"
 
     assert (
@@ -168,55 +231,31 @@ def test_prepare_command_writes_artifact_and_releases_diarizer(
     }
 
 
-def test_transcribe_prepared_uses_only_asr_and_keeps_input_immutable(
-    tmp_path: Path, monkeypatch: object
+def test_recognize_writes_canonical_asr_artifact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    source = tmp_path / "normalized.wav"
-    source.write_bytes(b"normalized audio")
-    prepared_directory = tmp_path / "prepared"
-    write_prepared_recording(
-        PreparedRecording(
-            NormalizedAudio(source, AudioMetadata("meeting.wav", 2.0)),
-            [DiarizationSegment("SPEAKER_00", 0.0, 2.0)],
-            tmp_path,
-            normalized_audio_sha256=sha256_file(source),
-            diarization_model="pyannote/test",
-            language="de-DE",
-        ),
-        prepared_directory,
-    )
-    input_manifest = (prepared_directory / "prepared.json").read_bytes()
+    prepared_directory, _source = write_prepared_fixture(tmp_path)
     transcriber = FakeTranscriber()
-    preprocessor = FakePreprocessor()
 
-    def pipeline_factory(config: object) -> TranscriptionPipeline:
-        def unexpected_diarizer() -> FakeDiarizer:
-            raise AssertionError("transcribe-prepared must not construct a diarizer")
+    def fake_transcriber(config: object, device: str) -> FakeTranscriber:
+        assert device == "cpu"
+        return transcriber
 
-        return TranscriptionPipeline(  # type: ignore[arg-type]
-            config,
-            diarizer_factory=unexpected_diarizer,
-            transcriber_factory=lambda: transcriber,
-            preprocessor=preprocessor,
-        )
+    import speech_transcriber.transcription.factory as factory_module
 
-    monkeypatch.setattr(cli, "create_default_pipeline", pipeline_factory)  # type: ignore[attr-defined]
-    def unexpected_hash(_: Path) -> str:
-        raise AssertionError("recognition must reuse the prepared digest")
-
-    monkeypatch.setattr(pipeline_module, "sha256_file", unexpected_hash)
-    output = tmp_path / "result"
+    monkeypatch.setattr(factory_module, "create_transcriber", fake_transcriber)
+    asr = tmp_path / "asr"
 
     assert (
         cli.main(
             [
-                "transcribe-prepared",
+                "recognize",
                 "--prepared",
                 str(prepared_directory),
-                "--asr",
+                "--backend",
                 "parakeet",
                 "--output",
-                str(output),
+                str(asr),
                 "--working-directory",
                 str(tmp_path / "work"),
             ]
@@ -224,54 +263,71 @@ def test_transcribe_prepared_uses_only_asr_and_keeps_input_immutable(
         == 0
     )
 
-    assert preprocessor.calls == 0
-    assert transcriber.loaded and transcriber.load_calls == 1 and transcriber.released
-    assert (prepared_directory / "prepared.json").read_bytes() == input_manifest
-    assert {path.name for path in output.iterdir()} == {
-        "transcript.json",
-        "transcript.txt",
-        "asr_words.json",
-        "metadata.json",
-    }
-    assert json.loads((output / "transcript.json").read_text(encoding="utf-8"))["metadata"][
-        "diarization_model"
-    ] == "pyannote/test"
-    assert json.loads((output / "metadata.json").read_text(encoding="utf-8"))["schema_version"] == 2
+    assert {path.name for path in asr.iterdir()} == {"asr_words.json", "metadata.json"}
+    assert transcriber.loaded and transcriber.released
+
+
+def test_recognize_wires_memory_metrics_from_the_backend_runtime(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    prepared_directory, _source = write_prepared_fixture(tmp_path)
+    seen: dict[str, object] = {}
+
+    def fake_transcriber(config: object, device: str) -> FakeTranscriber:
+        return FakeTranscriber()
+
+    def fake_runner(metrics: object) -> object:
+        seen["metrics"] = metrics
+
+        class FakeRunner:
+            def recognize(self, *_: object) -> None:
+                raise AssertionError("not reached")
+
+        return FakeRunner()
+
+    import speech_transcriber.recognition as recognition_module
+    import speech_transcriber.transcription.factory as factory_module
+
+    monkeypatch.setattr(factory_module, "create_transcriber", fake_transcriber)
+    monkeypatch.setattr(recognition_module, "RecognitionRunner", fake_runner)
+    monkeypatch.setattr(cli, "_memory_metrics", lambda device, backend: "metrics-for-parakeet")
+
+    with pytest.raises(AssertionError, match="not reached"):
+        cli.main(
+            [
+                "recognize",
+                "--prepared",
+                str(prepared_directory),
+                "--backend",
+                "parakeet",
+                "--output",
+                str(tmp_path / "asr"),
+            ]
+        )
+
+    assert seen["metrics"] == "metrics-for-parakeet"
 
 
 def test_recognize_and_finalize_commands_cross_the_artifact_boundary(
-    tmp_path: Path, monkeypatch: object
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    source = tmp_path / "normalized.wav"
-    source.write_bytes(b"normalized audio")
-    prepared_directory = tmp_path / "prepared"
-    write_prepared_recording(
-        PreparedRecording(
-            NormalizedAudio(source, AudioMetadata("meeting.wav", 2.0)),
-            [DiarizationSegment("SPEAKER_00", 0.0, 2.0)],
-            tmp_path,
-            normalized_audio_sha256=sha256_file(source),
-            diarization_model="pyannote/test",
-            language="de-DE",
-        ),
-        prepared_directory,
-    )
+    prepared_directory, _source = write_prepared_fixture(tmp_path)
     transcriber = FakeTranscriber()
 
     def recognition_transcriber(config: object, device: str) -> FakeTranscriber:
         return transcriber
 
-    from speech_transcriber.transcription import factory as factory_module
+    import speech_transcriber.transcription.factory as factory_module
 
     monkeypatch.setattr(factory_module, "create_transcriber", recognition_transcriber)
     asr = tmp_path / "asr"
     assert (
         cli.main(
             [
-                "recognize-prepared",
+                "recognize",
                 "--prepared",
                 str(prepared_directory),
-                "--asr",
+                "--backend",
                 "parakeet",
                 "--output",
                 str(asr),
@@ -284,25 +340,25 @@ def test_recognize_and_finalize_commands_cross_the_artifact_boundary(
     assert {path.name for path in asr.iterdir()} == {"asr_words.json", "metadata.json"}
     assert transcriber.loaded and transcriber.released
 
-    def unexpected_pipeline(_: object) -> object:
-        raise AssertionError("finalization must not create a runtime pipeline")
+    def unexpected_transcriber(config: object, device: str) -> object:
+        raise AssertionError("finalization must not create a backend adapter")
 
-    monkeypatch.setattr(cli, "create_default_pipeline", unexpected_pipeline)  # type: ignore[attr-defined]
+    import speech_transcriber.transcription.factory as factory_module
+
+    monkeypatch.setattr(factory_module, "create_transcriber", unexpected_transcriber)
     result = tmp_path / "result"
     assert (
         cli.main(
             [
-                "finalize-prepared",
+                "finalize",
                 "--prepared",
                 str(prepared_directory),
-                "--asr-result",
+                "--asr",
                 str(asr),
-                "--expected-backend",
+                "--backend",
                 "parakeet",
                 "--output",
                 str(result),
-                "--working-directory",
-                str(tmp_path / "work"),
             ]
         )
         == 0
@@ -316,6 +372,33 @@ def test_recognize_and_finalize_commands_cross_the_artifact_boundary(
     assert (result / "metadata.json").read_bytes() == (asr / "metadata.json").read_bytes()
 
 
+def test_finalize_rejects_a_mismatched_backend(tmp_path: Path) -> None:
+    prepared_directory, _source = write_prepared_fixture(tmp_path)
+    asr = tmp_path / "asr"
+    asr.mkdir()
+    (asr / "asr_words.json").write_text("[]", encoding="utf-8")
+    (asr / "metadata.json").write_text(
+        json.dumps({"schema_version": 2, "backend": "qwen"}), encoding="utf-8"
+    )
+
+    assert (
+        cli.main(
+            [
+                "finalize",
+                "--prepared",
+                str(prepared_directory),
+                "--asr",
+                str(asr),
+                "--backend",
+                "canary",
+                "--output",
+                str(tmp_path / "result"),
+            ]
+        )
+        == 1
+    )
+
+
 def test_recognition_device_passes_explicit_values_without_torch() -> None:
     assert cli._recognition_device("cuda") == "cuda"
     assert cli._recognition_device("cpu") == "cpu"
@@ -327,7 +410,9 @@ def test_memory_metrics_skip_the_ctranslate2_runtime_and_non_cuda_devices() -> N
     assert cli._memory_metrics("cpu", "parakeet") is None
 
 
-def test_memory_metrics_use_torch_runtime_for_other_backends(monkeypatch: object) -> None:
+def test_memory_metrics_use_torch_runtime_for_other_backends(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Torch-bearing runtimes get CUDA peak accounting through the adapter."""
 
     class FakeMetrics:
@@ -336,54 +421,64 @@ def test_memory_metrics_use_torch_runtime_for_other_backends(monkeypatch: object
 
     import speech_transcriber.runtime.device as device_module
 
-    monkeypatch.setattr(  # type: ignore[attr-defined]
-        device_module, "TorchMemoryMetrics", FakeMetrics
-    )
+    monkeypatch.setattr(device_module, "TorchMemoryMetrics", FakeMetrics)
     metrics = cli._memory_metrics("cuda", "parakeet")
     assert isinstance(metrics, FakeMetrics)
     assert metrics.device == "cuda"
 
 
-def test_new_command_parsing() -> None:
-    parser = cli.build_parser()
-    prepare = parser.parse_args(["prepare", "input.wav", "--output", "/tmp/prepared"])
-    transcribe_prepared = parser.parse_args(
-        [
-            "transcribe-prepared",
-            "--prepared",
-            "/tmp/prepared",
-            "--asr",
-            "parakeet",
-            "--output",
-            "/tmp/result",
-        ]
-    )
-    recognize_prepared = parser.parse_args(
-        [
-            "recognize-prepared",
-            "--prepared",
-            "/tmp/prepared",
-            "--asr",
-            "parakeet",
-            "--output",
-            "/tmp/asr",
-        ]
-    )
-    finalize_prepared = parser.parse_args(
-        [
-            "finalize-prepared",
-            "--prepared",
-            "/tmp/prepared",
-            "--asr-result",
-            "/tmp/asr",
-            "--expected-backend",
-            "parakeet",
-            "--output",
-            "/tmp/result",
-        ]
-    )
+def test_prefetch_qwen_includes_the_forced_aligner(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[tuple[str, str | None, str, str]] = []
 
-    assert prepare.input == Path("input.wav")
-    assert transcribe_prepared.prepared == Path("/tmp/prepared")
-    assert recognize_prepared.asr == "parakeet"
-    assert finalize_prepared.asr_result == Path("/tmp/asr")
+    def prefetch(config: object) -> None:
+        calls.append(
+            (
+                config.asr_backend,  # type: ignore[attr-defined]
+                config.asr_model,  # type: ignore[attr-defined]
+                config.qwen_aligner_model,  # type: ignore[attr-defined]
+                config.pyannote_model,  # type: ignore[attr-defined]
+            )
+        )
+
+    monkeypatch.setattr(cli, "_prefetch", prefetch)
+
+    assert cli.main(["prefetch", "--backend", "qwen"]) == 0
+    assert calls == [(  # type: ignore[comparison-overlap]
+        "qwen",
+        None,
+        "Qwen/Qwen3-ForcedAligner-0.6B-hf",
+        DEFAULT_PYANNOTE_MODEL,
+    )]
+
+
+def test_prefetch_faster_whisper_uses_only_the_model_repository(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    downloads: list[str] = []
+
+    def snapshot_download(repo: str, **kwargs: object) -> None:
+        downloads.append(repo)
+
+    import huggingface_hub
+
+    monkeypatch.setattr(huggingface_hub, "snapshot_download", snapshot_download)
+
+    assert cli.main(["prefetch", "--backend", "faster-whisper"]) == 0
+    assert downloads == [
+        "Systran/faster-whisper-large-v3",
+        DEFAULT_PYANNOTE_MODEL,
+    ]
+
+
+def test_prefetch_canary_uses_only_its_model_repository(monkeypatch: pytest.MonkeyPatch) -> None:
+    downloads: list[str] = []
+
+    def snapshot_download(repo: str, **kwargs: object) -> None:
+        downloads.append(repo)
+
+    import huggingface_hub
+
+    monkeypatch.setattr(huggingface_hub, "snapshot_download", snapshot_download)
+
+    assert cli.main(["prefetch", "--backend", "canary"]) == 0
+    assert downloads == ["nvidia/canary-1b-v2", DEFAULT_PYANNOTE_MODEL]

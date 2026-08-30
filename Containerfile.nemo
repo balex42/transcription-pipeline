@@ -55,5 +55,8 @@ RUN /bin/uv venv --python python --system-site-packages /app/.venv \
 COPY container/uid-entrypoint.sh /usr/local/bin/uid-entrypoint
 USER 1001
 RUN /usr/local/bin/uid-entrypoint /app/.venv/bin/python -c "import os, pwd, nemo, nemo.collections.asr, speech_transcriber, speech_transcriber.transcription.parakeet, speech_transcriber.transcription.primeline, speech_transcriber.transcription.canary, torch; print(pwd.getpwuid(os.getuid())); assert torch.__version__.startswith('2.12.0'); assert torch.version.cuda and torch.version.cuda.startswith('13.2'); print(torch.__version__); print(torch.version.cuda); print(nemo.__version__)"
+# Worker-surface smoke test: the NeMo image exposes recognize (and prefetch)
+# without preparation/finalization ML dependencies.
+RUN /usr/local/bin/uid-entrypoint /app/.venv/bin/python -m speech_transcriber recognize --help >/dev/null
 ENTRYPOINT ["/usr/local/bin/uid-entrypoint", "/app/.venv/bin/python", "-m", "speech_transcriber"]
 CMD ["--help"]

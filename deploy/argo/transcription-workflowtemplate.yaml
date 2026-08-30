@@ -524,10 +524,10 @@ spec:
         image: "{{workflow.parameters.nemo_image}}"
 
         args:
-          - recognize-prepared
+          - recognize
           - --prepared
           - /work/prepared
-          - --asr
+          - --backend
           - parakeet
           - --output
           - /work/asr
@@ -587,10 +587,10 @@ spec:
         image: "{{workflow.parameters.transformers_image}}"
 
         args:
-          - recognize-prepared
+          - recognize
           - --prepared
           - /work/prepared
-          - --asr
+          - --backend
           - qwen
           - --output
           - /work/asr
@@ -650,10 +650,10 @@ spec:
         image: "{{workflow.parameters.transformers_image}}"
 
         args:
-          - recognize-prepared
+          - recognize
           - --prepared
           - /work/prepared
-          - --asr
+          - --backend
           - nemotron
           - --output
           - /work/asr
@@ -713,10 +713,10 @@ spec:
         image: "{{workflow.parameters.transformers_image}}"
 
         args:
-          - recognize-prepared
+          - recognize
           - --prepared
           - /work/prepared
-          - --asr
+          - --backend
           - voxtral
           - --output
           - /work/asr
@@ -776,10 +776,10 @@ spec:
         image: "{{workflow.parameters.ctranslate2_image}}"
 
         args:
-          - recognize-prepared
+          - recognize
           - --prepared
           - /work/prepared
-          - --asr
+          - --backend
           - faster-whisper
           - --output
           - /work/asr
@@ -836,10 +836,10 @@ spec:
         image: "{{workflow.parameters.nemo_image}}"
 
         args:
-          - recognize-prepared
+          - recognize
           - --prepared
           - /work/prepared
-          - --asr
+          - --backend
           - primeline
           - --output
           - /work/asr
@@ -899,10 +899,10 @@ spec:
         image: "{{workflow.parameters.nemo_image}}"
 
         args:
-          - recognize-prepared
+          - recognize
           - --prepared
           - /work/prepared
-          - --asr
+          - --backend
           - canary
           - --output
           - /work/asr
@@ -959,12 +959,12 @@ spec:
       container:
         image: "{{workflow.parameters.transformers_image}}"
         args:
-          - finalize-prepared
+          - finalize
           - --prepared
           - /work/prepared
-          - --asr-result
+          - --asr
           - /work/asr
-          - --expected-backend
+          - --backend
           - "{{inputs.parameters.backend}}"
           - --output
           - /work/result

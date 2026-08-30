@@ -24,10 +24,19 @@ def make(overrides: dict[str, object], env: dict[str, str] | None = None) -> Pip
     return PipelineConfig.from_environment(Path("in.wav"), Path("out"), overrides, env or {})
 
 
-def test_default_backend_is_parakeet() -> None:
+def test_config_default_backend_is_parakeet_internally_only() -> None:
+    """The internal default exists for tests/helpers; the recognize CLI requires --backend."""
     config = make({})
     assert (config.asr_backend, config.resolved_asr_model) == ("parakeet", DEFAULT_PARAKEET_MODEL)
     assert (config.parakeet_segment_duration, config.parakeet_segment_overlap) == (180.0, 15.0)
+
+    from speech_transcriber import cli
+
+    recognize = cli.subcommands(cli.build_parser())["recognize"]
+    backend = next(
+        action for action in recognize._actions if action.dest == "backend"  # noqa: SLF001
+    )
+    assert backend.required and backend.default is None
 
 
 def test_environment_backend_and_default_model_mapping() -> None:
