@@ -12,7 +12,7 @@ def test_canary_argo_branch_uses_dedicated_gpu_recognition_and_common_finalizer(
         for parameter in document["spec"]["arguments"]["parameters"]
     }
 
-    assert parameters["canary_image"] == "ghcr.io/balex42/transcription-pipeline-canary:sha-7b09c51"
+    assert parameters["canary_image"] == "ghcr.io/balex42/transcription-pipeline-canary:sha-f425d6e"
 
     validator = templates["validate-backends"]
     output_paths = {
@@ -64,7 +64,7 @@ def test_primeline_argo_branch_uses_nemo_image_gpu_recognition_and_common_finali
     }
 
     assert parameters["primeline_image"] == (
-        "ghcr.io/balex42/transcription-pipeline-canary:sha-7b09c51"
+        "ghcr.io/balex42/transcription-pipeline-canary:sha-f425d6e"
     )
     assert parameters["backends"] == (
         '["parakeet","primeline","qwen","nemotron","voxtral","faster-whisper","canary","granite"]'
@@ -127,7 +127,7 @@ def test_granite_argo_branch_uses_generic_image_gpu_recognition_and_common_final
     }
 
     # Granite uses the generic Transformers runtime image, not a dedicated one.
-    assert parameters["granite_image"] == "ghcr.io/balex42/transcription-pipeline:sha-7b09c51"
+    assert parameters["granite_image"] == "ghcr.io/balex42/transcription-pipeline:sha-f425d6e"
     assert parameters["backends"] == (
         '["parakeet","primeline","qwen","nemotron","voxtral","faster-whisper","canary","granite"]'
     )
