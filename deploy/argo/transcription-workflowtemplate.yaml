@@ -11,7 +11,10 @@ spec:
   arguments:
     parameters:
       - name: utility_image
-        value: python:3.11-alpine
+        # Immutable digest of python:3.11-alpine (multi-arch index, 2026-08-13 build;
+        # linux/amd64 payload is Python 3.11.16). Re-pin deliberately, e.g. on base
+        # image updates, rather than tracking the moving tag.
+        value: python:3.11-alpine@sha256:6857d2dae63e052057f2db389a7061188ac9a92a3fa8d402bde68f36df6fada1
       - name: transformers_image
         value: ghcr.io/balex42/transcription-pipeline-transformers:sha-8607438
       - name: nemo_image

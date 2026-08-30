@@ -14,7 +14,7 @@ from speech_transcriber.alignment.speaker import (
     OverlapSpeakerAligner,
     SpeakerAligner,
 )
-from speech_transcriber.config import DEFAULT_PYANNOTE_MODEL, FinalizationConfig
+from speech_transcriber.config import FinalizationConfig
 from speech_transcriber.exporters.json import JsonTranscriptExporter
 from speech_transcriber.exporters.text import TextTranscriptExporter
 from speech_transcriber.models import (
@@ -75,16 +75,16 @@ class TranscriptFinalizer:
         self._stage("turns")
         turns = self.turn_builder.build(attributed)
         speakers = sorted({word.speaker for word in attributed if word.speaker != UNKNOWN_SPEAKER})
+        # The prepared artifact owns its provenance; finalization never fabricates it.
         transcript = Transcript(
             metadata=prepared.audio.metadata,
             asr_backend=recognition.metadata.backend,
             asr_model=recognition.metadata.model,
-            diarization_model=prepared.diarization_model or DEFAULT_PYANNOTE_MODEL,
+            diarization_model=prepared.diarization_model,
             speakers=speakers,
             words=attributed,
             turns=turns,
-            # The prepared artifact owns the language; finalization never overrides it.
-            language=prepared.language or "",
+            language=prepared.language,
         )
         result = PipelineResult(
             transcript=transcript,

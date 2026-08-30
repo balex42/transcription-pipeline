@@ -11,7 +11,6 @@ import argparse
 import logging
 import os
 import sys
-from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -32,7 +31,7 @@ from speech_transcriber.config import (
 )
 from speech_transcriber.errors import TranscriberError
 from speech_transcriber.models import ASRRecognitionResult
-from speech_transcriber.prepared import PreparedRecording, load_prepared_recording
+from speech_transcriber.prepared import load_prepared_recording
 
 if TYPE_CHECKING:
     from speech_transcriber.recognition import MemoryMetrics
@@ -117,10 +116,7 @@ def _add_recognize_options(parser: argparse.ArgumentParser) -> None:
         type=float,
         help="Canary sequential chunk duration in seconds (default: 10)",
     )
-    parser.add_argument(
-        "--language",
-        help="explicit ASR language override (default: inherited from the prepared artifact)",
-    )
+    # No --language flag: the prepared artifact is the immutable language source.
     parser.add_argument("--log-level", choices=_LOG_LEVELS)
 
 
@@ -188,18 +184,12 @@ def _recognize(config: RecognitionConfig) -> ASRRecognitionResult:
 
     prepared = load_prepared_recording(config.prepared_path)
     device = _recognition_device(config.device)
-    resolved = _resolve_language(config, prepared)
+    # The prepared artifact is the only language source; adapters normalize it.
     return RecognitionRunner(_memory_metrics(device, config.asr_backend)).recognize(
-        prepared, create_transcriber(resolved, device), config.asr_backend
+        prepared,
+        create_transcriber(config, device, prepared.language),
+        config.asr_backend,
     )
-
-
-def _resolve_language(config: RecognitionConfig, prepared: PreparedRecording) -> RecognitionConfig:
-    """Inherit the prepared artifact's language unless recognition overrides it."""
-    resolved_language = config.language_for(prepared.language)
-    if resolved_language != config.language:
-        return replace(config, language=resolved_language)
-    return config
 
 
 def _finalize(args: argparse.Namespace) -> int:
@@ -283,10 +273,10 @@ def _recognition_config(args: argparse.Namespace) -> RecognitionConfig:
     return RecognitionConfig.from_environment(
         args.prepared,
         args.output,
+        args.backend,
         {
             "working_directory": args.working_directory,
             "device": args.device,
-            "asr_backend": args.backend,
             "asr_model": args.model,
             "qwen_aligner_model": args.qwen_aligner_model,
             "parakeet_segment_duration": args.parakeet_segment_duration,
@@ -298,7 +288,6 @@ def _recognition_config(args: argparse.Namespace) -> RecognitionConfig:
             "voxtral_timestamp_offset_tokens": args.voxtral_timestamp_offset_tokens,
             "faster_whisper_compute_type": args.faster_whisper_compute_type,
             "canary_chunk_duration_seconds": args.canary_chunk_duration,
-            "language": args.language,
             "log_level": args.log_level,
         },
     )

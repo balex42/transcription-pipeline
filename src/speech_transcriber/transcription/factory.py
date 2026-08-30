@@ -11,18 +11,23 @@ from speech_transcriber.errors import UnsupportedASRBackendError
 from speech_transcriber.transcription.base import Transcriber
 
 
-def create_transcriber(config: RecognitionConfig, device: str) -> Transcriber:
-    """Create the selected ASR adapter without loading its model yet."""
+def create_transcriber(config: RecognitionConfig, device: str, language: str | None) -> Transcriber:
+    """Create the selected ASR adapter without loading its model yet.
+
+    ``language`` is the prepared artifact's recording language, passed straight
+    through by the recognize CLI. Adapters keep their own normalization of
+    that concrete value; language-conditioned adapters may still require one.
+    """
     if config.asr_backend not in DEFAULT_ASR_MODELS:
         raise UnsupportedASRBackendError(
             f"Unsupported ASR backend '{config.asr_backend}'. "
             "Supported backends: parakeet, primeline, qwen, nemotron, voxtral, "
             "faster-whisper, canary."
         )
-    # Language-conditioned backends require a concrete locale; the recognize CLI
-    # always resolves one from the prepared artifact or an explicit override
-    # before construction, so this materializes only the adapter-level default.
-    conditioned_language = config.language or DEFAULT_LANGUAGE
+    # Language-conditioned backends require a concrete locale; the prepared
+    # artifact is the single source, and its language materializes the
+    # adapter-level default only if a caller constructs one without a language.
+    conditioned_language = language or DEFAULT_LANGUAGE
     model = config.resolved_asr_model
     if config.asr_backend == "parakeet":
         from speech_transcriber.transcription.parakeet import ParakeetTranscriber
@@ -71,7 +76,7 @@ def create_transcriber(config: RecognitionConfig, device: str) -> Transcriber:
         return FasterWhisperTranscriber(
             model,
             device,
-            config.language,
+            language,
             config.faster_whisper_compute_type,
         )
     if config.asr_backend == "canary":

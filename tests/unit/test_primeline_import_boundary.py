@@ -102,9 +102,9 @@ config = RecognitionConfig(
     prepared_path=Path("prepared"),
     output_directory=Path("out"),
     working_directory=Path("work"),
-    asr_backend="primeline", language="de-DE"
+    asr_backend="primeline"
 )
-transcriber = create_transcriber(config, "cpu")
+transcriber = create_transcriber(config, "cpu", "de-DE")
 assert type(transcriber).__name__ == "PrimelineTranscriber"
 print("ok")
 """

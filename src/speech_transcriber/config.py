@@ -223,19 +223,20 @@ class PreparationConfig:
 
 @dataclass(frozen=True)
 class RecognitionConfig:
-    """Settings owned by the recognize worker and the selected ASR backend.
+    """Settings owned by the recognize worker for the selected ASR backend.
 
-    The recording language is not parsed from the environment: the prepared
-    artifact owns it, and only an explicit ``--language`` flag may override it.
+    Construction parses only the environment variables the selected backend
+    (and the common recognition surface) own: garbage for another backend is
+    never read and cannot break recognition. There is no backend or language
+    source outside ``--backend`` and the prepared artifact.
     """
 
     prepared_path: Path
     output_directory: Path
     working_directory: Path
+    asr_backend: str
     device: str = "auto"
-    asr_backend: str = "parakeet"
     asr_model: str | None = None
-    language: str | None = None
 
     qwen_aligner_model: str = DEFAULT_QWEN_ALIGNER_MODEL
 
@@ -261,26 +262,43 @@ class RecognitionConfig:
             raise ValueError("device must be auto, cuda, or cpu")
         if self.asr_backend not in ASR_BACKENDS:
             raise ValueError(f"asr_backend must be one of: {', '.join(ASR_BACKENDS)}")
-        if self.language is not None and not self.language:
-            raise ValueError("language must not be empty")
-        for name, duration, overlap in (
-            ("parakeet", self.parakeet_segment_duration, self.parakeet_segment_overlap),
-            ("qwen", self.qwen_segment_duration, self.qwen_segment_overlap),
-        ):
-            if duration <= 0 or not 0 <= overlap < duration:
+        self._validate_selected_backend()
+
+    def _validate_selected_backend(self) -> None:
+        """Validate only the settings the selected backend consumes."""
+        if self.asr_backend == "parakeet":
+            self._validate_segments("parakeet")
+        elif self.asr_backend == "qwen":
+            self._validate_segments("qwen")
+            validate_qwen_segment_duration(self.qwen_segment_duration)
+        elif self.asr_backend == "voxtral":
+            validate_voxtral_delay(self.voxtral_delay_ms)
+            validate_voxtral_timestamp_offset(self.voxtral_timestamp_offset_tokens)
+        elif self.asr_backend == "faster-whisper":
+            if self.faster_whisper_compute_type not in FASTER_WHISPER_COMPUTE_TYPES:
                 raise ValueError(
-                    f"{name} segment overlap must be non-negative and shorter than its duration"
+                    "faster_whisper_compute_type must be one of: "
+                    + ", ".join(FASTER_WHISPER_COMPUTE_TYPES)
                 )
-        validate_qwen_segment_duration(self.qwen_segment_duration)
-        validate_voxtral_delay(self.voxtral_delay_ms)
-        validate_voxtral_timestamp_offset(self.voxtral_timestamp_offset_tokens)
-        if self.faster_whisper_compute_type not in FASTER_WHISPER_COMPUTE_TYPES:
-            raise ValueError(
-                "faster_whisper_compute_type must be one of: "
-                + ", ".join(FASTER_WHISPER_COMPUTE_TYPES)
-            )
-        if self.canary_chunk_duration_seconds <= 0:
+        elif (
+            self.asr_backend == "canary"
+            and self.canary_chunk_duration_seconds <= 0
+        ):
             raise ValueError("canary_chunk_duration_seconds must be positive")
+
+    def _validate_segments(self, name: str) -> None:
+        duration = {
+            "parakeet": self.parakeet_segment_duration,
+            "qwen": self.qwen_segment_duration,
+        }[name]
+        overlap = {
+            "parakeet": self.parakeet_segment_overlap,
+            "qwen": self.qwen_segment_overlap,
+        }[name]
+        if duration <= 0 or not 0 <= overlap < duration:
+            raise ValueError(
+                f"{name} segment overlap must be non-negative and shorter than its duration"
+            )
 
     @property
     def resolved_asr_model(self) -> str:
@@ -289,74 +307,89 @@ class RecognitionConfig:
             return self.asr_model
         return DEFAULT_ASR_MODELS[self.asr_backend]
 
-    def language_for(self, prepared_language: str | None) -> str | None:
-        """Inherit the prepared artifact's language unless explicitly overridden."""
-        if self.language is not None:
-            return self.language
-        return prepared_language
-
     @classmethod
     def from_environment(
         cls,
         prepared_path: Path,
         output_directory: Path,
+        asr_backend: str,
         overrides: Mapping[str, object],
         env: Mapping[str, str] | None = None,
     ) -> RecognitionConfig:
-        """Create recognition configuration from CLI values, environment, then defaults."""
+        """Create recognition configuration for ``asr_backend``.
+
+        Only ``ASR_MODEL``, the common recognition settings, and the selected
+        backend's own variables are read from the environment; unrelated
+        backend variables stay untouched at their in-memory defaults.
+        """
         choices = _Choices(overrides, os.environ if env is None else env)
-        return cls(
-            prepared_path=prepared_path,
-            output_directory=output_directory,
-            working_directory=_working_directory(overrides, choices.env),
-            device=choices.string("device", "DEVICE", "auto"),
-            asr_backend=choices.string("asr_backend", "ASR_BACKEND", "parakeet"),
-            asr_model=choices.string_or_none("asr_model", "ASR_MODEL"),
-            # Language has no environment variable; the prepared artifact owns it.
-            language=choices.string_or_none("language", None),
-            qwen_aligner_model=choices.string(
-                "qwen_aligner_model", "QWEN_ALIGNER_MODEL", DEFAULT_QWEN_ALIGNER_MODEL
-            ),
-            parakeet_segment_duration=choices.float_or_default(
-                "parakeet_segment_duration",
-                "PARAKEET_SEGMENT_DURATION",
+        # Backend overrides through the in-memory mapping carry the parsed value
+        # only for the selected backend; other fields keep their class defaults
+        # without ever reading their environment variables.
+        backend_fields: dict[str, object] = {}
+        segmented = {
+            "parakeet": (
+                "parakeet",
                 DEFAULT_PARAKEET_SEGMENT_DURATION,
-            ),
-            parakeet_segment_overlap=choices.float_or_default(
-                "parakeet_segment_overlap",
-                "PARAKEET_SEGMENT_OVERLAP",
                 DEFAULT_PARAKEET_SEGMENT_OVERLAP,
             ),
-            qwen_segment_duration=choices.float_or_default(
-                "qwen_segment_duration", "QWEN_SEGMENT_DURATION", DEFAULT_QWEN_SEGMENT_DURATION
-            ),
-            qwen_segment_overlap=choices.float_or_default(
-                "qwen_segment_overlap", "QWEN_SEGMENT_OVERLAP", DEFAULT_QWEN_SEGMENT_OVERLAP
-            ),
-            nemotron_num_lookahead_tokens=choices.int_or_default(
+            "qwen": ("qwen", DEFAULT_QWEN_SEGMENT_DURATION, DEFAULT_QWEN_SEGMENT_OVERLAP),
+        }
+        if asr_backend in segmented:
+            prefix, segment_default, overlap_default = segmented[asr_backend]
+            backend_fields = {
+                f"{prefix}_segment_duration": choices.float_or_default(
+                    f"{prefix}_segment_duration",
+                    f"{prefix.upper()}_SEGMENT_DURATION",
+                    segment_default,
+                ),
+                f"{prefix}_segment_overlap": choices.float_or_default(
+                    f"{prefix}_segment_overlap",
+                    f"{prefix.upper()}_SEGMENT_OVERLAP",
+                    overlap_default,
+                ),
+            }
+        if asr_backend == "qwen":
+            backend_fields["qwen_aligner_model"] = choices.string(
+                "qwen_aligner_model", "QWEN_ALIGNER_MODEL", DEFAULT_QWEN_ALIGNER_MODEL
+            )
+        if asr_backend == "nemotron":
+            backend_fields["nemotron_num_lookahead_tokens"] = choices.int_or_default(
                 "nemotron_num_lookahead_tokens",
                 "NEMOTRON_NUM_LOOKAHEAD_TOKENS",
                 DEFAULT_NEMOTRON_NUM_LOOKAHEAD_TOKENS,
-            ),
-            voxtral_delay_ms=choices.int_or_default(
+            )
+        if asr_backend == "voxtral":
+            backend_fields["voxtral_delay_ms"] = choices.int_or_default(
                 "voxtral_delay_ms", "VOXTRAL_DELAY_MS", DEFAULT_VOXTRAL_DELAY_MS
-            ),
-            voxtral_timestamp_offset_tokens=choices.int_or_default(
+            )
+            backend_fields["voxtral_timestamp_offset_tokens"] = choices.int_or_default(
                 "voxtral_timestamp_offset_tokens",
                 "VOXTRAL_TIMESTAMP_OFFSET_TOKENS",
                 DEFAULT_VOXTRAL_TIMESTAMP_OFFSET_TOKENS,
-            ),
-            faster_whisper_compute_type=choices.string(
+            )
+        if asr_backend == "faster-whisper":
+            backend_fields["faster_whisper_compute_type"] = choices.string(
                 "faster_whisper_compute_type",
                 "FASTER_WHISPER_COMPUTE_TYPE",
                 DEFAULT_FASTER_WHISPER_COMPUTE_TYPE,
-            ),
-            canary_chunk_duration_seconds=choices.float_or_default(
+            )
+        if asr_backend == "canary":
+            backend_fields["canary_chunk_duration_seconds"] = choices.float_or_default(
                 "canary_chunk_duration_seconds",
                 "CANARY_CHUNK_DURATION",
                 DEFAULT_CANARY_CHUNK_DURATION_SECONDS,
-            ),
+            )
+        return cls(
+            prepared_path=prepared_path,
+            output_directory=output_directory,
+            asr_backend=asr_backend,
+            working_directory=_working_directory(overrides, choices.env),
+            device=choices.string("device", "DEVICE", "auto"),
+            asr_model=choices.string_or_none("asr_model", "ASR_MODEL"),
+            # Language has no configuration surface: the prepared artifact owns it.
             log_level=choices.string("log_level", "LOG_LEVEL", DEFAULT_LOG_LEVEL).upper(),
+            **backend_fields,  # type: ignore[arg-type]
         )
 
 

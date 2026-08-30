@@ -155,10 +155,11 @@ def test_finalize_requires_prepared_asr_backend_and_output() -> None:
 
 
 def test_finalize_no_longer_accepts_language() -> None:
-    """The prepared artifact owns the language; finalize has no language flag."""
-    assert "--language" not in command_options("finalize")
-    with pytest.raises(SystemExit):
-        cli.build_parser().parse_args(["finalize", "--language", "de-DE"])
+    """The prepared artifact owns the language; recognition and finalize have no language flag."""
+    for command in ("recognize", "finalize"):
+        assert "--language" not in command_options(command)
+        with pytest.raises(SystemExit):
+            cli.build_parser().parse_args([command, "--language", "de-DE"])
 
 
 def test_prefetch_requires_an_explicit_backend() -> None:
@@ -207,13 +208,14 @@ def test_recognize_supports_every_public_backend(backend: str) -> None:
     assert args.backend == backend
 
 
-def test_recognize_language_flag_defaults_to_none_for_artifact_inheritance() -> None:
+def test_recognize_exposes_no_language_flag_for_artifact_inheritance() -> None:
+    """The prepared artifact is the immutable language source; there is no override."""
     args = cli.build_parser().parse_args(
         ["recognize", "--prepared", "prepared", "--backend", "parakeet", "--output", "asr"]
     )
 
-    # None means: inherit the prepared artifact's language.
-    assert args.language is None
+    assert not hasattr(args, "language")
+    assert "--language" not in command_options("recognize")
 
 
 def test_prepare_command_writes_artifact_and_releases_diarizer(
@@ -258,14 +260,55 @@ def test_prepare_command_writes_artifact_and_releases_diarizer(
     }
 
 
+@pytest.mark.parametrize("prepared_language", ["fr-FR", "en-US"])
+def test_recognize_passes_the_prepared_language_to_the_backend_adapter(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    prepared_language: str,
+) -> None:
+    """The prepared artifact's language reaches the adapter with no override path."""
+    prepared_directory, _source = write_prepared_fixture(tmp_path, language=prepared_language)
+    seen: dict[str, object] = {}
+
+    def fake_transcriber(
+        config: object, device: str, language: str | None
+    ) -> FakeTranscriber:
+        seen["language"] = language
+        return FakeTranscriber()
+
+    import speech_transcriber.transcription.factory as factory_module
+
+    monkeypatch.setattr(factory_module, "create_transcriber", fake_transcriber)
+    monkeypatch.setenv("LANGUAGE", "de-DE")
+
+    assert (
+        cli.main(
+            [
+                "recognize",
+                "--prepared",
+                str(prepared_directory),
+                "--backend",
+                "parakeet",
+                "--output",
+                str(tmp_path / "asr"),
+                "--working-directory",
+                str(tmp_path / "work"),
+            ]
+        )
+        == 0
+    )
+    assert seen["language"] == prepared_language
+
+
 def test_recognize_writes_canonical_asr_artifact(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     prepared_directory, _source = write_prepared_fixture(tmp_path)
     transcriber = FakeTranscriber()
 
-    def fake_transcriber(config: object, device: str) -> FakeTranscriber:
+    def fake_transcriber(config: object, device: str, language: str | None) -> FakeTranscriber:
         assert device == "cpu"
+        assert language == "de-DE"
         return transcriber
 
     import speech_transcriber.transcription.factory as factory_module
@@ -300,7 +343,7 @@ def test_recognize_wires_memory_metrics_from_the_backend_runtime(
     prepared_directory, _source = write_prepared_fixture(tmp_path)
     seen: dict[str, object] = {}
 
-    def fake_transcriber(config: object, device: str) -> FakeTranscriber:
+    def fake_transcriber(config: object, device: str, language: str | None) -> FakeTranscriber:
         return FakeTranscriber()
 
     def fake_runner(metrics: object) -> object:
@@ -341,7 +384,9 @@ def test_recognize_and_finalize_commands_cross_the_artifact_boundary(
     prepared_directory, _source = write_prepared_fixture(tmp_path)
     transcriber = FakeTranscriber()
 
-    def recognition_transcriber(config: object, device: str) -> FakeTranscriber:
+    def recognition_transcriber(
+        config: object, device: str, language: str | None
+    ) -> FakeTranscriber:
         return transcriber
 
     import speech_transcriber.transcription.factory as factory_module
@@ -367,7 +412,7 @@ def test_recognize_and_finalize_commands_cross_the_artifact_boundary(
     assert {path.name for path in asr.iterdir()} == {"asr_words.json", "metadata.json"}
     assert transcriber.loaded and transcriber.released
 
-    def unexpected_transcriber(config: object, device: str) -> object:
+    def unexpected_transcriber(config: object, device: str, language: str | None) -> object:
         raise AssertionError("finalization must not create a backend adapter")
 
     monkeypatch.setattr(factory_module, "create_transcriber", unexpected_transcriber)

@@ -71,14 +71,14 @@ All adapters use deterministic inference, `model.eval()`, `torch.inference_mode(
 ## Language
 
 The pipeline is language-agnostic. `prepare` chooses the recording language (`--language`, default
-`de-DE`) and persists it in `prepared.json`; that artifact owns the language from then on.
-`recognize` inherits it for every backend, and `finalize` copies it into the transcript — no stage
-silently substitutes a generic default. `recognize --language` remains available as an explicit
-per-run override (recorded in backend metadata), and recognition never reads a `LANGUAGE`
-environment variable. Qwen and Nemotron accept a locale such as `de-DE`; the Qwen ASR and
+`de-DE`) and persists it in `prepared.json`; that artifact is the immutable language source of
+truth for the whole workflow. `recognize` reads exactly that language for every backend and
+`finalize` copies it into the transcript — no stage silently substitutes a generic default, and no
+later stage can change it. There is no `recognize --language` flag and recognition never reads a
+`LANGUAGE` environment variable. Qwen and Nemotron accept a locale such as `de-DE`; the Qwen ASR and
 forced-aligner stages use the base language code (for example `de`). Faster Whisper also reduces
-the locale to a Whisper base code (`de-DE` -> `de`); with no inherited or explicit language, the
-model detects it and the detected language/probability is recorded in backend metadata. Canary
+the locale to a Whisper base code (`de-DE` -> `de`); with no prepared language the model detects
+one and the detected language/probability is recorded in backend metadata. Canary
 uses the same locale reduction but requires an explicit supported code; it records requested,
 normalized source, and target language in ASR metadata. The initial Canary integration uses
 identical source/target codes and therefore never requests speech translation.
@@ -125,25 +125,27 @@ historical instruction to install NeMo from `main` is not used.
 ### Backend Configuration
 
 Each worker stage parses only its own settings: CLI values override environment values, which
-override defaults. Environment variables for another stage are never read, so an invalid value
-cannot break an unrelated command — `VOXTRAL_DELAY_MS=garbage` cannot fail `prepare`, and invalid
-Canary values cannot fail `finalize`.
+override defaults. Environment variables for another stage — and for another ASR backend — are
+never read, so an invalid value cannot break an unrelated command: `VOXTRAL_DELAY_MS=garbage`
+cannot fail `prepare` or a Parakeet recognition, invalid Canary values cannot fail `finalize`,
+and `QWEN_SEGMENT_DURATION=garbage` cannot fail a Canary recognition.
 
 `prepare` reads `WORKING_DIRECTORY`, `DEVICE`, `PYANNOTE_MODEL`, `LANGUAGE`, `NUM_SPEAKERS`,
 `MIN_SPEAKERS`, `MAX_SPEAKERS`, `KEEP_INTERMEDIATE_FILES`, and `LOG_LEVEL`.
 
-`recognize` reads `WORKING_DIRECTORY`, `DEVICE`, `ASR_MODEL`, `QWEN_ALIGNER_MODEL`,
-`PARAKEET_SEGMENT_DURATION`, `PARAKEET_SEGMENT_OVERLAP`, `QWEN_SEGMENT_DURATION`,
-`QWEN_SEGMENT_OVERLAP`, `NEMOTRON_NUM_LOOKAHEAD_TOKENS`, `VOXTRAL_DELAY_MS`,
-`VOXTRAL_TIMESTAMP_OFFSET_TOKENS`, `FASTER_WHISPER_COMPUTE_TYPE`, `CANARY_CHUNK_DURATION`, and
-`LOG_LEVEL`. It never reads `LANGUAGE`: recognition language comes from the prepared artifact
-unless `--language` overrides it explicitly.
+`recognize` reads `WORKING_DIRECTORY`, `DEVICE`, `ASR_MODEL`, and `LOG_LEVEL` always, plus only
+the selected backend's own settings: `PARAKEET_SEGMENT_DURATION`/`PARAKEET_SEGMENT_OVERLAP`
+(Parakeet), `QWEN_ALIGNER_MODEL`/`QWEN_SEGMENT_DURATION`/`QWEN_SEGMENT_OVERLAP` (Qwen),
+`NEMOTRON_NUM_LOOKAHEAD_TOKENS` (Nemotron), `VOXTRAL_DELAY_MS`/`VOXTRAL_TIMESTAMP_OFFSET_TOKENS`
+(Voxtral), `FASTER_WHISPER_COMPUTE_TYPE` (faster-whisper), and `CANARY_CHUNK_DURATION` (Canary).
+It never reads `LANGUAGE`: recognition language comes exclusively from the prepared artifact.
+`--backend` is always explicit (Argo passes the DAG branch's backend parameter); there is no
+`ASR_BACKEND` environment fallback and no default backend.
 
 `finalize` reads `KEEP_INTERMEDIATE_FILES` and `LOG_LEVEL` only; it parses and validates no ASR or
 diarization settings.
 
 ```text
-ASR_BACKEND
 ASR_MODEL
 QWEN_ALIGNER_MODEL
 PYANNOTE_MODEL
@@ -167,6 +169,12 @@ LOG_LEVEL
 HF_HOME
 HF_TOKEN
 ```
+
+An entry above only names an environment variable recognition may read; recognition still parses
+only the selected backend's variables (see the per-backend list above). The offline flags
+`HF_HUB_OFFLINE=1` and `TRANSFORMERS_OFFLINE=1` are set uniformly on every recognition pod by the
+shared Argo template; runtimes that never touch Transformers (CTranslate2) simply do not consume
+`TRANSFORMERS_OFFLINE`, so the unused flag is harmless.
 
 Equivalent CLI flags include `--backend`, `--model`, `--parakeet-segment-duration`, `--qwen-segment-duration`, `--nemotron-num-lookahead-tokens`, `--faster-whisper-compute-type`, and `--canary-chunk-duration`. There is intentionally no global `--chunk-duration` or `CHUNK_DURATION`: those old settings were removed because they incorrectly coupled backend implementations.
 
@@ -518,10 +526,15 @@ triggers, so an image-tag-only Argo update does not create a follow-up image bui
 its own immutable `sha-<commit>` tag namespace.
 
 A separate lightweight `Quality` workflow (`.github/workflows/quality.yml`) runs `ruff check .`,
-`mypy src`, and `pytest` on pull requests and pushes to `main` that touch `src/**`, `tests/**`,
-`deploy/**`, `pyproject.toml`, or `uv.lock`. It downloads no model weights, requires no GPU, and
-keeps model-dependent tests skipped, so it acts as the fast correctness gate for changes the
-container workflow does not build (including Argo template and regression-test changes).
+`mypy src`, and `pytest`, then lints the Argo WorkflowTemplate offline. The lint step downloads a
+pinned Argo CLI release (`ARGO_LINT_VERSION` in the workflow), renders the template's spec as a
+submit-time Workflow with a placeholder S3 recording artifact, and runs `argo lint --offline`:
+schema and DAG-reference validation with no cluster, no credentials, and no network access during
+lint execution itself. The workflow triggers on pull requests and pushes to `main` that touch
+`src/**`, `tests/**`, `deploy/**`, `pyproject.toml`, or `uv.lock`. It downloads no model weights,
+requires no GPU, and keeps model-dependent tests skipped, so it acts as the fast correctness gate
+for changes the container workflow does not build (including Argo template and regression-test
+changes).
 
 Only `prepare` and the shared `recognize` template declare and mount `speech-model-cache`
 read-only at `/models`; validation, finalization, and publication pods do not depend on model

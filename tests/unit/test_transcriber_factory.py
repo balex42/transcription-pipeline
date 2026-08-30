@@ -27,7 +27,7 @@ from speech_transcriber.transcription.voxtral import VoxtralTranscriber
 
 
 def config(
-    backend: str, model: str | None = None, language: str | None = None
+    backend: str, model: str | None = None
 ) -> RecognitionConfig:
     return RecognitionConfig(
         prepared_path=Path("prepared"),
@@ -35,7 +35,6 @@ def config(
         working_directory=Path("work"),
         asr_backend=backend,
         asr_model=model,
-        language=language,
     )
 
 
@@ -55,7 +54,7 @@ def test_factory_selects_adapter_and_default_model(
     backend: str, adapter: type[object], model: str
 ) -> None:
     language = "de-DE" if backend == "canary" else None
-    transcriber = create_transcriber(config(backend, language=language), "cpu")
+    transcriber = create_transcriber(config(backend), "cpu", language)
     assert isinstance(transcriber, adapter)
     assert transcriber.model_reference == model
     if backend == "qwen":
@@ -80,11 +79,29 @@ def test_factory_selects_adapter_and_default_model(
 
 
 def test_primeline_does_not_reuse_the_transformers_parakeet_adapter() -> None:
-    transcriber = create_transcriber(config("primeline"), "cpu")
+    transcriber = create_transcriber(config("primeline"), "cpu", "de-DE")
 
     assert type(transcriber) is PrimelineTranscriber
     assert not isinstance(transcriber, ParakeetTranscriber)
     assert transcriber.model_reference == DEFAULT_PRIMELINE_MODEL
+
+
+def test_prepared_language_is_passed_through_to_language_conditioned_adapters() -> None:
+    """fr-FR from the prepared artifact reaches Qwen, Nemotron, and Canary unchanged."""
+    from speech_transcriber.transcription.qwen.recognizer import QwenRecognizer
+
+    qwen = create_transcriber(config("qwen"), "cpu", "fr-FR")
+    assert isinstance(qwen._recognizer, QwenRecognizer)  # noqa: SLF001
+    assert qwen._recognizer.language == "fr-FR"  # noqa: SLF001
+    nemotron = create_transcriber(config("nemotron"), "cpu", "en-US")
+    assert nemotron.language == "en-US"
+    canary = create_transcriber(config("canary"), "cpu", "fr-FR")
+    assert canary.requested_language == "fr-FR"
+
+
+def test_faster_whisper_receives_the_prepared_language_unchanged() -> None:
+    transcriber = create_transcriber(config("faster-whisper"), "cpu", "en-US")
+    assert transcriber.language == "en-US"
 
 
 def test_canary_chunk_duration_from_config_is_passed_to_adapter() -> None:
@@ -94,10 +111,10 @@ def test_canary_chunk_duration_from_config_is_passed_to_adapter() -> None:
             output_directory=Path("out"),
             working_directory=Path("work"),
             asr_backend="canary",
-            language="de-DE",
             canary_chunk_duration_seconds=15.0,
         ),
         "cuda",
+        "de-DE",
     )
     assert transcriber.chunk_duration_seconds == 15.0
     assert transcriber.working_directory == Path("work")
@@ -114,6 +131,7 @@ def test_voxtral_delay_from_config_is_passed_to_adapter() -> None:
             voxtral_timestamp_offset_tokens=6,
         ),
         "cpu",
+        None,
     )
     assert transcriber.delay_ms == 1200
     assert transcriber.timestamp_offset_tokens == 6
@@ -127,16 +145,16 @@ def test_faster_whisper_compute_type_from_config_is_passed_to_adapter() -> None:
             working_directory=Path("work"),
             asr_backend="faster-whisper",
             faster_whisper_compute_type="bfloat16",
-            language="de-DE",
         ),
         "cuda",
+        "de-DE",
     )
     assert transcriber.compute_type == "bfloat16"
     assert transcriber.dtype_name == "bfloat16"
 
 
 def test_explicit_model_overrides_backend_default() -> None:
-    transcriber = create_transcriber(config("qwen", "/models/qwen"), "cpu")
+    transcriber = create_transcriber(config("qwen", "/models/qwen"), "cpu", "de-DE")
     assert transcriber.model_reference == "/models/qwen"
 
 
@@ -146,4 +164,4 @@ def test_invalid_backend_fails_clearly(backend: str) -> None:
     object.__setattr__(invalid, "asr_backend", backend)
     object.__setattr__(invalid, "asr_model", None)
     with pytest.raises(UnsupportedASRBackendError, match=backend):
-        create_transcriber(invalid, "cpu")
+        create_transcriber(invalid, "cpu", None)

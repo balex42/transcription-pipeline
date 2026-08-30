@@ -4,7 +4,7 @@ from pathlib import Path
 
 import yaml
 
-from speech_transcriber.config import ASR_BACKENDS, BACKEND_RUNTIMES
+from speech_transcriber.config import ASR_BACKENDS
 
 TEMPLATE_PATH = Path(__file__).parents[2] / "deploy/argo/transcription-workflowtemplate.yaml"
 
@@ -19,9 +19,13 @@ BACKEND_IMAGES = {
     "faster-whisper": "ctranslate2_image",
 }
 
-# Runtimes whose images also contain the Transformers stack accept the
-# TRANSFORMERS_OFFLINE flag; the CTranslate2 image must not set it.
-TRANSFORMERS_OFFLINE_RUNTIMES = {"transformers", "nemo"}
+# Runtime images share one offline environment block. TRANSFORMERS_OFFLINE may
+# also be present in the CTranslate2 image, where it is simply not consumed.
+SHARED_RECOGNITION_ENV = {
+    "HF_HOME": "/models/huggingface",
+    "HF_HUB_OFFLINE": "1",
+    "TRANSFORMERS_OFFLINE": "1",
+}
 
 
 def load() -> tuple[dict[str, dict], dict[str, str]]:
@@ -195,21 +199,19 @@ def test_no_backend_named_image_parameter_remains() -> None:
         assert stale not in raw
 
 
-def test_offline_flags_are_preserved_per_runtime_image() -> None:
-    """HF offline is universal; TRANSFORMERS_OFFLINE only where Transformers exists."""
+def test_recognition_template_uses_the_shared_offline_environment() -> None:
+    """All recognition runtimes receive the same offline environment block.
+
+    TRANSFORMERS_OFFLINE is deliberately uniform: runtime images that never
+    read Transformers (CTranslate2) ignore the harmless unused flag, which
+    keeps the shared recognize template a single environment definition.
+    """
     templates, _ = load()
     env = {
         variable["name"]: variable["value"]
         for variable in templates["recognize"]["container"]["env"]
     }
-    assert env["HF_HOME"] == "/models/huggingface"
-    assert env["HF_HUB_OFFLINE"] == "1"
-    assert env["TRANSFORMERS_OFFLINE"] == "1"
-
-    for backend in BACKEND_IMAGES:
-        runtime = BACKEND_RUNTIMES[backend]
-        if runtime not in TRANSFORMERS_OFFLINE_RUNTIMES:
-            assert runtime == "ctranslate2", backend
+    assert env == SHARED_RECOGNITION_ENV
 
 
 def test_validator_script_still_supports_all_backends() -> None:

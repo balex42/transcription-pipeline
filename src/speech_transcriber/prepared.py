@@ -22,14 +22,19 @@ MANIFEST_FILE = "prepared.json"
 
 @dataclass(frozen=True)
 class PreparedRecording:
-    """One normalization and diarization result reusable by recognition and finalization."""
+    """One normalization and diarization result reusable by recognition and finalization.
+
+    ``diarization_model`` and ``language`` are non-optional: every producer
+    (prepare, artifact load, tests) supplies them, so consumers never need
+    fallback provenance.
+    """
 
     audio: NormalizedAudio
     diarization: list[DiarizationSegment]
     work_directory: Path
     normalized_audio_sha256: str
-    diarization_model: str | None = None
-    language: str | None = None
+    diarization_model: str
+    language: str
     cleanup_enabled: bool = True
 
 

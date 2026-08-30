@@ -23,6 +23,9 @@ on:
 permissions:
   contents: read
 
+env:
+  ARGO_LINT_VERSION: "v4.1.2"
+
 jobs:
   quality:
     runs-on: ubuntu-latest
@@ -47,3 +50,15 @@ jobs:
 
       - name: Pytest
         run: uv run pytest
+
+      - name: Install pinned Argo CLI
+        run: |
+          curl -sfL --retry 3 \
+            "https://github.com/argoproj/argo-workflows/releases/download/${ARGO_LINT_VERSION}/argo-linux-amd64.gz" \
+            -o argo.gz
+          gunzip -f argo.gz
+          chmod +x argo
+          ./argo version --short
+
+      - name: Lint Argo templates offline
+        run: bash scripts/lint-argo-template.sh ./argo
