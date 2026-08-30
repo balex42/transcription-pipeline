@@ -13,11 +13,11 @@ spec:
       - name: utility_image
         value: python:3.11-alpine
       - name: transformers_image
-        value: ghcr.io/balex42/transcription-pipeline-transformers:PENDING_CI
+        value: ghcr.io/balex42/transcription-pipeline-transformers:sha-725aeb6
       - name: nemo_image
-        value: ghcr.io/balex42/transcription-pipeline-nemo:PENDING_CI
+        value: ghcr.io/balex42/transcription-pipeline-nemo:sha-725aeb6
       - name: ctranslate2_image
-        value: ghcr.io/balex42/transcription-pipeline-ctranslate2:PENDING_CI
+        value: ghcr.io/balex42/transcription-pipeline-ctranslate2:sha-725aeb6
       - name: backends
         value: '["parakeet","primeline","qwen","nemotron","voxtral","faster-whisper","canary"]'
 
