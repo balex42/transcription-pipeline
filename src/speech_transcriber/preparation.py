@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Protocol
 
 from speech_transcriber.audio.preprocess import AudioPreprocessor
-from speech_transcriber.config import PipelineConfig
+from speech_transcriber.config import PreparationConfig
 from speech_transcriber.diarization.base import Diarizer
 from speech_transcriber.diarization.pyannote import PyannoteDiarizer
 from speech_transcriber.models import AudioMetadata, NormalizedAudio
@@ -40,7 +40,7 @@ class PreparationRunner:
 
     def __init__(
         self,
-        config: PipelineConfig,
+        config: PreparationConfig,
         diarizer_factory: Callable[[], Diarizer],
         preprocessor: AudioNormalizer | None = None,
     ) -> None:
@@ -80,7 +80,7 @@ class PreparationRunner:
             shutil.rmtree(prepared.work_directory)
 
     @classmethod
-    def create_default(cls, config: PipelineConfig) -> PreparationRunner:
+    def create_default(cls, config: PreparationConfig) -> PreparationRunner:
         """Construct the production pyannote runner with the resolved device."""
         device = resolve_device(config.device)
         LOGGER.info("resolved runtime device", extra={"device": device})

@@ -14,7 +14,7 @@ from speech_transcriber.alignment.speaker import (
     OverlapSpeakerAligner,
     SpeakerAligner,
 )
-from speech_transcriber.config import PipelineConfig
+from speech_transcriber.config import DEFAULT_PYANNOTE_MODEL, FinalizationConfig
 from speech_transcriber.exporters.json import JsonTranscriptExporter
 from speech_transcriber.exporters.text import TextTranscriptExporter
 from speech_transcriber.models import (
@@ -36,7 +36,7 @@ class TranscriptFinalizer:
 
     def __init__(
         self,
-        config: PipelineConfig,
+        config: FinalizationConfig,
         aligner: SpeakerAligner | None = None,
         turn_builder: TurnBuilder | None = None,
     ) -> None:
@@ -79,11 +79,12 @@ class TranscriptFinalizer:
             metadata=prepared.audio.metadata,
             asr_backend=recognition.metadata.backend,
             asr_model=recognition.metadata.model,
-            diarization_model=prepared.diarization_model or self.config.pyannote_model,
+            diarization_model=prepared.diarization_model or DEFAULT_PYANNOTE_MODEL,
             speakers=speakers,
             words=attributed,
             turns=turns,
-            language=prepared.language or self.config.language,
+            # The prepared artifact owns the language; finalization never overrides it.
+            language=prepared.language or "",
         )
         result = PipelineResult(
             transcript=transcript,

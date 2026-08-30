@@ -12,7 +12,7 @@ from speech_transcriber.config import (
     DEFAULT_VOXTRAL_DELAY_MS,
     DEFAULT_VOXTRAL_MODEL,
     DEFAULT_VOXTRAL_TIMESTAMP_OFFSET_TOKENS,
-    PipelineConfig,
+    RecognitionConfig,
 )
 from speech_transcriber.errors import UnsupportedASRBackendError
 from speech_transcriber.transcription.base import TranscriberCapabilities
@@ -26,9 +26,16 @@ from speech_transcriber.transcription.qwen import QwenTranscriber
 from speech_transcriber.transcription.voxtral import VoxtralTranscriber
 
 
-def config(backend: str, model: str | None = None) -> PipelineConfig:
-    return PipelineConfig(
-        Path("in.wav"), Path("out"), Path("work"), asr_backend=backend, asr_model=model
+def config(
+    backend: str, model: str | None = None, language: str | None = None
+) -> RecognitionConfig:
+    return RecognitionConfig(
+        prepared_path=Path("prepared"),
+        output_directory=Path("out"),
+        working_directory=Path("work"),
+        asr_backend=backend,
+        asr_model=model,
+        language=language,
     )
 
 
@@ -47,7 +54,8 @@ def config(backend: str, model: str | None = None) -> PipelineConfig:
 def test_factory_selects_adapter_and_default_model(
     backend: str, adapter: type[object], model: str
 ) -> None:
-    transcriber = create_transcriber(config(backend), "cpu")
+    language = "de-DE" if backend == "canary" else None
+    transcriber = create_transcriber(config(backend, language=language), "cpu")
     assert isinstance(transcriber, adapter)
     assert transcriber.model_reference == model
     if backend == "qwen":
@@ -63,15 +71,14 @@ def test_factory_selects_adapter_and_default_model(
     if backend == "faster-whisper":
         assert transcriber.capabilities == TranscriberCapabilities(True, True, True, True)
         assert transcriber.compute_type == "float16"
-        assert transcriber.language == "de-DE"
+        assert transcriber.language is None
     if backend == "canary":
-        assert transcriber.capabilities == TranscriberCapabilities(True, True, True, True)
-        assert transcriber.source_language == "de"
-        assert transcriber.target_language == "de"
         assert transcriber.chunk_duration_seconds == 10.0
     if backend == "primeline":
         assert transcriber.capabilities == TranscriberCapabilities(True, True, True, True)
         assert transcriber.capabilities.requires_forced_alignment is False
+
+
 def test_primeline_does_not_reuse_the_transformers_parakeet_adapter() -> None:
     transcriber = create_transcriber(config("primeline"), "cpu")
 
@@ -82,11 +89,12 @@ def test_primeline_does_not_reuse_the_transformers_parakeet_adapter() -> None:
 
 def test_canary_chunk_duration_from_config_is_passed_to_adapter() -> None:
     transcriber = create_transcriber(
-        PipelineConfig(
-            Path("in.wav"),
-            Path("out"),
-            Path("work"),
+        RecognitionConfig(
+            prepared_path=Path("prepared"),
+            output_directory=Path("out"),
+            working_directory=Path("work"),
             asr_backend="canary",
+            language="de-DE",
             canary_chunk_duration_seconds=15.0,
         ),
         "cuda",
@@ -97,10 +105,10 @@ def test_canary_chunk_duration_from_config_is_passed_to_adapter() -> None:
 
 def test_voxtral_delay_from_config_is_passed_to_adapter() -> None:
     transcriber = create_transcriber(
-        PipelineConfig(
-            Path("in.wav"),
-            Path("out"),
-            Path("work"),
+        RecognitionConfig(
+            prepared_path=Path("prepared"),
+            output_directory=Path("out"),
+            working_directory=Path("work"),
             asr_backend="voxtral",
             voxtral_delay_ms=1200,
             voxtral_timestamp_offset_tokens=6,
@@ -113,12 +121,13 @@ def test_voxtral_delay_from_config_is_passed_to_adapter() -> None:
 
 def test_faster_whisper_compute_type_from_config_is_passed_to_adapter() -> None:
     transcriber = create_transcriber(
-        PipelineConfig(
-            Path("in.wav"),
-            Path("out"),
-            Path("work"),
+        RecognitionConfig(
+            prepared_path=Path("prepared"),
+            output_directory=Path("out"),
+            working_directory=Path("work"),
             asr_backend="faster-whisper",
             faster_whisper_compute_type="bfloat16",
+            language="de-DE",
         ),
         "cuda",
     )
@@ -133,7 +142,7 @@ def test_explicit_model_overrides_backend_default() -> None:
 
 @pytest.mark.parametrize("backend", ["invalid", "unknown-asr"])
 def test_invalid_backend_fails_clearly(backend: str) -> None:
-    invalid = object.__new__(PipelineConfig)
+    invalid = object.__new__(RecognitionConfig)
     object.__setattr__(invalid, "asr_backend", backend)
     object.__setattr__(invalid, "asr_model", None)
     with pytest.raises(UnsupportedASRBackendError, match=backend):

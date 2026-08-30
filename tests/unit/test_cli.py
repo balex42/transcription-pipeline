@@ -1,12 +1,13 @@
 """Worker CLI contract: four commands, explicit backend selection, artifact flow."""
 
+import argparse
 import json
 from pathlib import Path
 
 import pytest
 
 from speech_transcriber import cli
-from speech_transcriber.config import DEFAULT_PYANNOTE_MODEL
+from speech_transcriber.config import ASR_BACKENDS, DEFAULT_PYANNOTE_MODEL
 from speech_transcriber.models import ASRWord, AudioMetadata, DiarizationSegment, NormalizedAudio
 from speech_transcriber.prepared import PreparedRecording, sha256_file, write_prepared_recording
 from speech_transcriber.transcription.base import TranscriberCapabilities
@@ -22,7 +23,24 @@ REMOVED_COMMANDS = (
 )
 
 
-def write_prepared_fixture(tmp_path: Path) -> tuple[Path, Path]:
+def command_options(command: str) -> set[str]:
+    """Return the option strings a worker subcommand accepts."""
+    parser = cli.build_parser()
+    choices = next(
+        action for action in parser._actions if action.dest == "command"  # noqa: SLF001
+    ).choices  # type: ignore[attr-defined]
+    subparser = choices[command]
+    return {option for action in subparser._actions for option in action.option_strings}  # noqa: SLF001
+
+
+def command_actions(command: str) -> argparse.Namespace:
+    """Parse canonical arguments for a worker command and return the namespace."""
+    return cli.build_parser()
+
+
+def write_prepared_fixture(
+    tmp_path: Path, language: str = "de-DE"
+) -> tuple[Path, Path]:
     """Write a minimal prepared artifact and return (prepared, source)."""
     source = tmp_path / "normalized.wav"
     source.write_bytes(b"normalized audio")
@@ -34,7 +52,7 @@ def write_prepared_fixture(tmp_path: Path) -> tuple[Path, Path]:
             tmp_path,
             normalized_audio_sha256=sha256_file(source),
             diarization_model="pyannote/test",
-            language="de-DE",
+            language=language,
         ),
         prepared_directory,
     )
@@ -136,6 +154,13 @@ def test_finalize_requires_prepared_asr_backend_and_output() -> None:
             parser.parse_args(missing)
 
 
+def test_finalize_no_longer_accepts_language() -> None:
+    """The prepared artifact owns the language; finalize has no language flag."""
+    assert "--language" not in command_options("finalize")
+    with pytest.raises(SystemExit):
+        cli.build_parser().parse_args(["finalize", "--language", "de-DE"])
+
+
 def test_prefetch_requires_an_explicit_backend() -> None:
     parser = cli.build_parser()
 
@@ -144,11 +169,8 @@ def test_prefetch_requires_an_explicit_backend() -> None:
 
 
 def test_prepare_exposes_no_backend_specific_recognition_options() -> None:
-    prepare = cli.subcommands(cli.build_parser())["prepare"]
-    prepare_options = {option for action in prepare._actions for option in action.option_strings}  # noqa: SLF001
-
     # Exact worker surface: input, output, work dir, device, diarization, language, logging.
-    assert prepare_options == {
+    assert command_options("prepare") == {
         "-h",
         "--help",
         "--output",
@@ -164,29 +186,34 @@ def test_prepare_exposes_no_backend_specific_recognition_options() -> None:
 
 
 def test_finalize_exposes_no_recognition_or_diarization_options() -> None:
-    finalize = cli.subcommands(cli.build_parser())["finalize"]
-    options = {option for action in finalize._actions for option in action.option_strings}  # noqa: SLF001
-
-    # Canonical worker surface: prepared/asr/backend/output plus language/log-level only.
-    assert options == {
+    # Canonical worker surface: prepared/asr/backend/output plus log-level only.
+    assert command_options("finalize") == {
         "-h",
         "--help",
         "--prepared",
         "--asr",
         "--backend",
         "--output",
-        "--language",
         "--log-level",
     }
 
 
-@pytest.mark.parametrize("backend", cli.BACKEND_TEST_IDS)
+@pytest.mark.parametrize("backend", ASR_BACKENDS)
 def test_recognize_supports_every_public_backend(backend: str) -> None:
     args = cli.build_parser().parse_args(
         ["recognize", "--prepared", "prepared", "--backend", backend, "--output", "asr"]
     )
 
     assert args.backend == backend
+
+
+def test_recognize_language_flag_defaults_to_none_for_artifact_inheritance() -> None:
+    args = cli.build_parser().parse_args(
+        ["recognize", "--prepared", "prepared", "--backend", "parakeet", "--output", "asr"]
+    )
+
+    # None means: inherit the prepared artifact's language.
+    assert args.language is None
 
 
 def test_prepare_command_writes_artifact_and_releases_diarizer(
@@ -343,8 +370,6 @@ def test_recognize_and_finalize_commands_cross_the_artifact_boundary(
     def unexpected_transcriber(config: object, device: str) -> object:
         raise AssertionError("finalization must not create a backend adapter")
 
-    import speech_transcriber.transcription.factory as factory_module
-
     monkeypatch.setattr(factory_module, "create_transcriber", unexpected_transcriber)
     result = tmp_path / "result"
     assert (
@@ -370,6 +395,64 @@ def test_recognize_and_finalize_commands_cross_the_artifact_boundary(
         "metadata.json",
     }
     assert (result / "metadata.json").read_bytes() == (asr / "metadata.json").read_bytes()
+
+
+def test_finalize_inherits_the_prepared_language_into_the_transcript(
+    tmp_path: Path,
+) -> None:
+    prepared_directory, _source = write_prepared_fixture(tmp_path, language="fr-FR")
+    asr = tmp_path / "asr"
+    asr.mkdir()
+    (asr / "asr_words.json").write_text(
+        json.dumps(
+            [
+                {"text": "bonjour", "start": 0.0, "end": 0.5, "confidence": 0.9},
+                {"text": "monde", "start": 0.5, "end": 1.5, "confidence": 0.9},
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (asr / "metadata.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 2,
+                "asr_words_file": "asr_words.json",
+                "backend": "parakeet",
+                "model": "parakeet",
+                "device": "cuda",
+                "dtype": "float16",
+                "audio_duration_seconds": 2.0,
+                "model_load_seconds": 1.0,
+                "transcription_seconds": 0.5,
+                "total_asr_seconds": 1.5,
+                "real_time_factor": 0.75,
+                "normalized_audio_sha256": sha256_file(_source),
+                "runtime": {"name": "nemo", "version": "3.0.0", "components": {}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    result = tmp_path / "result"
+
+    assert (
+        cli.main(
+            [
+                "finalize",
+                "--prepared",
+                str(prepared_directory),
+                "--asr",
+                str(asr),
+                "--backend",
+                "parakeet",
+                "--output",
+                str(result),
+            ]
+        )
+        == 0
+    )
+
+    transcript = json.loads((result / "transcript.json").read_text(encoding="utf-8"))
+    assert transcript["metadata"]["language"] == "fr-FR"
 
 
 def test_finalize_rejects_a_mismatched_backend(tmp_path: Path) -> None:
@@ -428,27 +511,22 @@ def test_memory_metrics_use_torch_runtime_for_other_backends(
 
 
 def test_prefetch_qwen_includes_the_forced_aligner(monkeypatch: pytest.MonkeyPatch) -> None:
-    calls: list[tuple[str, str | None, str, str]] = []
+    calls: list[tuple[object, ...]] = []
 
-    def prefetch(config: object) -> None:
-        calls.append(
-            (
-                config.asr_backend,  # type: ignore[attr-defined]
-                config.asr_model,  # type: ignore[attr-defined]
-                config.qwen_aligner_model,  # type: ignore[attr-defined]
-                config.pyannote_model,  # type: ignore[attr-defined]
-            )
-        )
+    def prefetch(
+        backend: str,
+        model: str | None,
+        qwen_aligner_model: str,
+        pyannote_model: str,
+        log_level: str | None,
+    ) -> None:
+        calls.append((backend, model, qwen_aligner_model, pyannote_model, log_level))
 
     monkeypatch.setattr(cli, "_prefetch", prefetch)
 
     assert cli.main(["prefetch", "--backend", "qwen"]) == 0
-    assert calls == [(  # type: ignore[comparison-overlap]
-        "qwen",
-        None,
-        "Qwen/Qwen3-ForcedAligner-0.6B-hf",
-        DEFAULT_PYANNOTE_MODEL,
-    )]
+    assert calls == [("qwen", None, "Qwen/Qwen3-ForcedAligner-0.6B-hf", DEFAULT_PYANNOTE_MODEL,
+                      None)]
 
 
 def test_prefetch_faster_whisper_uses_only_the_model_repository(

@@ -96,9 +96,14 @@ def guarded_import(name, globals=None, locals=None, fromlist=(), level=0):
 builtins.__import__ = guarded_import
 
 from pathlib import Path
-from speech_transcriber.config import PipelineConfig
+from speech_transcriber.config import RecognitionConfig
 from speech_transcriber.transcription.factory import create_transcriber
-config = PipelineConfig(Path("in.wav"), Path("out"), Path("work"), asr_backend="primeline")
+config = RecognitionConfig(
+    prepared_path=Path("prepared"),
+    output_directory=Path("out"),
+    working_directory=Path("work"),
+    asr_backend="primeline", language="de-DE"
+)
 transcriber = create_transcriber(config, "cpu")
 assert type(transcriber).__name__ == "PrimelineTranscriber"
 print("ok")

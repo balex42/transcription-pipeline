@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from speech_transcriber.config import PipelineConfig
+from speech_transcriber.config import PreparationConfig, RecognitionConfig
 from speech_transcriber.models import ASRWord, AudioMetadata, DiarizationSegment, NormalizedAudio
 from speech_transcriber.preparation import PreparationRunner
 from speech_transcriber.recognition import RecognitionRunner
@@ -66,15 +66,21 @@ class FakeTranscriber:
 def test_split_stage_runners_cross_the_prepared_artifact_boundary(tmp_path: Path) -> None:
     diarizer = FakeDiarizer()
     transcriber = FakeTranscriber()
-    config = PipelineConfig(
+    preparation = PreparationConfig(
         input_path=tmp_path / "audio.wav",
-        output_directory=tmp_path / "result",
+        output_directory=tmp_path / "prepared",
+        working_directory=tmp_path / "work",
+        language="de-DE",
+    )
+    recognition = RecognitionConfig(
+        prepared_path=tmp_path / "prepared",
+        output_directory=tmp_path / "asr",
         working_directory=tmp_path / "work",
         asr_backend="parakeet",
     )
 
     prepared = PreparationRunner(
-        config,
+        preparation,
         diarizer_factory=lambda: diarizer,
         preprocessor=FakePreprocessor(),
     ).prepare()
@@ -90,11 +96,15 @@ def test_real_model_recognition_and_finalization(tmp_path: Path) -> None:
     source = os.environ.get("MODEL_TEST_AUDIO")
     if not source:
         pytest.skip("MODEL_TEST_AUDIO is not configured")
-    config = PipelineConfig(
+    backend = os.environ.get("MODEL_TEST_BACKEND", "parakeet")
+    preparation = PreparationConfig(
         input_path=Path(source),
-        output_directory=tmp_path / "result",
+        output_directory=tmp_path / "prepared",
         working_directory=tmp_path / "work",
-        asr_backend=os.environ.get("MODEL_TEST_BACKEND", "parakeet"),
+    )
+    recognition = RecognitionConfig(
+        prepared_path=tmp_path / "prepared",
+        asr_backend=backend,
         parakeet_segment_duration=30,
         parakeet_segment_overlap=5,
         qwen_segment_duration=30,
@@ -102,7 +112,7 @@ def test_real_model_recognition_and_finalization(tmp_path: Path) -> None:
     )
     from speech_transcriber.prepared import write_prepared_recording
 
-    runner = PreparationRunner.create_default(config)
+    runner = PreparationRunner.create_default(preparation)
     prepared = runner.prepare()
     prepared_artifact = tmp_path / "prepared"
     write_prepared_recording(prepared, prepared_artifact)
@@ -111,18 +121,18 @@ def test_real_model_recognition_and_finalization(tmp_path: Path) -> None:
     ).load_prepared_recording(prepared_artifact)
     from speech_transcriber.recognition import RecognitionRunner
 
-    device = resolve_device_for_test(config)
+    device = resolve_device_for_test()
     recognition = RecognitionRunner().recognize(
-        loaded, create_transcriber(config, device), config.asr_backend
+        loaded, create_transcriber(recognition, device), backend
     )
     assert recognition.words
-    if config.asr_backend == "voxtral":
+    if backend == "voxtral":
         assert all(word.start is None and word.end >= 0 for word in recognition.words)
     else:
         assert all(word.start is not None and word.end >= word.start for word in recognition.words)
 
 
-def resolve_device_for_test(config: object) -> str:
+def resolve_device_for_test() -> str:
     from speech_transcriber.runtime.device import resolve_device
 
     return resolve_device("cpu")

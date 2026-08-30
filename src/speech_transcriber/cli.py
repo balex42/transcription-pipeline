@@ -11,6 +11,7 @@ import argparse
 import logging
 import os
 import sys
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -25,7 +26,9 @@ from speech_transcriber.config import (
     DEFAULT_PYANNOTE_MODEL,
     DEFAULT_QWEN_ALIGNER_MODEL,
     FASTER_WHISPER_COMPUTE_TYPES,
-    PipelineConfig,
+    FinalizationConfig,
+    PreparationConfig,
+    RecognitionConfig,
 )
 from speech_transcriber.errors import TranscriberError
 from speech_transcriber.models import ASRRecognitionResult
@@ -35,19 +38,6 @@ if TYPE_CHECKING:
     from speech_transcriber.recognition import MemoryMetrics
 
 _LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR")
-
-# Complete backend list for parametrized coverage in tests.
-BACKEND_TEST_IDS = ASR_BACKENDS
-
-
-def subcommands(parser: argparse.ArgumentParser) -> dict[str, argparse.ArgumentParser]:
-    """Return the parser's worker subparsers by name (test seam for option surface)."""
-    for action in parser._actions:  # noqa: SLF001
-        if action.dest == "command":
-            choices = getattr(action, "choices", None)
-            assert isinstance(choices, dict)
-            return {name: value for name, value in choices.items()}
-    raise AssertionError("parser has no command subparsers")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -128,7 +118,8 @@ def _add_recognize_options(parser: argparse.ArgumentParser) -> None:
         help="Canary sequential chunk duration in seconds (default: 10)",
     )
     parser.add_argument(
-        "--language", help="ASR language locale (default: prepared artifact language)"
+        "--language",
+        help="explicit ASR language override (default: inherited from the prepared artifact)",
     )
     parser.add_argument("--log-level", choices=_LOG_LEVELS)
 
@@ -138,9 +129,6 @@ def _add_finalize_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--asr", type=Path, required=True)
     parser.add_argument("--backend", choices=ASR_BACKENDS, required=True)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument(
-        "--language", help="transcript language locale (default: prepared artifact language)"
-    )
     parser.add_argument("--log-level", choices=_LOG_LEVELS)
 
 
@@ -153,22 +141,28 @@ def main(argv: list[str] | None = None) -> int:
     )
     try:
         if args.command == "prefetch":
-            _prefetch(_prefetch_config(args))
+            _prefetch(
+                args.backend,
+                args.model,
+                args.qwen_aligner_model
+                or os.environ.get("QWEN_ALIGNER_MODEL", DEFAULT_QWEN_ALIGNER_MODEL),
+                args.pyannote_model or DEFAULT_PYANNOTE_MODEL,
+                args.log_level,
+            )
             return 0
         if args.command == "finalize":
             return _finalize(args)
-        config = _config_from_args(args)
         if args.command == "prepare":
-            return _prepare(config)
-        recognition = _recognize(config)
-        write_asr_recognition(recognition, config.output_directory)
+            return _prepare(_preparation_config(args))
+        recognition = _recognize(_recognition_config(args))
+        write_asr_recognition(recognition, args.output)
         return 0
     except (TranscriberError, OSError, RuntimeError, ValueError) as error:
         logging.getLogger(__name__).error("worker command failed: %s", error)
         return 1
 
 
-def _prepare(config: PipelineConfig) -> int:
+def _prepare(config: PreparationConfig) -> int:
     """Normalize and diarize once, then write the versioned prepared artifact."""
     from speech_transcriber.preparation import PreparationRunner
     from speech_transcriber.prepared import write_prepared_recording
@@ -182,7 +176,7 @@ def _prepare(config: PipelineConfig) -> int:
     return 0
 
 
-def _recognize(config: PipelineConfig) -> ASRRecognitionResult:
+def _recognize(config: RecognitionConfig) -> ASRRecognitionResult:
     """Run one backend's recognition in the current runtime image.
 
     Imports are intentionally deferred to the selected backend seam so a
@@ -192,11 +186,20 @@ def _recognize(config: PipelineConfig) -> ASRRecognitionResult:
     from speech_transcriber.recognition import RecognitionRunner
     from speech_transcriber.transcription.factory import create_transcriber
 
-    prepared = load_prepared_recording(config.input_path)
+    prepared = load_prepared_recording(config.prepared_path)
     device = _recognition_device(config.device)
+    resolved = _resolve_language(config, prepared)
     return RecognitionRunner(_memory_metrics(device, config.asr_backend)).recognize(
-        prepared, create_transcriber(config, device), config.asr_backend
+        prepared, create_transcriber(resolved, device), config.asr_backend
     )
+
+
+def _resolve_language(config: RecognitionConfig, prepared: PreparedRecording) -> RecognitionConfig:
+    """Inherit the prepared artifact's language unless recognition overrides it."""
+    resolved_language = config.language_for(prepared.language)
+    if resolved_language != config.language:
+        return replace(config, language=resolved_language)
+    return config
 
 
 def _finalize(args: argparse.Namespace) -> int:
@@ -213,7 +216,7 @@ def _finalize(args: argparse.Namespace) -> int:
         expected_backend=args.backend,
         expected_normalized_audio_sha256=prepared.normalized_audio_sha256,
     )
-    config = _finalize_config(args, prepared)
+    config = FinalizationConfig.from_environment(args.output, {"log_level": args.log_level})
     result = TranscriptFinalizer(config).finalize_prepared(
         prepared,
         recognition,
@@ -222,36 +225,6 @@ def _finalize(args: argparse.Namespace) -> int:
     )
     write_asr_result_files(recognition, result.output_directory or args.output)
     return 0
-
-
-def _finalize_config(args: argparse.Namespace, prepared: PreparedRecording) -> PipelineConfig:
-    """Build the finalizer configuration from a prepared artifact's identity."""
-    return PipelineConfig.from_environment(
-        prepared.audio.path,
-        args.output,
-        {
-            "language": args.language or prepared.language,
-            "log_level": args.log_level,
-        },
-    )
-
-
-def _prefetch_config(args: argparse.Namespace) -> PipelineConfig:
-    """Build the prefetch configuration from explicit flags only."""
-    return PipelineConfig.from_environment(
-        Path("."),
-        Path("."),
-        {
-            "asr_backend": args.backend,
-            "asr_model": args.model,
-            "qwen_aligner_model": (
-                args.qwen_aligner_model
-                or os.environ.get("QWEN_ALIGNER_MODEL", DEFAULT_QWEN_ALIGNER_MODEL)
-            ),
-            "pyannote_model": args.pyannote_model or DEFAULT_PYANNOTE_MODEL,
-            "log_level": args.log_level,
-        },
-    )
 
 
 def _recognition_device(requested: str) -> str:
@@ -289,49 +262,55 @@ def _memory_metrics(device: str, backend: str) -> MemoryMetrics | None:
     return TorchMemoryMetrics(device) if device == "cuda" else None
 
 
-def _config_from_args(args: argparse.Namespace) -> PipelineConfig:
-    if args.command == "prepare":
-        return PipelineConfig.from_environment(
-            args.input,
-            args.output,
-            {
-                "working_directory": args.working_directory,
-                "device": args.device,
-                "pyannote_model": args.pyannote_model,
-                "language": args.language,
-                "num_speakers": args.num_speakers,
-                "min_speakers": args.min_speakers,
-                "max_speakers": args.max_speakers,
-                "log_level": args.log_level,
-            },
-        )
-    if args.command == "recognize":
-        return PipelineConfig.from_environment(
-            args.prepared,
-            args.output,
-            {
-                "working_directory": args.working_directory,
-                "device": args.device,
-                "asr_backend": args.backend,
-                "asr_model": args.model,
-                "qwen_aligner_model": args.qwen_aligner_model,
-                "parakeet_segment_duration": args.parakeet_segment_duration,
-                "parakeet_segment_overlap": args.parakeet_segment_overlap,
-                "qwen_segment_duration": args.qwen_segment_duration,
-                "qwen_segment_overlap": args.qwen_segment_overlap,
-                "nemotron_num_lookahead_tokens": args.nemotron_num_lookahead_tokens,
-                "voxtral_delay_ms": args.voxtral_delay_ms,
-                "voxtral_timestamp_offset_tokens": args.voxtral_timestamp_offset_tokens,
-                "faster_whisper_compute_type": args.faster_whisper_compute_type,
-                "canary_chunk_duration_seconds": args.canary_chunk_duration,
-                "language": args.language,
-                "log_level": args.log_level,
-            },
-        )
-    raise AssertionError(f"unhandled prepared-artifact command: {args.command}")
+def _preparation_config(args: argparse.Namespace) -> PreparationConfig:
+    return PreparationConfig.from_environment(
+        args.input,
+        args.output,
+        {
+            "working_directory": args.working_directory,
+            "device": args.device,
+            "pyannote_model": args.pyannote_model,
+            "language": args.language,
+            "num_speakers": args.num_speakers,
+            "min_speakers": args.min_speakers,
+            "max_speakers": args.max_speakers,
+            "log_level": args.log_level,
+        },
+    )
 
 
-def _prefetch(config: PipelineConfig) -> None:
+def _recognition_config(args: argparse.Namespace) -> RecognitionConfig:
+    return RecognitionConfig.from_environment(
+        args.prepared,
+        args.output,
+        {
+            "working_directory": args.working_directory,
+            "device": args.device,
+            "asr_backend": args.backend,
+            "asr_model": args.model,
+            "qwen_aligner_model": args.qwen_aligner_model,
+            "parakeet_segment_duration": args.parakeet_segment_duration,
+            "parakeet_segment_overlap": args.parakeet_segment_overlap,
+            "qwen_segment_duration": args.qwen_segment_duration,
+            "qwen_segment_overlap": args.qwen_segment_overlap,
+            "nemotron_num_lookahead_tokens": args.nemotron_num_lookahead_tokens,
+            "voxtral_delay_ms": args.voxtral_delay_ms,
+            "voxtral_timestamp_offset_tokens": args.voxtral_timestamp_offset_tokens,
+            "faster_whisper_compute_type": args.faster_whisper_compute_type,
+            "canary_chunk_duration_seconds": args.canary_chunk_duration,
+            "language": args.language,
+            "log_level": args.log_level,
+        },
+    )
+
+
+def _prefetch(
+    backend: str,
+    model: str | None,
+    qwen_aligner_model: str,
+    pyannote_model: str,
+    log_level: str | None,
+) -> None:
     """Download selected ASR and pyannote model repositories for offline use.
 
     Pyannote access conditions must already have been accepted and HF_TOKEN must
@@ -339,13 +318,19 @@ def _prefetch(config: PipelineConfig) -> None:
     """
     from huggingface_hub import snapshot_download
 
+    from speech_transcriber.config import DEFAULT_ASR_MODELS
+
+    logging.basicConfig(
+        level=getattr(logging, log_level or "INFO"),
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    )
     logging.getLogger(__name__).info("prefetching ASR model")
-    snapshot_download(config.resolved_asr_model)
-    if config.asr_backend == "qwen":
+    snapshot_download(model or DEFAULT_ASR_MODELS[backend])
+    if backend == "qwen":
         logging.getLogger(__name__).info("prefetching Qwen forced aligner")
-        snapshot_download(config.qwen_aligner_model)
+        snapshot_download(qwen_aligner_model)
     logging.getLogger(__name__).info("prefetching pyannote model")
-    snapshot_download(config.pyannote_model, token=True)
+    snapshot_download(pyannote_model, token=True)
 
 
 if __name__ == "__main__":

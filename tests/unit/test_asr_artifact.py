@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from speech_transcriber.asr_artifact import load_asr_recognition, write_asr_recognition
-from speech_transcriber.config import PipelineConfig
+from speech_transcriber.config import FinalizationConfig
 from speech_transcriber.finalization import TranscriptFinalizer
 from speech_transcriber.models import (
     ASRRecognitionResult,
@@ -140,7 +140,7 @@ def test_finalization_uses_only_prepared_and_recognition_artifacts(tmp_path: Pat
     )
     write_asr_recognition(recognition, recognition_directory)
     result = TranscriptFinalizer(
-        PipelineConfig(audio, tmp_path / "result", tmp_path / "work")
+        FinalizationConfig(tmp_path / "result")
     ).finalize_prepared(
         prepared,
         load_asr_recognition(recognition_directory),
@@ -169,8 +169,7 @@ def test_finalization_rejects_a_recognition_for_another_recording(tmp_path: Path
     )
 
     with pytest.raises(ValueError, match="SHA-256"):
-        config = PipelineConfig(audio, tmp_path / "result", tmp_path / "work")
-        finalizer = TranscriptFinalizer(config)
+        finalizer = TranscriptFinalizer(FinalizationConfig(tmp_path / "result"))
         finalizer.finalize_prepared(
             prepared,
             _recognition(),
@@ -258,7 +257,7 @@ def test_finalizer_accepts_heterogeneous_artifact_without_backend_specific_logic
     )
     write_asr_recognition(recognition, recognition_directory)
     result = TranscriptFinalizer(
-        PipelineConfig(audio, tmp_path / "result", tmp_path / "work")
+        FinalizationConfig(tmp_path / "result")
     ).finalize_prepared(
         prepared,
         load_asr_recognition(recognition_directory),
@@ -308,7 +307,7 @@ def test_finalizer_rejects_a_faster_whisper_artifact_for_another_backend(
 
     with pytest.raises(ValueError, match="does not match"):
         TranscriptFinalizer(
-            PipelineConfig(audio, tmp_path / "result", tmp_path / "work")
+            FinalizationConfig(tmp_path / "result")
         ).finalize_prepared(
             prepared,
             recognition,

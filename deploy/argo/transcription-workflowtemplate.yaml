@@ -57,8 +57,13 @@ spec:
           - name: recognize-canary
             depends: "prepare.Succeeded"
             when: "{{tasks.validate-backends.outputs.parameters.run_canary}} == true"
-            template: recognize-canary
+            template: recognize
             arguments:
+              parameters:
+                - name: backend
+                  value: canary
+                - name: image
+                  value: '{{workflow.parameters.nemo_image}}'
               artifacts:
                 - name: prepared
                   from: "{{tasks.prepare.outputs.artifacts.prepared}}"
@@ -99,8 +104,13 @@ spec:
           - name: recognize-parakeet
             depends: "prepare.Succeeded"
             when: "{{tasks.validate-backends.outputs.parameters.run_parakeet}} == true"
-            template: recognize-parakeet
+            template: recognize
             arguments:
+              parameters:
+                - name: backend
+                  value: parakeet
+                - name: image
+                  value: '{{workflow.parameters.nemo_image}}'
               artifacts:
                 - name: prepared
                   from: "{{tasks.prepare.outputs.artifacts.prepared}}"
@@ -132,8 +142,13 @@ spec:
           - name: recognize-primeline
             depends: "prepare.Succeeded"
             when: "{{tasks.validate-backends.outputs.parameters.run_primeline}} == true"
-            template: recognize-primeline
+            template: recognize
             arguments:
+              parameters:
+                - name: backend
+                  value: primeline
+                - name: image
+                  value: '{{workflow.parameters.nemo_image}}'
               artifacts:
                 - name: prepared
                   from: "{{tasks.prepare.outputs.artifacts.prepared}}"
@@ -165,8 +180,13 @@ spec:
           - name: recognize-qwen
             depends: "prepare.Succeeded"
             when: "{{tasks.validate-backends.outputs.parameters.run_qwen}} == true"
-            template: recognize-qwen
+            template: recognize
             arguments:
+              parameters:
+                - name: backend
+                  value: qwen
+                - name: image
+                  value: '{{workflow.parameters.transformers_image}}'
               artifacts:
                 - name: prepared
                   from: "{{tasks.prepare.outputs.artifacts.prepared}}"
@@ -198,8 +218,13 @@ spec:
           - name: recognize-nemotron
             depends: "prepare.Succeeded"
             when: "{{tasks.validate-backends.outputs.parameters.run_nemotron}} == true"
-            template: recognize-nemotron
+            template: recognize
             arguments:
+              parameters:
+                - name: backend
+                  value: nemotron
+                - name: image
+                  value: '{{workflow.parameters.transformers_image}}'
               artifacts:
                 - name: prepared
                   from: "{{tasks.prepare.outputs.artifacts.prepared}}"
@@ -231,8 +256,13 @@ spec:
           - name: recognize-voxtral
             depends: "prepare.Succeeded"
             when: "{{tasks.validate-backends.outputs.parameters.run_voxtral}} == true"
-            template: recognize-voxtral
+            template: recognize
             arguments:
+              parameters:
+                - name: backend
+                  value: voxtral
+                - name: image
+                  value: '{{workflow.parameters.transformers_image}}'
               artifacts:
                 - name: prepared
                   from: "{{tasks.prepare.outputs.artifacts.prepared}}"
@@ -264,8 +294,13 @@ spec:
           - name: recognize-faster-whisper
             depends: "prepare.Succeeded"
             when: "{{tasks.validate-backends.outputs.parameters.run_faster_whisper}} == true"
-            template: recognize-faster-whisper
+            template: recognize
             arguments:
+              parameters:
+                - name: backend
+                  value: faster-whisper
+                - name: image
+                  value: '{{workflow.parameters.ctranslate2_image}}'
               artifacts:
                 - name: prepared
                   from: "{{tasks.prepare.outputs.artifacts.prepared}}"
@@ -323,6 +358,72 @@ spec:
           - /input/recording
           - --output
           - /work/prepared
+          - --working-directory
+          - /work/tmp
+          - --device
+          - cuda
+
+        env:
+          - name: HF_HOME
+            value: /models/huggingface
+
+          - name: HF_HUB_OFFLINE
+            value: "1"
+
+          - name: TRANSFORMERS_OFFLINE
+            value: "1"
+
+        resources:
+          limits:
+            nvidia.com/gpu: "1"
+
+        volumeMounts:
+          - name: model-cache
+            mountPath: /models
+            readOnly: true
+
+          - name: cache
+            mountPath: /cache
+
+          - name: work
+            mountPath: /work
+
+    - name: recognize
+      inputs:
+        parameters:
+          - name: backend
+          - name: image
+        artifacts:
+          - name: prepared
+            path: /work/prepared
+            mode: 0755
+            recurseMode: true
+
+      outputs:
+        artifacts:
+          - name: asr
+            path: /work/asr
+            archive:
+              none: {}
+            s3:
+              key: runs/{{workflow.uid}}/asr/{{inputs.parameters.backend}}/
+
+      volumes:
+        - name: model-cache
+          persistentVolumeClaim:
+            claimName: speech-model-cache
+
+      container:
+        image: "{{inputs.parameters.image}}"
+
+        args:
+          - recognize
+          - --prepared
+          - /work/prepared
+          - --backend
+          - "{{inputs.parameters.backend}}"
+          - --output
+          - /work/asr
           - --working-directory
           - /work/tmp
           - --device
@@ -495,441 +596,6 @@ spec:
             done
 
         volumeMounts:
-          - name: work
-            mountPath: /work
-
-    - name: recognize-parakeet
-      inputs:
-        artifacts:
-          - name: prepared
-            path: /work/prepared
-            mode: 0755
-            recurseMode: true
-
-      outputs:
-        artifacts:
-          - name: asr
-            path: /work/asr
-            archive:
-              none: {}
-            s3:
-              key: runs/{{workflow.uid}}/asr/parakeet/
-
-      volumes:
-        - name: model-cache
-          persistentVolumeClaim:
-            claimName: speech-model-cache
-
-      container:
-        image: "{{workflow.parameters.nemo_image}}"
-
-        args:
-          - recognize
-          - --prepared
-          - /work/prepared
-          - --backend
-          - parakeet
-          - --output
-          - /work/asr
-          - --working-directory
-          - /work/tmp
-          - --device
-          - cuda
-
-        env:
-          - name: HF_HOME
-            value: /models/huggingface
-
-          - name: HF_HUB_OFFLINE
-            value: "1"
-
-          - name: TRANSFORMERS_OFFLINE
-            value: "1"
-
-        resources:
-          limits:
-            nvidia.com/gpu: "1"
-
-        volumeMounts:
-          - name: model-cache
-            mountPath: /models
-            readOnly: true
-
-          - name: cache
-            mountPath: /cache
-
-          - name: work
-            mountPath: /work
-
-    - name: recognize-qwen
-      inputs:
-        artifacts:
-          - name: prepared
-            path: /work/prepared
-            mode: 0755
-            recurseMode: true
-
-      outputs:
-        artifacts:
-          - name: asr
-            path: /work/asr
-            archive:
-              none: {}
-            s3:
-              key: runs/{{workflow.uid}}/asr/qwen/
-
-      volumes:
-        - name: model-cache
-          persistentVolumeClaim:
-            claimName: speech-model-cache
-
-      container:
-        image: "{{workflow.parameters.transformers_image}}"
-
-        args:
-          - recognize
-          - --prepared
-          - /work/prepared
-          - --backend
-          - qwen
-          - --output
-          - /work/asr
-          - --working-directory
-          - /work/tmp
-          - --device
-          - cuda
-
-        env:
-          - name: HF_HOME
-            value: /models/huggingface
-
-          - name: HF_HUB_OFFLINE
-            value: "1"
-
-          - name: TRANSFORMERS_OFFLINE
-            value: "1"
-
-        resources:
-          limits:
-            nvidia.com/gpu: "1"
-
-        volumeMounts:
-          - name: model-cache
-            mountPath: /models
-            readOnly: true
-
-          - name: cache
-            mountPath: /cache
-
-          - name: work
-            mountPath: /work
-
-    - name: recognize-nemotron
-      inputs:
-        artifacts:
-          - name: prepared
-            path: /work/prepared
-            mode: 0755
-            recurseMode: true
-
-      outputs:
-        artifacts:
-          - name: asr
-            path: /work/asr
-            archive:
-              none: {}
-            s3:
-              key: runs/{{workflow.uid}}/asr/nemotron/
-
-      volumes:
-        - name: model-cache
-          persistentVolumeClaim:
-            claimName: speech-model-cache
-
-      container:
-        image: "{{workflow.parameters.transformers_image}}"
-
-        args:
-          - recognize
-          - --prepared
-          - /work/prepared
-          - --backend
-          - nemotron
-          - --output
-          - /work/asr
-          - --working-directory
-          - /work/tmp
-          - --device
-          - cuda
-
-        env:
-          - name: HF_HOME
-            value: /models/huggingface
-
-          - name: HF_HUB_OFFLINE
-            value: "1"
-
-          - name: TRANSFORMERS_OFFLINE
-            value: "1"
-
-        resources:
-          limits:
-            nvidia.com/gpu: "1"
-
-        volumeMounts:
-          - name: model-cache
-            mountPath: /models
-            readOnly: true
-
-          - name: cache
-            mountPath: /cache
-
-          - name: work
-            mountPath: /work
-
-    - name: recognize-voxtral
-      inputs:
-        artifacts:
-          - name: prepared
-            path: /work/prepared
-            mode: 0755
-            recurseMode: true
-
-      outputs:
-        artifacts:
-          - name: asr
-            path: /work/asr
-            archive:
-              none: {}
-            s3:
-              key: runs/{{workflow.uid}}/asr/voxtral/
-
-      volumes:
-        - name: model-cache
-          persistentVolumeClaim:
-            claimName: speech-model-cache
-
-      container:
-        image: "{{workflow.parameters.transformers_image}}"
-
-        args:
-          - recognize
-          - --prepared
-          - /work/prepared
-          - --backend
-          - voxtral
-          - --output
-          - /work/asr
-          - --working-directory
-          - /work/tmp
-          - --device
-          - cuda
-
-        env:
-          - name: HF_HOME
-            value: /models/huggingface
-
-          - name: HF_HUB_OFFLINE
-            value: "1"
-
-          - name: TRANSFORMERS_OFFLINE
-            value: "1"
-
-        resources:
-          limits:
-            nvidia.com/gpu: "1"
-
-        volumeMounts:
-          - name: model-cache
-            mountPath: /models
-            readOnly: true
-
-          - name: cache
-            mountPath: /cache
-
-          - name: work
-            mountPath: /work
-
-    - name: recognize-faster-whisper
-      inputs:
-        artifacts:
-          - name: prepared
-            path: /work/prepared
-            mode: 0755
-            recurseMode: true
-
-      outputs:
-        artifacts:
-          - name: asr
-            path: /work/asr
-            archive:
-              none: {}
-            s3:
-              key: runs/{{workflow.uid}}/asr/faster-whisper/
-
-      volumes:
-        - name: model-cache
-          persistentVolumeClaim:
-            claimName: speech-model-cache
-
-      container:
-        image: "{{workflow.parameters.ctranslate2_image}}"
-
-        args:
-          - recognize
-          - --prepared
-          - /work/prepared
-          - --backend
-          - faster-whisper
-          - --output
-          - /work/asr
-          - --working-directory
-          - /work/tmp
-          - --device
-          - cuda
-
-        env:
-          - name: HF_HOME
-            value: /models/huggingface
-
-          - name: HF_HUB_OFFLINE
-            value: "1"
-
-        resources:
-          limits:
-            nvidia.com/gpu: "1"
-
-        volumeMounts:
-          - name: model-cache
-            mountPath: /models
-            readOnly: true
-
-          - name: cache
-            mountPath: /cache
-
-          - name: work
-            mountPath: /work
-
-    - name: recognize-primeline
-      inputs:
-        artifacts:
-          - name: prepared
-            path: /work/prepared
-            mode: 0755
-            recurseMode: true
-
-      outputs:
-        artifacts:
-          - name: asr
-            path: /work/asr
-            archive:
-              none: {}
-            s3:
-              key: runs/{{workflow.uid}}/asr/primeline/
-
-      volumes:
-        - name: model-cache
-          persistentVolumeClaim:
-            claimName: speech-model-cache
-
-      container:
-        image: "{{workflow.parameters.nemo_image}}"
-
-        args:
-          - recognize
-          - --prepared
-          - /work/prepared
-          - --backend
-          - primeline
-          - --output
-          - /work/asr
-          - --working-directory
-          - /work/tmp
-          - --device
-          - cuda
-
-        env:
-          - name: HF_HOME
-            value: /models/huggingface
-
-          - name: HF_HUB_OFFLINE
-            value: "1"
-
-          - name: TRANSFORMERS_OFFLINE
-            value: "1"
-
-        resources:
-          limits:
-            nvidia.com/gpu: "1"
-
-        volumeMounts:
-          - name: model-cache
-            mountPath: /models
-            readOnly: true
-
-          - name: cache
-            mountPath: /cache
-
-          - name: work
-            mountPath: /work
-
-    - name: recognize-canary
-      inputs:
-        artifacts:
-          - name: prepared
-            path: /work/prepared
-            mode: 0755
-            recurseMode: true
-
-      outputs:
-        artifacts:
-          - name: asr
-            path: /work/asr
-            archive:
-              none: {}
-            s3:
-              key: runs/{{workflow.uid}}/asr/canary/
-
-      volumes:
-        - name: model-cache
-          persistentVolumeClaim:
-            claimName: speech-model-cache
-
-      container:
-        image: "{{workflow.parameters.nemo_image}}"
-
-        args:
-          - recognize
-          - --prepared
-          - /work/prepared
-          - --backend
-          - canary
-          - --output
-          - /work/asr
-          - --working-directory
-          - /work/tmp
-          - --device
-          - cuda
-
-        env:
-          - name: HF_HOME
-            value: /models/huggingface
-
-          - name: HF_HUB_OFFLINE
-            value: "1"
-
-        resources:
-          limits:
-            nvidia.com/gpu: "1"
-
-        volumeMounts:
-          - name: model-cache
-            mountPath: /models
-            readOnly: true
-
-          - name: cache
-            mountPath: /cache
-
           - name: work
             mountPath: /work
 
