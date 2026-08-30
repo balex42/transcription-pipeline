@@ -103,7 +103,7 @@ def test_prefetch_canary_uses_only_its_model_repository(monkeypatch: object) -> 
 def test_compare_defaults_to_generic_runtime_backends() -> None:
     parser = cli.build_parser()
     args = parser.parse_args(["compare", "input.wav", "--output", "output"])
-    assert args.models == "parakeet,primeline,qwen,nemotron,voxtral,granite"
+    assert args.models == "parakeet,primeline,qwen,nemotron,voxtral"
 
 
 def test_compare_rejects_heterogeneous_backends_before_creating_pipeline(
@@ -324,7 +324,7 @@ def test_recognition_device_passes_explicit_values_without_torch() -> None:
 def test_memory_metrics_skip_faster_whisper_and_non_cuda_devices() -> None:
     """The torch-free faster-whisper image must never construct Torch metrics."""
     assert cli._memory_metrics("cuda", "faster-whisper") is None
-    assert cli._memory_metrics("cpu", "granite") is None
+    assert cli._memory_metrics("cpu", "parakeet") is None
 
 
 def test_memory_metrics_use_torch_runtime_for_generic_backends(monkeypatch: object) -> None:
@@ -339,7 +339,7 @@ def test_memory_metrics_use_torch_runtime_for_generic_backends(monkeypatch: obje
     monkeypatch.setattr(  # type: ignore[attr-defined]
         device_module, "TorchMemoryMetrics", FakeMetrics
     )
-    metrics = cli._memory_metrics("cuda", "granite")
+    metrics = cli._memory_metrics("cuda", "parakeet")
     assert isinstance(metrics, FakeMetrics)
     assert metrics.device == "cuda"
 

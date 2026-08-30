@@ -95,7 +95,7 @@ def _add_runtime_options(parser: argparse.ArgumentParser, include_asr: bool) -> 
             "--asr",
             choices=ASR_BACKENDS,
             help="ASR backend: parakeet, primeline, qwen, nemotron, voxtral, "
-            "faster-whisper, canary, granite",
+            "faster-whisper, canary",
         )
         parser.add_argument("--asr-model", help="Hugging Face model ID or local model directory")
     parser.add_argument("--qwen-aligner-model", help="Qwen forced-aligner model ID or local path")
@@ -104,8 +104,6 @@ def _add_runtime_options(parser: argparse.ArgumentParser, include_asr: bool) -> 
     parser.add_argument("--parakeet-segment-overlap", type=float)
     parser.add_argument("--qwen-segment-duration", type=float)
     parser.add_argument("--qwen-segment-overlap", type=float)
-    parser.add_argument("--granite-segment-duration", type=float)
-    parser.add_argument("--granite-segment-overlap", type=float)
     parser.add_argument("--nemotron-num-lookahead-tokens", type=int)
     parser.add_argument(
         "--voxtral-delay-ms", type=int, help="Voxtral streaming delay in ms (default: 2400)"
@@ -158,8 +156,6 @@ def _add_transcribe_prepared_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--parakeet-segment-overlap", type=float)
     parser.add_argument("--qwen-segment-duration", type=float)
     parser.add_argument("--qwen-segment-overlap", type=float)
-    parser.add_argument("--granite-segment-duration", type=float)
-    parser.add_argument("--granite-segment-overlap", type=float)
     parser.add_argument("--nemotron-num-lookahead-tokens", type=int)
     parser.add_argument(
         "--voxtral-delay-ms", type=int, help="Voxtral streaming delay in ms (default: 2400)"
@@ -356,8 +352,6 @@ def _config_from_args(
         "parakeet_segment_overlap": getattr(args, "parakeet_segment_overlap", None),
         "qwen_segment_duration": getattr(args, "qwen_segment_duration", None),
         "qwen_segment_overlap": getattr(args, "qwen_segment_overlap", None),
-        "granite_segment_duration": getattr(args, "granite_segment_duration", None),
-        "granite_segment_overlap": getattr(args, "granite_segment_overlap", None),
         "nemotron_num_lookahead_tokens": getattr(args, "nemotron_num_lookahead_tokens", None),
         "voxtral_delay_ms": getattr(args, "voxtral_delay_ms", None),
         "voxtral_timestamp_offset_tokens": getattr(args, "voxtral_timestamp_offset_tokens", None),

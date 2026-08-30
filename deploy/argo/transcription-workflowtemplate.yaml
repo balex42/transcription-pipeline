@@ -28,10 +28,8 @@ spec:
         value: ghcr.io/balex42/transcription-pipeline-faster-whisper:sha-f425d6e
       - name: canary_image
         value: ghcr.io/balex42/transcription-pipeline-canary:sha-f425d6e
-      - name: granite_image
-        value: ghcr.io/balex42/transcription-pipeline:sha-f425d6e
       - name: backends
-        value: '["parakeet","primeline","qwen","nemotron","voxtral","faster-whisper","canary","granite"]'
+        value: '["parakeet","primeline","qwen","nemotron","voxtral","faster-whisper","canary"]'
 
     artifacts:
       - name: recording
@@ -173,39 +171,6 @@ spec:
               artifacts:
                 - name: result
                   from: "{{tasks.finalize-primeline.outputs.artifacts.result}}"
-
-          - name: recognize-granite
-            depends: "prepare.Succeeded"
-            when: "{{tasks.validate-backends.outputs.parameters.run_granite}} == true"
-            template: recognize-granite
-            arguments:
-              artifacts:
-                - name: prepared
-                  from: "{{tasks.prepare.outputs.artifacts.prepared}}"
-
-          - name: finalize-granite
-            depends: "recognize-granite.Succeeded"
-            template: finalize
-            arguments:
-              parameters:
-                - name: backend
-                  value: granite
-              artifacts:
-                - name: prepared
-                  from: "{{tasks.prepare.outputs.artifacts.prepared}}"
-                - name: asr
-                  from: "{{tasks.recognize-granite.outputs.artifacts.asr}}"
-
-          - name: publish-granite
-            depends: "finalize-granite.Succeeded"
-            template: publish
-            arguments:
-              parameters:
-                - name: backend
-                  value: granite
-              artifacts:
-                - name: result
-                  from: "{{tasks.finalize-granite.outputs.artifacts.result}}"
 
           - name: recognize-qwen
             depends: "prepare.Succeeded"
@@ -426,9 +391,6 @@ spec:
           - name: run_canary
             valueFrom:
               path: /tmp/run_canary
-          - name: run_granite
-            valueFrom:
-              path: /tmp/run_granite
 
       container:
         image: "{{workflow.parameters.utility_image}}"
@@ -440,7 +402,7 @@ spec:
             import json
             import os
 
-            supported = {"parakeet", "primeline", "qwen", "nemotron", "voxtral", "faster-whisper", "canary", "granite"}
+            supported = {"parakeet", "primeline", "qwen", "nemotron", "voxtral", "faster-whisper", "canary"}
             try:
                 backends = json.loads(os.environ["BACKENDS"])
             except json.JSONDecodeError as error:
@@ -889,74 +851,6 @@ spec:
           - /work/prepared
           - --asr
           - primeline
-          - --output
-          - /work/asr
-          - --working-directory
-          - /work/tmp
-          - --device
-          - cuda
-
-        env:
-          - name: HF_HOME
-            value: /models/huggingface
-
-          - name: HF_HUB_OFFLINE
-            value: "1"
-
-          - name: TRANSFORMERS_OFFLINE
-            value: "1"
-
-        resources:
-          limits:
-            nvidia.com/gpu: "1"
-
-        volumeMounts:
-          - name: model-cache
-            mountPath: /models
-            readOnly: true
-
-          - name: cache
-            mountPath: /cache
-
-          - name: work
-            mountPath: /work
-
-    - name: recognize-granite
-      # Granite runs in the generic Transformers runtime (with PEFT for its
-      # audio LoRA). Timestamp mode transcribes only; Granite's own
-      # [Speaker N] prompt mode is intentionally unused - pyannote diarization
-      # and the common backend-neutral finalizer remain the single speaker
-      # authority for every backend, including granite.
-      inputs:
-        artifacts:
-          - name: prepared
-            path: /work/prepared
-            mode: 0755
-            recurseMode: true
-
-      outputs:
-        artifacts:
-          - name: asr
-            path: /work/asr
-            archive:
-              none: {}
-            s3:
-              key: runs/{{workflow.uid}}/asr/granite/
-
-      volumes:
-        - name: model-cache
-          persistentVolumeClaim:
-            claimName: speech-model-cache
-
-      container:
-        image: "{{workflow.parameters.granite_image}}"
-
-        args:
-          - recognize-prepared
-          - --prepared
-          - /work/prepared
-          - --asr
-          - granite
           - --output
           - /work/asr
           - --working-directory

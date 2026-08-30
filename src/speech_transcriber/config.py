@@ -26,9 +26,6 @@ DEFAULT_CANARY_MODEL = "nvidia/canary-1b-v2"
 DEFAULT_CANARY_CHUNK_DURATION_SECONDS = 10.0
 DEFAULT_PRIMELINE_MODEL = "primeline/parakeet-primeline"
 PRIMELINE_MODEL_FILE = "2_95_WER.nemo"
-DEFAULT_GRANITE_MODEL = "ibm-granite/granite-speech-4.1-2b-plus"
-DEFAULT_GRANITE_SEGMENT_DURATION = 180.0
-DEFAULT_GRANITE_SEGMENT_OVERLAP = 15.0
 DEFAULT_PYANNOTE_MODEL = "pyannote/speaker-diarization-community-1"
 ASR_BACKENDS = (
     "parakeet",
@@ -38,9 +35,8 @@ ASR_BACKENDS = (
     "voxtral",
     "faster-whisper",
     "canary",
-    "granite",
 )
-COMPARE_BACKENDS = ("parakeet", "primeline", "qwen", "nemotron", "voxtral", "granite")
+COMPARE_BACKENDS = ("parakeet", "primeline", "qwen", "nemotron", "voxtral")
 QWEN_MAX_ALIGNMENT_DURATION_SECONDS = 300.0
 DEFAULT_PARAKEET_SEGMENT_DURATION = 180.0
 DEFAULT_PARAKEET_SEGMENT_OVERLAP = 15.0
@@ -54,7 +50,6 @@ DEFAULT_ASR_MODELS = {
     "voxtral": DEFAULT_VOXTRAL_MODEL,
     "faster-whisper": DEFAULT_FASTER_WHISPER_MODEL,
     "canary": DEFAULT_CANARY_MODEL,
-    "granite": DEFAULT_GRANITE_MODEL,
 }
 
 
@@ -124,8 +119,6 @@ class PipelineConfig:
     voxtral_timestamp_offset_tokens: int = DEFAULT_VOXTRAL_TIMESTAMP_OFFSET_TOKENS
     faster_whisper_compute_type: str = DEFAULT_FASTER_WHISPER_COMPUTE_TYPE
     canary_chunk_duration_seconds: float = DEFAULT_CANARY_CHUNK_DURATION_SECONDS
-    granite_segment_duration: float = DEFAULT_GRANITE_SEGMENT_DURATION
-    granite_segment_overlap: float = DEFAULT_GRANITE_SEGMENT_OVERLAP
     language: str = "de-DE"
     num_speakers: int | None = None
     min_speakers: int | None = None
@@ -143,7 +136,6 @@ class PipelineConfig:
         for name, duration, overlap in (
             ("parakeet", self.parakeet_segment_duration, self.parakeet_segment_overlap),
             ("qwen", self.qwen_segment_duration, self.qwen_segment_overlap),
-            ("granite", self.granite_segment_duration, self.granite_segment_overlap),
         ):
             if duration <= 0 or not 0 <= overlap < duration:
                 raise ValueError(
@@ -280,16 +272,6 @@ class PipelineConfig:
                 "canary_chunk_duration_seconds",
                 "CANARY_CHUNK_DURATION",
                 DEFAULT_CANARY_CHUNK_DURATION_SECONDS,
-            ),
-            granite_segment_duration=choose_float(
-                "granite_segment_duration",
-                "GRANITE_SEGMENT_DURATION",
-                DEFAULT_GRANITE_SEGMENT_DURATION,
-            ),
-            granite_segment_overlap=choose_float(
-                "granite_segment_overlap",
-                "GRANITE_SEGMENT_OVERLAP",
-                DEFAULT_GRANITE_SEGMENT_OVERLAP,
             ),
             language=choose("language", "LANGUAGE", "de-DE"),
             num_speakers=choose_int("num_speakers", "NUM_SPEAKERS"),
