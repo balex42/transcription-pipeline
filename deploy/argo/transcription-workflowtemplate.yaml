@@ -13,23 +13,23 @@ spec:
       - name: utility_image
         value: python:3.11-alpine
       - name: application_image
-        value: ghcr.io/balex42/transcription-pipeline:sha-c8e67c5
+        value: ghcr.io/balex42/transcription-pipeline:sha-b7ce9fa
       - name: parakeet_image
-        value: ghcr.io/balex42/transcription-pipeline:sha-c8e67c5
+        value: ghcr.io/balex42/transcription-pipeline:sha-b7ce9fa
       - name: qwen_image
-        value: ghcr.io/balex42/transcription-pipeline:sha-c8e67c5
+        value: ghcr.io/balex42/transcription-pipeline:sha-b7ce9fa
       - name: nemotron_image
-        value: ghcr.io/balex42/transcription-pipeline:sha-c8e67c5
+        value: ghcr.io/balex42/transcription-pipeline:sha-b7ce9fa
       - name: voxtral_image
-        value: ghcr.io/balex42/transcription-pipeline:sha-c8e67c5
+        value: ghcr.io/balex42/transcription-pipeline:sha-b7ce9fa
       - name: primeline_image
-        value: ghcr.io/balex42/transcription-pipeline-canary:sha-c8e67c5
+        value: ghcr.io/balex42/transcription-pipeline-canary:sha-b7ce9fa
       - name: faster_whisper_image
-        value: ghcr.io/balex42/transcription-pipeline-faster-whisper:sha-c8e67c5
+        value: ghcr.io/balex42/transcription-pipeline-faster-whisper:sha-b7ce9fa
       - name: canary_image
-        value: ghcr.io/balex42/transcription-pipeline-canary:sha-c8e67c5
+        value: ghcr.io/balex42/transcription-pipeline-canary:sha-b7ce9fa
       - name: granite_image
-        value: ghcr.io/balex42/transcription-pipeline:sha-c8e67c5
+        value: ghcr.io/balex42/transcription-pipeline:sha-b7ce9fa
       - name: backends
         value: '["parakeet","primeline","qwen","nemotron","voxtral","faster-whisper","canary","granite"]'
 
