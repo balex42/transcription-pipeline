@@ -288,7 +288,7 @@ wheels = [
 ]
 
 [[package]]
-name = "speech-transcriber-faster-whisper-runtime"
+name = "speech-transcriber-ctranslate2-runtime"
 version = "0.0.0"
 source = { virtual = "." }
 dependencies = [

@@ -80,7 +80,7 @@ raise SystemExit(main([
     assert {path.name for path in asr.iterdir()} == {"asr_words.json", "metadata.json"}
 
 
-def test_generic_runtime_does_not_import_nemo_for_primeline_registration() -> None:
+def test_transformers_runtime_does_not_import_nemo_for_primeline_registration() -> None:
     """The factory must not need NeMo just because the Primeline backend exists."""
     command = """
 import builtins, sys

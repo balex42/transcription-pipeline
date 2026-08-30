@@ -1,7 +1,7 @@
 """Construction of configured, interchangeable ASR backends.
 
-Backend modules are imported lazily so a backend-specific image can omit the
-packages required by other backends.
+Backend modules are imported lazily so a runtime image can omit the packages
+required by other backends.
 """
 
 from __future__ import annotations

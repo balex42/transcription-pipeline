@@ -1,7 +1,7 @@
 [project]
-name = "speech-transcriber-faster-whisper-runtime"
+name = "speech-transcriber-ctranslate2-runtime"
 version = "0.0.0"
-description = "Locked third-party dependencies for faster-whisper recognition"
+description = "Locked third-party dependencies for the CTranslate2 recognition runtime"
 requires-python = ">=3.12,<3.13"
 dependencies = [
   "ctranslate2==4.8.1",

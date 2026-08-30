@@ -1,9 +1,11 @@
-# Dedicated NVIDIA NeMo / Canary recognition image.
+# NVIDIA NeMo ASR recognition image.
 #
-# This runtime is intentionally independent of the generic and faster-whisper
+# This runtime is intentionally independent of the Transformers and CTranslate2
 # images. The PyTorch base owns Torch, CUDA, and cuDNN; the runtime lock owns
-# the released NeMo ASR stack. Canary is restored from a cached local .nemo
-# checkpoint; /models is mounted read-only at runtime.
+# the released NeMo ASR stack. It carries no model-specific dependency of its
+# own and supports the Parakeet, Primeline, and Canary recognition backends,
+# each restored from a cached local .nemo checkpoint; /models is mounted
+# read-only at runtime.
 FROM ghcr.io/astral-sh/uv:0.11.32 AS uv
 
 FROM pytorch/pytorch:2.12.0-cuda13.2-cudnn9-runtime
@@ -29,7 +31,7 @@ RUN apt-get update \
     && chmod -R g=u /work /cache /models
 
 WORKDIR /app
-COPY runtimes/canary/pyproject.toml runtimes/canary/uv.lock /runtime/
+COPY runtimes/nemo/pyproject.toml runtimes/nemo/uv.lock /runtime/
 COPY pyproject.toml README.md LICENSE ./
 COPY src ./src
 
@@ -52,6 +54,6 @@ RUN /bin/uv venv --python python --system-site-packages /app/.venv \
 # load time.
 COPY container/uid-entrypoint.sh /usr/local/bin/uid-entrypoint
 USER 1001
-RUN /usr/local/bin/uid-entrypoint /app/.venv/bin/python -c "import os, pwd, nemo, nemo.collections.asr, speech_transcriber, torch; print(pwd.getpwuid(os.getuid())); assert torch.__version__.startswith('2.12.0'); assert torch.version.cuda and torch.version.cuda.startswith('13.2'); print(torch.__version__); print(torch.version.cuda); print(nemo.__version__)"
+RUN /usr/local/bin/uid-entrypoint /app/.venv/bin/python -c "import os, pwd, nemo, nemo.collections.asr, speech_transcriber, speech_transcriber.transcription.parakeet, speech_transcriber.transcription.primeline, speech_transcriber.transcription.canary, torch; print(pwd.getpwuid(os.getuid())); assert torch.__version__.startswith('2.12.0'); assert torch.version.cuda and torch.version.cuda.startswith('13.2'); print(torch.__version__); print(torch.version.cuda); print(nemo.__version__)"
 ENTRYPOINT ["/usr/local/bin/uid-entrypoint", "/app/.venv/bin/python", "-m", "speech_transcriber"]
 CMD ["--help"]

@@ -6,6 +6,7 @@ import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Final, Literal
 
 DEFAULT_PARAKEET_MODEL = "nvidia/parakeet-tdt-0.6b-v3"
 DEFAULT_QWEN_ALIGNER_MODEL = "Qwen/Qwen3-ForcedAligner-0.6B-hf"
@@ -22,10 +23,12 @@ VOXTRAL_MAX_TIMESTAMP_OFFSET_TOKENS = 30
 DEFAULT_FASTER_WHISPER_MODEL = "Systran/faster-whisper-large-v3"
 DEFAULT_FASTER_WHISPER_COMPUTE_TYPE = "float16"
 FASTER_WHISPER_COMPUTE_TYPES = ("float16", "bfloat16", "float32", "int8", "int8_float16")
+FASTER_WHISPER_COMPUTE_TYPES = ("float16", "bfloat16", "float32", "int8", "int8_float16")
+DEFAULT_PRIMELINE_MODEL = "primeline/parakeet-primeline"
 DEFAULT_CANARY_MODEL = "nvidia/canary-1b-v2"
 DEFAULT_CANARY_CHUNK_DURATION_SECONDS = 10.0
-DEFAULT_PRIMELINE_MODEL = "primeline/parakeet-primeline"
 PRIMELINE_MODEL_FILE = "2_95_WER.nemo"
+PARAKEET_MODEL_FILE = "parakeet-tdt-0.6b-v3.nemo"
 DEFAULT_PYANNOTE_MODEL = "pyannote/speaker-diarization-community-1"
 ASR_BACKENDS = (
     "parakeet",
@@ -36,7 +39,22 @@ ASR_BACKENDS = (
     "faster-whisper",
     "canary",
 )
-COMPARE_BACKENDS = ("parakeet", "primeline", "qwen", "nemotron", "voxtral")
+ASRRuntime = Literal["transformers", "nemo", "ctranslate2"]
+BACKEND_RUNTIMES: Final[dict[str, ASRRuntime]] = {
+    "parakeet": "nemo",
+    "primeline": "nemo",
+    "canary": "nemo",
+    "qwen": "transformers",
+    "nemotron": "transformers",
+    "voxtral": "transformers",
+    "faster-whisper": "ctranslate2",
+}
+TRANSFORMERS_BACKENDS: Final = tuple(
+    backend for backend in ASR_BACKENDS if BACKEND_RUNTIMES[backend] == "transformers"
+)
+# Local same-process comparison can only run backends whose runtime is installed
+# in the Transformers environment; heterogeneous comparisons belong to Argo.
+COMPARE_BACKENDS: Final = TRANSFORMERS_BACKENDS
 QWEN_MAX_ALIGNMENT_DURATION_SECONDS = 300.0
 DEFAULT_PARAKEET_SEGMENT_DURATION = 180.0
 DEFAULT_PARAKEET_SEGMENT_OVERLAP = 15.0

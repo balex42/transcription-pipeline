@@ -5,9 +5,9 @@ on:
     paths:
       - "src/**"
       - "container/**"
-      - "Containerfile"
-      - "Containerfile.faster-whisper"
-      - "Containerfile.canary"
+      - "Containerfile.transformers"
+      - "Containerfile.nemo"
+      - "Containerfile.ctranslate2"
       - "runtimes/**"
       - ".containerignore"
       - "pyproject.toml"
@@ -18,9 +18,9 @@ on:
     paths:
       - "src/**"
       - "container/**"
-      - "Containerfile"
-      - "Containerfile.faster-whisper"
-      - "Containerfile.canary"
+      - "Containerfile.transformers"
+      - "Containerfile.nemo"
+      - "Containerfile.ctranslate2"
       - "runtimes/**"
       - ".containerignore"
       - "pyproject.toml"
@@ -42,9 +42,9 @@ jobs:
   changes:
     runs-on: ubuntu-latest
     outputs:
-      generic: ${{ steps.filter.outputs.generic }}
-      faster_whisper: ${{ steps.filter.outputs.faster_whisper }}
-      canary: ${{ steps.filter.outputs.canary }}
+      transformers: ${{ steps.filter.outputs.transformers }}
+      nemo: ${{ steps.filter.outputs.nemo }}
+      ctranslate2: ${{ steps.filter.outputs.ctranslate2 }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -54,36 +54,36 @@ jobs:
         id: filter
         with:
           filters: |
-            generic:
+            transformers:
               - 'src/**'
               - 'container/**'
-              - 'Containerfile'
+              - 'Containerfile.transformers'
               - '.containerignore'
               - 'pyproject.toml'
               - 'uv.lock'
               - '.github/workflows/container.yml'
-            faster_whisper:
+            nemo:
               - 'src/**'
               - 'container/**'
               - 'pyproject.toml'
-              - 'Containerfile.faster-whisper'
-              - 'runtimes/faster-whisper/**'
+              - 'Containerfile.nemo'
+              - 'runtimes/nemo/**'
               - '.containerignore'
               - '.github/workflows/container.yml'
-            canary:
+            ctranslate2:
               - 'src/**'
               - 'container/**'
               - 'pyproject.toml'
-              - 'Containerfile.canary'
-              - 'runtimes/canary/**'
+              - 'Containerfile.ctranslate2'
+              - 'runtimes/ctranslate2/**'
               - '.containerignore'
               - '.github/workflows/container.yml'
 
-  build:
+  build-transformers:
     needs: changes
     if: >-
       github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') ||
-      needs.changes.outputs.generic == 'true'
+      needs.changes.outputs.transformers == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Check out source
@@ -104,7 +104,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-transformers
           tags: |
             type=ref,event=branch
             type=ref,event=tag
@@ -117,7 +117,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: Containerfile
+          file: Containerfile.transformers
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -140,11 +140,11 @@ jobs:
             --entrypoint /usr/local/bin/uid-entrypoint "$image" \
             /app/.venv/bin/python -c "import os, pwd; print(pwd.getpwuid(os.getuid()))"
 
-  build-faster-whisper:
+  build-nemo:
     needs: changes
     if: >-
       github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') ||
-      needs.changes.outputs.faster_whisper == 'true'
+      needs.changes.outputs.nemo == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Check out source
@@ -165,7 +165,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-faster-whisper
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-nemo
           tags: |
             type=ref,event=branch
             type=ref,event=tag
@@ -178,7 +178,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: Containerfile.faster-whisper
+          file: Containerfile.nemo
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -201,11 +201,11 @@ jobs:
             --entrypoint /usr/local/bin/uid-entrypoint "$image" \
             /app/.venv/bin/python -c "import os, pwd; print(pwd.getpwuid(os.getuid()))"
 
-  build-canary:
+  build-ctranslate2:
     needs: changes
     if: >-
       github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') ||
-      needs.changes.outputs.canary == 'true'
+      needs.changes.outputs.ctranslate2 == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Check out source
@@ -226,7 +226,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-canary
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-ctranslate2
           tags: |
             type=ref,event=branch
             type=ref,event=tag
@@ -239,7 +239,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: Containerfile.canary
+          file: Containerfile.ctranslate2
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

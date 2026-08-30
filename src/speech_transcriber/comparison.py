@@ -35,7 +35,8 @@ class ASRComparisonRunner:
         invalid = sorted(set(backends) - set(COMPARE_BACKENDS))
         if invalid:
             raise UnsupportedASRBackendError(
-                "comparison requires the generic runtime; use Argo for: " + ", ".join(invalid)
+                "local comparison requires the Transformers runtime; use Argo for: "
+                + ", ".join(invalid)
             )
         if not backends:
             raise ValueError("at least one ASR backend is required")

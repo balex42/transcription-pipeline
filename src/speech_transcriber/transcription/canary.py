@@ -20,14 +20,14 @@ import time
 import wave
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any
 
 from speech_transcriber.errors import ASROutputError, ModelLoadError
 from speech_transcriber.language import normalize_language
 from speech_transcriber.model_cache import resolve_hf_snapshot
-from speech_transcriber.models import ASRWord, NormalizedAudio, RuntimeProvenance
+from speech_transcriber.models import ASRWord, NormalizedAudio
+from speech_transcriber.transcription import nemo_support
 from speech_transcriber.transcription.base import Transcriber, TranscriberCapabilities
 
 LOGGER = logging.getLogger(__name__)
@@ -119,11 +119,7 @@ class CanaryTranscriber(Transcriber):
             "inference_mode": "sequential_non_overlapping_chunks",
             "chunk_duration_seconds": chunk_duration_seconds,
         }
-        self.runtime_provenance = RuntimeProvenance(
-            name="nemo",
-            version="unknown",
-            components={"torch": "unknown", "cuda": "unknown"},
-        )
+        self.runtime_provenance = nemo_support.initial_runtime_provenance()
 
     def load(self) -> None:
         """Restore the local NeMo checkpoint without contacting Hugging Face."""
@@ -175,14 +171,7 @@ class CanaryTranscriber(Transcriber):
                 f"could not load Canary model {self.model_reference}: {error}"
             ) from error
         self.backend_models["model_file"] = model_path
-        self.runtime_provenance = RuntimeProvenance(
-            name="nemo",
-            version=_package_version("nemo-toolkit"),
-            components={
-                "torch": _package_version("torch"),
-                "cuda": _torch_cuda_version(),
-            },
-        )
+        self.runtime_provenance = nemo_support.nemo_runtime_provenance()
         return self._model
 
     def _transcribe_chunk(self, model: Any, *, chunk_path: Path) -> Any:
@@ -248,12 +237,10 @@ def flatten_canary_words(outputs: Sequence[Any], *, offset_seconds: float = 0.0)
     """
     if len(outputs) != 1:
         raise ASROutputError(f"Canary returned {len(outputs)} hypotheses for one recording")
-    timestamp = getattr(outputs[0], "timestamp", None)
-    if not isinstance(timestamp, Mapping):
-        raise ASROutputError("Canary output is missing timestamp metadata")
-    records = timestamp.get("word")
-    if not isinstance(records, Sequence) or isinstance(records, str | bytes):
-        raise ASROutputError("Canary output is missing word timestamps")
+    try:
+        records = nemo_support.word_timestamp_records(outputs[0], subject="Canary")
+    except ValueError as error:
+        raise ASROutputError(str(error)) from error
 
     words: list[ASRWord] = []
     for record in records:
@@ -375,32 +362,9 @@ def write_canary_chunk(directory: str | Path, chunk: CanaryChunk, source_path: P
 
 
 def _canary_model_file(path: Path) -> str:
-    artifact = path / CANARY_MODEL_FILE if path.is_dir() else path
-    if artifact.is_file() and artifact.name.endswith(".nemo"):
-        return str(artifact)
-    raise ModelLoadError(
-        f"required Canary model artifact {CANARY_MODEL_FILE!r} is missing from {path}"
-    )
+    return nemo_support.model_file(path, CANARY_MODEL_FILE, subject="Canary model")
 
 
 def _restore_canary_model(model_path: str, device: str) -> Any:
     """Restore and place Canary on the requested device, importing NeMo lazily."""
-    from nemo.collections.asr.models import ASRModel
-
-    return ASRModel.restore_from(model_path).to(device).eval()
-
-
-def _package_version(package: str) -> str:
-    try:
-        return version(package)
-    except PackageNotFoundError:
-        return "unknown"
-
-
-def _torch_cuda_version() -> str:
-    try:
-        import torch
-    except ImportError:
-        return "unknown"
-    cuda = getattr(torch.version, "cuda", None)
-    return cuda if isinstance(cuda, str) else "unknown"
+    return nemo_support.restore_model(model_path, device, subject="Canary")

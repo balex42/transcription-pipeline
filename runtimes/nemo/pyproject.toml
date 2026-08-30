@@ -1,0 +1,8 @@
+[project]
+name = "speech-transcriber-nemo-runtime"
+version = "0.0.0"
+description = "Locked third-party dependencies for the NeMo ASR recognition runtime"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "nemo-toolkit[asr]==3.0.0",
+]

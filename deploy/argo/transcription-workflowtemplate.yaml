@@ -12,22 +12,12 @@ spec:
     parameters:
       - name: utility_image
         value: python:3.11-alpine
-      - name: application_image
-        value: ghcr.io/balex42/transcription-pipeline:sha-fd9b008
-      - name: parakeet_image
-        value: ghcr.io/balex42/transcription-pipeline:sha-fd9b008
-      - name: qwen_image
-        value: ghcr.io/balex42/transcription-pipeline:sha-fd9b008
-      - name: nemotron_image
-        value: ghcr.io/balex42/transcription-pipeline:sha-fd9b008
-      - name: voxtral_image
-        value: ghcr.io/balex42/transcription-pipeline:sha-fd9b008
-      - name: primeline_image
-        value: ghcr.io/balex42/transcription-pipeline-canary:sha-fd9b008
-      - name: faster_whisper_image
-        value: ghcr.io/balex42/transcription-pipeline-faster-whisper:sha-fd9b008
-      - name: canary_image
-        value: ghcr.io/balex42/transcription-pipeline-canary:sha-fd9b008
+      - name: transformers_image
+        value: ghcr.io/balex42/transcription-pipeline-transformers:PENDING_CI
+      - name: nemo_image
+        value: ghcr.io/balex42/transcription-pipeline-nemo:PENDING_CI
+      - name: ctranslate2_image
+        value: ghcr.io/balex42/transcription-pipeline-ctranslate2:PENDING_CI
       - name: backends
         value: '["parakeet","primeline","qwen","nemotron","voxtral","faster-whisper","canary"]'
 
@@ -326,7 +316,7 @@ spec:
             claimName: speech-model-cache
 
       container:
-        image: "{{workflow.parameters.application_image}}"
+        image: "{{workflow.parameters.transformers_image}}"
 
         args:
           - prepare
@@ -531,7 +521,7 @@ spec:
             claimName: speech-model-cache
 
       container:
-        image: "{{workflow.parameters.parakeet_image}}"
+        image: "{{workflow.parameters.nemo_image}}"
 
         args:
           - recognize-prepared
@@ -594,7 +584,7 @@ spec:
             claimName: speech-model-cache
 
       container:
-        image: "{{workflow.parameters.qwen_image}}"
+        image: "{{workflow.parameters.transformers_image}}"
 
         args:
           - recognize-prepared
@@ -657,7 +647,7 @@ spec:
             claimName: speech-model-cache
 
       container:
-        image: "{{workflow.parameters.nemotron_image}}"
+        image: "{{workflow.parameters.transformers_image}}"
 
         args:
           - recognize-prepared
@@ -720,7 +710,7 @@ spec:
             claimName: speech-model-cache
 
       container:
-        image: "{{workflow.parameters.voxtral_image}}"
+        image: "{{workflow.parameters.transformers_image}}"
 
         args:
           - recognize-prepared
@@ -783,7 +773,7 @@ spec:
             claimName: speech-model-cache
 
       container:
-        image: "{{workflow.parameters.faster_whisper_image}}"
+        image: "{{workflow.parameters.ctranslate2_image}}"
 
         args:
           - recognize-prepared
@@ -843,7 +833,7 @@ spec:
             claimName: speech-model-cache
 
       container:
-        image: "{{workflow.parameters.primeline_image}}"
+        image: "{{workflow.parameters.nemo_image}}"
 
         args:
           - recognize-prepared
@@ -906,7 +896,7 @@ spec:
             claimName: speech-model-cache
 
       container:
-        image: "{{workflow.parameters.canary_image}}"
+        image: "{{workflow.parameters.nemo_image}}"
 
         args:
           - recognize-prepared
@@ -967,7 +957,7 @@ spec:
               key: runs/{{workflow.uid}}/result/{{inputs.parameters.backend}}/
 
       container:
-        image: "{{workflow.parameters.application_image}}"
+        image: "{{workflow.parameters.transformers_image}}"
         args:
           - finalize-prepared
           - --prepared

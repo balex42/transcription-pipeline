@@ -1,10 +1,10 @@
 """NVIDIA NeMo Parakeet TDT adapter for the Primeline German speech checkpoint.
 
-Primeline is distributed as a NeMo ``.nemo`` checkpoint, not as a Transformers
-checkpoint, so it runs on the same locked NeMo ASR runtime as Canary while
-remaining a fully independent adapter. The trusted checkpoint is restored from
-an explicit local path or a resolved Hugging Face cache snapshot; runtime
-recognition never calls ``from_pretrained()`` or contacts the Hub.
+Primeline is distributed as a NeMo ``.nemo`` checkpoint and runs on the shared
+NeMo ASR runtime alongside Parakeet and Canary while remaining a fully
+independent adapter. The trusted checkpoint is restored from an explicit local
+path or a resolved Hugging Face cache snapshot; runtime recognition never calls
+``from_pretrained()`` or contacts the Hub.
 
 Recognition uses one invariant path: the whole normalized WAV is transcribed in
 a single NeMo call with native word timestamps, relying on the checkpoint's
@@ -16,14 +16,14 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping, Sequence
-from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any
 
 from speech_transcriber.config import PRIMELINE_MODEL_FILE
 from speech_transcriber.errors import ASROutputError, ModelLoadError
 from speech_transcriber.model_cache import resolve_hf_snapshot, snapshot_revision
-from speech_transcriber.models import ASRWord, NormalizedAudio, RuntimeProvenance
+from speech_transcriber.models import ASRWord, NormalizedAudio
+from speech_transcriber.transcription import nemo_support
 from speech_transcriber.transcription.base import Transcriber, TranscriberCapabilities
 
 LOGGER = logging.getLogger(__name__)
@@ -42,7 +42,7 @@ class PrimelineTranscriber(Transcriber):
         # The checkpoint controls its precision; do not infer one from the
         # process-wide PyTorch default or force a conversion.
         self.dtype_name = "checkpoint-default"
-        self._model: Any | None = None
+        self._model: object | None = None
         self.backend_metrics: dict[str, float] = {}
         self.backend_models: dict[str, str] = {}
         self.backend_configuration: dict[str, str | int | float | bool | None] = {
@@ -51,11 +51,7 @@ class PrimelineTranscriber(Transcriber):
             "inference_mode": "single_pass_local_attention",
             "checkpoint_file": PRIMELINE_MODEL_FILE,
         }
-        self.runtime_provenance = RuntimeProvenance(
-            name="nemo",
-            version="unknown",
-            components={"torch": "unknown", "cuda": "unknown"},
-        )
+        self.runtime_provenance = nemo_support.initial_runtime_provenance()
 
     def load(self) -> None:
         """Restore the local NeMo checkpoint without contacting Hugging Face."""
@@ -84,7 +80,6 @@ class PrimelineTranscriber(Transcriber):
         if self._model is not None:
             return self._model
         model_path = resolve_primeline_model_path(self.model_reference)
-        revision = snapshot_revision(Path(model_path).parent)
         try:
             self._model = _restore_primeline_model(model_path, self.device)
         except Exception as error:
@@ -96,15 +91,11 @@ class PrimelineTranscriber(Transcriber):
             self.backend_models["model_snapshot"] = (
                 snapshot_revision(Path(model_path).parent) or "unknown"
             )
-        LOGGER.info("loading Primeline from cached snapshot revision %.12s", revision or "unknown")
-        self.runtime_provenance = RuntimeProvenance(
-            name="nemo",
-            version=_package_version("nemo-toolkit"),
-            components={
-                "torch": _package_version("torch"),
-                "cuda": _torch_cuda_version(),
-            },
+        LOGGER.info(
+            "loading Primeline from cached snapshot revision %.12s",
+            snapshot_revision(Path(model_path).parent) or "unknown",
         )
+        self.runtime_provenance = nemo_support.nemo_runtime_provenance()
         return self._model
 
     def _transcribe(self, model: Any, *, audio_path: Path) -> Any:
@@ -206,32 +197,9 @@ def flatten_primeline_words(
 
 
 def _primeline_model_file(path: Path) -> str:
-    artifact = path / PRIMELINE_MODEL_FILE if path.is_dir() else path
-    if artifact.is_file() and artifact.name == PRIMELINE_MODEL_FILE:
-        return str(artifact)
-    raise ModelLoadError(
-        f"required Primeline model artifact {PRIMELINE_MODEL_FILE!r} is missing from {path}"
-    )
+    return nemo_support.model_file(path, PRIMELINE_MODEL_FILE, subject="Primeline model")
 
 
 def _restore_primeline_model(model_path: str, device: str) -> Any:
     """Restore and place Primeline on the requested device, importing NeMo lazily."""
-    from nemo.collections.asr.models import ASRModel
-
-    return ASRModel.restore_from(model_path).to(device).eval()
-
-
-def _package_version(package: str) -> str:
-    try:
-        return version(package)
-    except PackageNotFoundError:
-        return "unknown"
-
-
-def _torch_cuda_version() -> str:
-    try:
-        import torch
-    except ImportError:
-        return "unknown"
-    cuda = getattr(torch.version, "cuda", None)
-    return cuda if isinstance(cuda, str) else "unknown"
+    return nemo_support.restore_model(model_path, device, subject="Primeline")

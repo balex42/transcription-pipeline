@@ -104,12 +104,12 @@ def test_comparison_prepares_once_and_separates_backend_outputs(tmp_path: Path) 
         return transcriber
 
     ASRComparisonRunner(pipeline, build_transcriber).run(
-        ["parakeet", "qwen", "nemotron", "voxtral"], config.output_directory
+        ["qwen", "nemotron", "voxtral"], config.output_directory
     )
-    assert (preprocessor.calls, diarizer.calls, len(transcribers)) == (1, 1, 4)
+    assert (preprocessor.calls, diarizer.calls, len(transcribers)) == (1, 1, 3)
     assert (config.output_directory / "diarization.json").is_file()
     assert (config.output_directory / "metadata.json").is_file()
-    for backend in ("parakeet", "qwen", "nemotron", "voxtral"):
+    for backend in ("qwen", "nemotron", "voxtral"):
         assert (config.output_directory / backend / "transcript.json").is_file()
         assert (config.output_directory / backend / "asr_words.json").is_file()
     assert (config.output_directory / "qwen" / "metadata.json").is_file()

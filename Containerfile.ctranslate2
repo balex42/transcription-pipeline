@@ -1,4 +1,4 @@
-# Dedicated faster-whisper / CTranslate2 recognition image.
+# CTranslate2 recognition image for the faster-whisper backend.
 #
 # This image is intentionally independent of the Transformers ASR stack: it
 # installs only its dedicated runtime lock plus the backend-neutral code needed
@@ -31,7 +31,7 @@ RUN apt-get update \
     && chmod -R g=u /work /cache /models
 
 WORKDIR /app
-COPY runtimes/faster-whisper/pyproject.toml runtimes/faster-whisper/uv.lock /runtime/
+COPY runtimes/ctranslate2/pyproject.toml runtimes/ctranslate2/uv.lock /runtime/
 COPY pyproject.toml README.md LICENSE ./
 COPY src ./src
 
@@ -49,8 +49,11 @@ RUN /bin/uv venv --python python3 /app/.venv \
 # group 0. The uid-entrypoint resolves the runtime UID/GID through NSS wrapper
 # when they have no /etc/passwd or /etc/group entry, so getpwuid() and friends
 # work for any Kubernetes/OpenShift-assigned UID without modifying /etc/passwd.
+# The smoke test also proves the CTranslate2 runtime's backend module imports
+# without Torch.
 COPY container/uid-entrypoint.sh /usr/local/bin/uid-entrypoint
 USER 1001
-RUN /usr/local/bin/uid-entrypoint /app/.venv/bin/python -c "import os, pwd; print(pwd.getpwuid(os.getuid()))"
+RUN /usr/local/bin/uid-entrypoint /app/.venv/bin/python -c "import os, pwd, builtins; print(pwd.getpwuid(os.getuid()))"
+RUN /usr/local/bin/uid-entrypoint /app/.venv/bin/python -c "import speech_transcriber.transcription.faster_whisper, ctranslate2, faster_whisper; print('ctranslate2 runtime ok')"
 ENTRYPOINT ["/usr/local/bin/uid-entrypoint", "/app/.venv/bin/python", "-m", "speech_transcriber"]
 CMD ["--help"]

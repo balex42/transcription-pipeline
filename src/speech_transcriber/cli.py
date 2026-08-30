@@ -16,6 +16,7 @@ from speech_transcriber.asr_artifact import (
 )
 from speech_transcriber.config import (
     ASR_BACKENDS,
+    BACKEND_RUNTIMES,
     COMPARE_BACKENDS,
     DEFAULT_PYANNOTE_MODEL,
     DEFAULT_QWEN_ALIGNER_MODEL,
@@ -71,8 +72,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--models",
         default=",".join(COMPARE_BACKENDS),
         help=(
-            "comma-separated generic-runtime ASR backends: parakeet, primeline, qwen, "
-            "nemotron, voxtral; use Argo for heterogeneous runtime comparisons"
+            "comma-separated Transformers-runtime ASR backends: qwen, nemotron, "
+            "voxtral; use Argo for heterogeneous runtime comparisons"
         ),
     )
     prefetch = commands.add_parser(
@@ -269,7 +270,7 @@ def main(argv: list[str] | None = None) -> int:
             unsupported = sorted(set(models) - set(COMPARE_BACKENDS))
             if unsupported:
                 raise ValueError(
-                    "--models only supports the generic runtime; use Argo for: "
+                    "local comparison requires the Transformers runtime; use Argo for: "
                     + ", ".join(unsupported)
                 )
             pipeline = create_default_pipeline(config)
@@ -321,12 +322,12 @@ def _recognition_device(requested: str) -> str:
 def _memory_metrics(device: str, backend: str) -> MemoryMetrics | None:
     """Return CUDA peak accounting when Torch is importable on this path.
 
-    The dedicated faster-whisper image has no Torch, so the faster-whisper
-    backend and any CLI path where Torch is absent never construct the
-    metrics adapter; the generic runtime gains per-backend CUDA peaks in
-    recognition metadata.
+    The CTranslate2 runtime has no Torch, so the faster-whisper backend and any
+    CLI path where Torch is absent never construct the metrics adapter; the
+    Transformers and NeMo runtimes gain per-backend CUDA peaks in recognition
+    metadata.
     """
-    if backend == "faster-whisper":
+    if BACKEND_RUNTIMES[backend] == "ctranslate2":
         return None
     try:
         from speech_transcriber.runtime.device import TorchMemoryMetrics

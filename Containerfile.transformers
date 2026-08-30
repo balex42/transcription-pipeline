@@ -1,3 +1,9 @@
+# Transformers application and recognition image.
+#
+# This is the broad PyTorch/Transformers application image. It owns the
+# Transformers ASR stack (qwen, nemotron, voxtral), pyannote diarization for
+# prepare, and backend-neutral finalization. It intentionally contains no NeMo
+# and no CTranslate2.
 FROM python:3.11-slim-bookworm
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -22,7 +28,7 @@ WORKDIR /app
 COPY pyproject.toml uv.lock README.md LICENSE ./
 COPY src ./src
 RUN python -m pip install --no-cache-dir uv==0.11.32 \
-    && UV_CACHE_DIR=/tmp/uv-cache uv sync --frozen --no-dev --extra runtime \
+    && UV_CACHE_DIR=/tmp/uv-cache uv sync --frozen --no-dev --extra transformers \
     && rm -rf /tmp/uv-cache
 
 # The container runs as an arbitrary non-root UID that is normally a member of
