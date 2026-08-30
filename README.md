@@ -18,12 +18,14 @@ flowchart TD
     audio --> transcriber[Selected Transcriber\nreceives whole recording]
     release --> transcriber
     transcriber --> parakeet[Parakeet\ninternal segments]
+    transcriber --> primeline[Primeline\nNeMo Parakeet TDT native word timestamps]
     transcriber --> qwen[Qwen\ninternal segments plus aligner]
     transcriber --> nemotron[Nemotron\ncache-aware streaming]
     transcriber --> voxtral[Voxtral\nnative streaming]
     transcriber --> faster_whisper[Faster Whisper\nCTranslate2 native word timestamps]
     transcriber --> canary[Canary\nNeMo native word timestamps]
     parakeet --> words[Global ASRWord list]
+    primeline --> words
     qwen --> words
     nemotron --> words
     voxtral --> words
@@ -39,7 +41,8 @@ Audio segmentation is not part of the generic pipeline. Each ASR backend owns it
 
 ## ASR Backends
 
-- `parakeet`: `nvidia/parakeet-tdt-0.6b-v3`. Native TDT word timestamps, punctuation, capitalization, and internal 180-second segments with 15-second overlap.
+- `parakeet`: `nvidia/parakeet-tdt-0.6b-v3`. Native TDT word timestamps, punctuation, capitalization, and internal 180-second segments with 15-second overlap. This is the Transformers adapter; it is unrelated to the NeMo-based `primeline` backend.
+- `primeline`: `primeline/parakeet-primeline`. A German-focused Parakeet TDT (FastConformer) fine-tune distributed as a NVIDIA NeMo `.nemo` checkpoint (`2_95_WER.nemo`), running on the same locked NeMo ASR runtime as Canary — it does not use the Transformers `parakeet` adapter. The checkpoint is restored offline with `ASRModel.restore_from()` from an explicit local path or the deterministic local Hugging Face cache snapshot (`refs/main`). Recognition transcribes the whole normalized WAV in one call with native word timestamps (relying on the checkpoint's local-attention long-form behavior), no chunking, no forced alignment, and canonical confidence is unset unless NeMo exposes a per-word value.
 - `qwen`: `Qwen/Qwen3-ASR-1.7B-hf` plus `Qwen/Qwen3-ForcedAligner-0.6B-hf`. Qwen recognizes bounded 240-second internal segments with 15-second overlap, releases ASR, aligns all recognized segments once, then reconciles them. Collapsed 80 ms-grid boundaries are interpolated and reported in metadata. The aligner limit is 300 seconds.
 - `nemotron`: `nvidia/nemotron-3.5-asr-streaming-0.6b`. Native Transformers RNNT cache-aware streaming, explicit language conditioning, native token emission timestamps, and internal token-to-word aggregation. Batch transcription defaults to 13 lookahead tokens (1.12s latency) for the model's highest-accuracy streaming configuration. It does not issue independent ASR requests for long-form audio.
 - `voxtral`: `mistralai/Voxtral-Mini-4B-Realtime-2602`. Native Transformers cache-aware streaming in one continuous `generate()` session using processor-defined buffers and EOF padding. `[STREAMING_WORD]` token positions provide approximate emission-group end times; starts remain unset for speaker alignment to infer.
@@ -100,6 +103,7 @@ NeMo from `main` is not used.
 
 ```bash
 speech-transcriber transcribe audio.m4a --asr parakeet --output ./result/parakeet --device cuda
+speech-transcriber transcribe audio.m4a --asr primeline --output ./result/primeline --device cuda
 speech-transcriber transcribe audio.m4a --asr qwen --output ./result/qwen --device cuda
 speech-transcriber transcribe audio.m4a --asr nemotron --output ./result/nemotron --device cuda
 speech-transcriber transcribe audio.m4a --asr voxtral --output ./result/voxtral --device cuda
@@ -107,11 +111,11 @@ speech-transcriber transcribe audio.m4a --asr faster-whisper --output ./result/f
 speech-transcriber transcribe audio.m4a --asr canary --output ./result/canary --device cuda
 ```
 
-Compare the four backends installed in the generic runtime with one normalization and one diarization pass:
+Compare the five backends installed in the generic runtime with one normalization and one diarization pass:
 
 ```bash
 speech-transcriber compare audio.m4a \
-  --models parakeet,qwen,nemotron,voxtral \
+  --models parakeet,primeline,qwen,nemotron,voxtral \
   --output ./comparison --device cuda
 ```
 
@@ -139,7 +143,7 @@ speech-transcriber transcribe-prepared \
   --device cuda
 ```
 
-Repeat `transcribe-prepared` with `qwen`, `nemotron`, `voxtral`, `faster-whisper`, or `canary`. The command does not
+Repeat `transcribe-prepared` with `primeline`, `qwen`, `nemotron`, `voxtral`, `faster-whisper`, or `canary`. The command does not
 normalize audio or initialize pyannote, and it never removes or modifies the prepared input.
 Argo Workflows should transfer `/work/prepared` and each backend result through its configured
 artifact repository; the application only reads and writes local filesystem paths.
@@ -181,6 +185,8 @@ Nemotron validates an explicit lookahead through the loaded processor. Batch tra
 Voxtral derives its first/subsequent buffers, transcript delay, and right EOF padding from the loaded processor. Its marker-derived end times are approximate, and multiple lexical words may share one native emission-group end time.
 
 Faster Whisper uses the configured `FASTER_WHISPER_COMPUTE_TYPE` (default `float16`) and records the requested language, compute type, word-timestamp mode, VAD setting, and detected language/probability in backend metadata. Its runtime provenance identifies `faster-whisper` with `ctranslate2` and `huggingface_hub` component versions; Transformers-specific provenance fields remain `unknown`.
+
+Primeline records `timestamps=true`, `batch_size=1`, `inference_mode=single_pass_local_attention`, and the expected `checkpoint_file` (`2_95_WER.nemo`). Its backend models record the restored `.nemo` filename and, when loaded from the Hugging Face cache, the resolved snapshot revision; its runtime provenance is `nemo` with installed `nemo-toolkit`, PyTorch, and CUDA versions. The checkpoint controls its precision (`dtype_name=checkpoint-default`).
 
 Canary records `timestamps=true`, `batch_size=1`, `inference_mode=sequential_non_overlapping_chunks`, the configured `chunk_duration_seconds` (default 10.0, override with `--canary-chunk-duration` or `CANARY_CHUNK_DURATION`), `chunk_count`, requested language, normalized source language, and same-language ASR target language. Its generic runtime provenance is `nemo` with installed `nemo-toolkit`, PyTorch, and CUDA versions.
 
@@ -322,6 +328,7 @@ On an approved connected staging system, prefetch artifacts:
 
 ```bash
 HF_TOKEN=hf_... speech-transcriber prefetch-models --asr parakeet
+HF_TOKEN=hf_... speech-transcriber prefetch-models --asr primeline
 HF_TOKEN=hf_... speech-transcriber prefetch-models --asr qwen
 HF_TOKEN=hf_... speech-transcriber prefetch-models --asr nemotron
 HF_TOKEN=hf_... speech-transcriber prefetch-models --asr voxtral
@@ -335,7 +342,10 @@ reads from the same cache, so no separate tokenizer repository is prefetched. Th
 converted from Transformers format at runtime; the Systran CTranslate2 repository is used directly.
 Canary prefetches only `nvidia/canary-1b-v2`; its repository contains the required
 `canary-1b-v2.nemo` checkpoint, including NeMo's timestamp alignment component. Do not strip
-timestamp files from the checkpoint: they are required for native word timestamps.
+timestamp files from the checkpoint: they are required for native word timestamps. Primeline
+prefetches `primeline/parakeet-primeline`, whose repository contains the required `2_95_WER.nemo`
+NeMo checkpoint; like Canary it is restored offline with `ASRModel.restore_from()` from the
+resolved local snapshot.
 
 All repository-based backends resolve their model through the shared offline snapshot resolver
 before loading. A repository ID is resolved to the cached snapshot selected by `refs/main`
@@ -353,6 +363,7 @@ Also obtain the accepted pyannote artifact through the approved process. Transfe
 /models/
 ├── pyannote-community-1/
 ├── parakeet-tdt-0.6b-v3/
+├── parakeet-primeline/
 ├── qwen3-asr-1.7b/
 ├── qwen3-forced-aligner-0.6b/
 ├── nemotron-3.5-asr-streaming-0.6b/
@@ -431,7 +442,9 @@ shared `uid-entrypoint`, imports Torch, NeMo ASR, and the application, verifies
 the expected Torch/CUDA family. The base tag exists
 on Docker Hub and CUDA 13.2/PyTorch 2.12 is NeMo Speech 3.0.0's tested
 Blackwell-capable configuration. It does not contain pyannote, faster-whisper,
-or CTranslate2.
+or CTranslate2. Both Primeline and Canary run on this one shared NeMo image:
+Primeline is restored from its `2_95_WER.nemo` checkpoint on the same locked
+`nemo-toolkit[asr]==3.0.0` runtime; there is no duplicate NeMo installation.
 
 Smoke test Canary against a short prepared artifact after prefetching the
 model into the mounted read-only cache:
@@ -471,8 +484,10 @@ and command as long as it produces the ASR artifact, without changing the fan-ou
 `ghcr.io/balex42/transcription-pipeline:sha-736019a`; `faster_whisper_image` defaults to the
 dedicated `ghcr.io/balex42/transcription-pipeline-faster-whisper:sha-736019a` repository and
 `canary_image` to the dedicated `ghcr.io/balex42/transcription-pipeline-canary:sha-736019a` image.
+`primeline_image` defaults to the same dedicated NeMo image as `canary_image` because Primeline
+shares the Canary NeMo ASR runtime stack.
 
-The WorkflowTemplate and all six Python runtime image parameters form one compatible release pair.
+The WorkflowTemplate and all seven Python runtime image parameters form one compatible release pair.
 `sha-736019a` must be published by the container workflow before applying this template. If it is not
 available in the target registry, publish that source revision or override every Python runtime image
 parameter with the same schema-v2-compatible immutable release tag or digest. Do not mix schema-v1
@@ -484,8 +499,8 @@ triggers the container workflow, which publishes the dedicated image under the i
 immutable SHA; because the follow-up commit touches only `deploy/argo/**`,
 it does not rebuild any image. Do not invent immutable dedicated-runtime SHA tags before CI has built them.
 
-`backends` must be a JSON array containing only `parakeet`, `qwen`, `nemotron`, `voxtral`,
-`faster-whisper`, or `canary`.
+`backends` must be a JSON array containing only `parakeet`, `primeline`, `qwen`, `nemotron`,
+`voxtral`, `faster-whisper`, or `canary`.
 The pre-prepare validator rejects malformed or empty arrays, unsupported names, and duplicates, then
 emits one boolean output per backend to condition the six direct DAG branches. A comma-separated
 value is invalid and fails before normalization, diarization, or any ASR command runs. Select one
@@ -550,7 +565,8 @@ The container GitHub Actions workflow uses an explicit application-input allowli
 Markdown or deployment manifests, including `deploy/argo/**`, do not build an image. Shared source
 or root package metadata changes build all compatible images. Generic `Containerfile`/root-lock changes
 build only the generic image; `Containerfile.faster-whisper` or `runtimes/faster-whisper/**` changes
-build only faster-whisper; `Containerfile.canary` or `runtimes/canary/**` changes build only Canary.
+build only faster-whisper; `Containerfile.canary` or `runtimes/canary/**` changes build only the
+shared NeMo image used by both Canary and Primeline.
 Changes under `container/**` (the shared UID entrypoint) rebuild all three images. Each build job
 also runs the image with an arbitrary non-root UID (`--user 12345:0`) and verifies
 `pwd.getpwuid(os.getuid())` succeeds, both with the baked `/cache` and with `/cache` masked by a
@@ -558,7 +574,7 @@ tmpfs mount that reproduces the Argo `emptyDir` behavior. Version-tag pushes and
 triggers, so an image-tag-only Argo update does not create a follow-up image build. Each image has
 its own immutable `sha-<commit>` tag namespace.
 
-Only `prepare` and the six recognition templates declare and mount `speech-model-cache` read-only
+Only `prepare` and the seven recognition templates declare and mount `speech-model-cache` read-only
 at `/models`; validation, finalization, and publication pods do not depend on model storage.
 A ReadWriteOnce PVC can be mounted by multiple pods on the same node, so it does not require serializing backend GPU pods.
 If selected backend pods must run on different nodes, an RWO volume may prevent multi-node cache

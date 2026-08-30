@@ -70,8 +70,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--models",
         default=",".join(COMPARE_BACKENDS),
         help=(
-            "comma-separated generic-runtime ASR backends: parakeet, qwen, nemotron, voxtral; "
-            "use Argo for heterogeneous runtime comparisons"
+            "comma-separated generic-runtime ASR backends: parakeet, primeline, qwen, "
+            "nemotron, voxtral; use Argo for heterogeneous runtime comparisons"
         ),
     )
     prefetch = commands.add_parser(
@@ -93,7 +93,8 @@ def _add_runtime_options(parser: argparse.ArgumentParser, include_asr: bool) -> 
         parser.add_argument(
             "--asr",
             choices=ASR_BACKENDS,
-            help="ASR backend: parakeet, qwen, nemotron, voxtral, faster-whisper, canary",
+            help="ASR backend: parakeet, primeline, qwen, nemotron, voxtral, "
+            "faster-whisper, canary",
         )
         parser.add_argument("--asr-model", help="Hugging Face model ID or local model directory")
     parser.add_argument("--qwen-aligner-model", help="Qwen forced-aligner model ID or local path")

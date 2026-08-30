@@ -22,12 +22,14 @@ spec:
         value: ghcr.io/balex42/transcription-pipeline:sha-736019a
       - name: voxtral_image
         value: ghcr.io/balex42/transcription-pipeline:sha-736019a
+      - name: primeline_image
+        value: ghcr.io/balex42/transcription-pipeline-canary:sha-736019a
       - name: faster_whisper_image
         value: ghcr.io/balex42/transcription-pipeline-faster-whisper:sha-736019a
       - name: canary_image
         value: ghcr.io/balex42/transcription-pipeline-canary:sha-736019a
       - name: backends
-        value: '["parakeet","qwen","nemotron","voxtral","faster-whisper","canary"]'
+        value: '["parakeet","primeline","qwen","nemotron","voxtral","faster-whisper","canary"]'
 
     artifacts:
       - name: recording
@@ -136,6 +138,39 @@ spec:
               artifacts:
                 - name: result
                   from: "{{tasks.finalize-parakeet.outputs.artifacts.result}}"
+
+          - name: recognize-primeline
+            depends: "prepare.Succeeded"
+            when: "{{tasks.validate-backends.outputs.parameters.run_primeline}} == true"
+            template: recognize-primeline
+            arguments:
+              artifacts:
+                - name: prepared
+                  from: "{{tasks.prepare.outputs.artifacts.prepared}}"
+
+          - name: finalize-primeline
+            depends: "recognize-primeline.Succeeded"
+            template: finalize
+            arguments:
+              parameters:
+                - name: backend
+                  value: primeline
+              artifacts:
+                - name: prepared
+                  from: "{{tasks.prepare.outputs.artifacts.prepared}}"
+                - name: asr
+                  from: "{{tasks.recognize-primeline.outputs.artifacts.asr}}"
+
+          - name: publish-primeline
+            depends: "finalize-primeline.Succeeded"
+            template: publish
+            arguments:
+              parameters:
+                - name: backend
+                  value: primeline
+              artifacts:
+                - name: result
+                  from: "{{tasks.finalize-primeline.outputs.artifacts.result}}"
 
           - name: recognize-qwen
             depends: "prepare.Succeeded"
@@ -338,6 +373,9 @@ spec:
           - name: run_parakeet
             valueFrom:
               path: /tmp/run_parakeet
+          - name: run_primeline
+            valueFrom:
+              path: /tmp/run_primeline
           - name: run_qwen
             valueFrom:
               path: /tmp/run_qwen
@@ -364,7 +402,7 @@ spec:
             import json
             import os
 
-            supported = {"parakeet", "qwen", "nemotron", "voxtral", "faster-whisper", "canary"}
+            supported = {"parakeet", "primeline", "qwen", "nemotron", "voxtral", "faster-whisper", "canary"}
             try:
                 backends = json.loads(os.environ["BACKENDS"])
             except json.JSONDecodeError as error:
@@ -765,6 +803,69 @@ spec:
             value: /models/huggingface
 
           - name: HF_HUB_OFFLINE
+            value: "1"
+
+        resources:
+          limits:
+            nvidia.com/gpu: "1"
+
+        volumeMounts:
+          - name: model-cache
+            mountPath: /models
+            readOnly: true
+
+          - name: cache
+            mountPath: /cache
+
+          - name: work
+            mountPath: /work
+
+    - name: recognize-primeline
+      inputs:
+        artifacts:
+          - name: prepared
+            path: /work/prepared
+            mode: 0755
+            recurseMode: true
+
+      outputs:
+        artifacts:
+          - name: asr
+            path: /work/asr
+            archive:
+              none: {}
+            s3:
+              key: runs/{{workflow.uid}}/asr/primeline/
+
+      volumes:
+        - name: model-cache
+          persistentVolumeClaim:
+            claimName: speech-model-cache
+
+      container:
+        image: "{{workflow.parameters.primeline_image}}"
+
+        args:
+          - recognize-prepared
+          - --prepared
+          - /work/prepared
+          - --asr
+          - primeline
+          - --output
+          - /work/asr
+          - --working-directory
+          - /work/tmp
+          - --device
+          - cuda
+
+        env:
+          - name: HF_HOME
+            value: /models/huggingface
+
+          - name: HF_HUB_OFFLINE
+            value: "1"
+
+          - name: TRANSFORMERS_OFFLINE
             value: "1"
 
         resources:

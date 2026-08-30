@@ -52,3 +52,66 @@ def test_canary_argo_branch_uses_dedicated_gpu_recognition_and_common_finalizer(
     assert finalizer["container"]["image"] == "{{workflow.parameters.application_image}}"
     assert "resources" not in finalizer["container"]
     assert "model-cache" not in str(finalizer)
+
+
+def test_primeline_argo_branch_uses_nemo_image_gpu_recognition_and_common_finalizer() -> None:
+    template_path = Path(__file__).parents[2] / "deploy/argo/transcription-workflowtemplate.yaml"
+    document = yaml.safe_load(template_path.read_text(encoding="utf-8"))
+    templates = {template["name"]: template for template in document["spec"]["templates"]}
+    parameters = {
+        parameter["name"]: parameter["value"]
+        for parameter in document["spec"]["arguments"]["parameters"]
+    }
+
+    assert parameters["primeline_image"] == (
+        "ghcr.io/balex42/transcription-pipeline-canary:sha-736019a"
+    )
+    assert parameters["backends"] == (
+        '["parakeet","primeline","qwen","nemotron","voxtral","faster-whisper","canary"]'
+    )
+
+    validator = templates["validate-backends"]
+    output_paths = {
+        parameter["name"]: parameter["valueFrom"]["path"]
+        for parameter in validator["outputs"]["parameters"]
+    }
+    assert output_paths["run_primeline"] == "/tmp/run_primeline"
+    validator_script = validator["container"]["args"][0]
+    assert '"primeline"' in validator_script
+
+    dag_tasks = {task["name"]: task for task in templates["transcription"]["dag"]["tasks"]}
+    recognize = dag_tasks["recognize-primeline"]
+    assert recognize["template"] == "recognize-primeline"
+    assert recognize["depends"] == "prepare.Succeeded"
+    assert (
+        recognize["when"]
+        == "{{tasks.validate-backends.outputs.parameters.run_primeline}} == true"
+    )
+    assert dag_tasks["finalize-primeline"]["template"] == "finalize"
+    assert dag_tasks["finalize-primeline"]["depends"] == "recognize-primeline.Succeeded"
+    assert dag_tasks["publish-primeline"]["template"] == "publish"
+    assert dag_tasks["publish-primeline"]["depends"] == "finalize-primeline.Succeeded"
+    assert dag_tasks["finalize-primeline"]["arguments"]["parameters"][0]["value"] == "primeline"
+
+    primeline = templates["recognize-primeline"]
+    args = primeline["container"]["args"]
+    assert "--asr" in args
+    assert args[args.index("--asr") + 1] == "primeline"
+    assert primeline["container"]["image"] == "{{workflow.parameters.primeline_image}}"
+    assert primeline["container"]["resources"]["limits"]["nvidia.com/gpu"] == "1"
+    env = {
+        variable["name"]: variable["value"] for variable in primeline["container"]["env"]
+    }
+    assert env["HF_HUB_OFFLINE"] == "1"
+    assert env["TRANSFORMERS_OFFLINE"] == "1"
+    assert primeline["outputs"]["artifacts"][0]["s3"]["key"] == (
+        "runs/{{workflow.uid}}/asr/primeline/"
+    )
+    assert primeline["volumes"] == [
+        {"name": "model-cache", "persistentVolumeClaim": {"claimName": "speech-model-cache"}}
+    ]
+    assert primeline["container"]["volumeMounts"][0] == {
+        "name": "model-cache",
+        "mountPath": "/models",
+        "readOnly": True,
+    }

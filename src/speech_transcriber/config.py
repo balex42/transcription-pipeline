@@ -24,9 +24,11 @@ DEFAULT_FASTER_WHISPER_COMPUTE_TYPE = "float16"
 FASTER_WHISPER_COMPUTE_TYPES = ("float16", "bfloat16", "float32", "int8", "int8_float16")
 DEFAULT_CANARY_MODEL = "nvidia/canary-1b-v2"
 DEFAULT_CANARY_CHUNK_DURATION_SECONDS = 10.0
+DEFAULT_PRIMELINE_MODEL = "primeline/parakeet-primeline"
+PRIMELINE_MODEL_FILE = "2_95_WER.nemo"
 DEFAULT_PYANNOTE_MODEL = "pyannote/speaker-diarization-community-1"
-ASR_BACKENDS = ("parakeet", "qwen", "nemotron", "voxtral", "faster-whisper", "canary")
-COMPARE_BACKENDS = ("parakeet", "qwen", "nemotron", "voxtral")
+ASR_BACKENDS = ("parakeet", "primeline", "qwen", "nemotron", "voxtral", "faster-whisper", "canary")
+COMPARE_BACKENDS = ("parakeet", "primeline", "qwen", "nemotron", "voxtral")
 QWEN_MAX_ALIGNMENT_DURATION_SECONDS = 300.0
 DEFAULT_PARAKEET_SEGMENT_DURATION = 180.0
 DEFAULT_PARAKEET_SEGMENT_OVERLAP = 15.0
@@ -34,6 +36,7 @@ DEFAULT_QWEN_SEGMENT_DURATION = 240.0
 DEFAULT_QWEN_SEGMENT_OVERLAP = 15.0
 DEFAULT_ASR_MODELS = {
     "parakeet": DEFAULT_PARAKEET_MODEL,
+    "primeline": DEFAULT_PRIMELINE_MODEL,
     "qwen": DEFAULT_QWEN_MODEL,
     "nemotron": DEFAULT_NEMOTRON_MODEL,
     "voxtral": DEFAULT_VOXTRAL_MODEL,

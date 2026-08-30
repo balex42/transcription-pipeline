@@ -7,6 +7,7 @@ from speech_transcriber.config import (
     DEFAULT_FASTER_WHISPER_MODEL,
     DEFAULT_NEMOTRON_MODEL,
     DEFAULT_PARAKEET_MODEL,
+    DEFAULT_PRIMELINE_MODEL,
     DEFAULT_QWEN_MODEL,
     DEFAULT_VOXTRAL_DELAY_MS,
     DEFAULT_VOXTRAL_MODEL,
@@ -20,6 +21,7 @@ from speech_transcriber.transcription.factory import create_transcriber
 from speech_transcriber.transcription.faster_whisper import FasterWhisperTranscriber
 from speech_transcriber.transcription.nemotron import NemotronTranscriber
 from speech_transcriber.transcription.parakeet import ParakeetTranscriber
+from speech_transcriber.transcription.primeline import PrimelineTranscriber
 from speech_transcriber.transcription.qwen import QwenTranscriber
 from speech_transcriber.transcription.voxtral import VoxtralTranscriber
 
@@ -34,6 +36,7 @@ def config(backend: str, model: str | None = None) -> PipelineConfig:
     ("backend", "adapter", "model"),
     [
         ("parakeet", ParakeetTranscriber, DEFAULT_PARAKEET_MODEL),
+        ("primeline", PrimelineTranscriber, DEFAULT_PRIMELINE_MODEL),
         ("qwen", QwenTranscriber, DEFAULT_QWEN_MODEL),
         ("nemotron", NemotronTranscriber, DEFAULT_NEMOTRON_MODEL),
         ("voxtral", VoxtralTranscriber, DEFAULT_VOXTRAL_MODEL),
@@ -66,6 +69,17 @@ def test_factory_selects_adapter_and_default_model(
         assert transcriber.source_language == "de"
         assert transcriber.target_language == "de"
         assert transcriber.chunk_duration_seconds == 10.0
+    if backend == "primeline":
+        assert transcriber.capabilities == TranscriberCapabilities(True, True, True, True)
+        assert transcriber.capabilities.requires_forced_alignment is False
+
+
+def test_primeline_does_not_reuse_the_transformers_parakeet_adapter() -> None:
+    transcriber = create_transcriber(config("primeline"), "cpu")
+
+    assert type(transcriber) is PrimelineTranscriber
+    assert not isinstance(transcriber, ParakeetTranscriber)
+    assert transcriber.model_reference == DEFAULT_PRIMELINE_MODEL
 
 
 def test_canary_chunk_duration_from_config_is_passed_to_adapter() -> None:

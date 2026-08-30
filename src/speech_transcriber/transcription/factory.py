@@ -15,6 +15,7 @@ def create_transcriber(config: PipelineConfig, device: str) -> Transcriber:
     """Create the selected ASR adapter without loading its model yet."""
     if config.asr_backend not in {
         "parakeet",
+        "primeline",
         "qwen",
         "nemotron",
         "voxtral",
@@ -23,7 +24,8 @@ def create_transcriber(config: PipelineConfig, device: str) -> Transcriber:
     }:
         raise UnsupportedASRBackendError(
             f"Unsupported ASR backend '{config.asr_backend}'. "
-            "Supported backends: parakeet, qwen, nemotron, voxtral, faster-whisper, canary."
+            "Supported backends: parakeet, primeline, qwen, nemotron, voxtral, "
+            "faster-whisper, canary."
         )
     model = config.resolved_asr_model
     if config.asr_backend == "parakeet":
@@ -35,6 +37,10 @@ def create_transcriber(config: PipelineConfig, device: str) -> Transcriber:
             config.parakeet_segment_duration,
             config.parakeet_segment_overlap,
         )
+    if config.asr_backend == "primeline":
+        from speech_transcriber.transcription.primeline import PrimelineTranscriber
+
+        return PrimelineTranscriber(model, device)
     if config.asr_backend == "qwen":
         from speech_transcriber.transcription.qwen import (
             QwenForcedAligner,

@@ -10,6 +10,7 @@ from speech_transcriber.config import (
     DEFAULT_NEMOTRON_MODEL,
     DEFAULT_NEMOTRON_NUM_LOOKAHEAD_TOKENS,
     DEFAULT_PARAKEET_MODEL,
+    DEFAULT_PRIMELINE_MODEL,
     DEFAULT_QWEN_ALIGNER_MODEL,
     DEFAULT_QWEN_MODEL,
     DEFAULT_VOXTRAL_DELAY_MS,
@@ -37,6 +38,18 @@ def test_environment_backend_and_default_model_mapping() -> None:
         == DEFAULT_FASTER_WHISPER_MODEL
     )
     assert make({}, {"ASR_BACKEND": "canary"}).resolved_asr_model == DEFAULT_CANARY_MODEL
+    assert make({}, {"ASR_BACKEND": "primeline"}).resolved_asr_model == DEFAULT_PRIMELINE_MODEL
+
+
+def test_primeline_uses_the_primeline_repository_by_default() -> None:
+    config = make({"asr_backend": "primeline"})
+    assert config.asr_backend == "primeline"
+    assert config.resolved_asr_model == "primeline/parakeet-primeline"
+
+
+def test_primeline_explicit_asr_model_override_wins() -> None:
+    config = make({"asr_backend": "primeline"}, {"ASR_MODEL": "/models/primeline"})
+    assert config.resolved_asr_model == "/models/primeline"
 
 
 def test_faster_whisper_uses_float16_compute_type_by_default() -> None:
