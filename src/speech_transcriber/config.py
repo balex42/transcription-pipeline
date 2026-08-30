@@ -171,7 +171,6 @@ class PreparationConfig:
     min_speakers: int | None = None
     max_speakers: int | None = None
     keep_intermediate_files: bool = False
-    log_level: str = DEFAULT_LOG_LEVEL
 
     def __post_init__(self) -> None:
         if self.device not in {"auto", "cuda", "cpu"}:
@@ -217,7 +216,6 @@ class PreparationConfig:
                 overrides.get("keep_intermediate_files")
                 or choices.env.get("KEEP_INTERMEDIATE_FILES") == "1"
             ),
-            log_level=choices.string("log_level", "LOG_LEVEL", DEFAULT_LOG_LEVEL).upper(),
         )
 
 
@@ -254,8 +252,6 @@ class RecognitionConfig:
     faster_whisper_compute_type: str = DEFAULT_FASTER_WHISPER_COMPUTE_TYPE
 
     canary_chunk_duration_seconds: float = DEFAULT_CANARY_CHUNK_DURATION_SECONDS
-
-    log_level: str = DEFAULT_LOG_LEVEL
 
     def __post_init__(self) -> None:
         if self.device not in {"auto", "cuda", "cpu"}:
@@ -388,7 +384,6 @@ class RecognitionConfig:
             device=choices.string("device", "DEVICE", "auto"),
             asr_model=choices.string_or_none("asr_model", "ASR_MODEL"),
             # Language has no configuration surface: the prepared artifact owns it.
-            log_level=choices.string("log_level", "LOG_LEVEL", DEFAULT_LOG_LEVEL).upper(),
             **backend_fields,  # type: ignore[arg-type]
         )
 
@@ -401,7 +396,6 @@ class FinalizationConfig:
     alignment_tolerance: float = DEFAULT_ALIGNMENT_TOLERANCE
     turn_gap_seconds: float = DEFAULT_TURN_GAP_SECONDS
     keep_intermediate_files: bool = False
-    log_level: str = DEFAULT_LOG_LEVEL
 
     @classmethod
     def from_environment(
@@ -428,5 +422,4 @@ class FinalizationConfig:
                 overrides.get("keep_intermediate_files")
                 or choices.env.get("KEEP_INTERMEDIATE_FILES") == "1"
             ),
-            log_level=choices.string("log_level", "LOG_LEVEL", DEFAULT_LOG_LEVEL).upper(),
         )

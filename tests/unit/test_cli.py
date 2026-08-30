@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import logging
 from pathlib import Path
 
 import pytest
@@ -9,7 +10,12 @@ import pytest
 from speech_transcriber import cli
 from speech_transcriber.config import ASR_BACKENDS, DEFAULT_PYANNOTE_MODEL
 from speech_transcriber.models import ASRWord, AudioMetadata, DiarizationSegment, NormalizedAudio
-from speech_transcriber.prepared import PreparedRecording, sha256_file, write_prepared_recording
+from speech_transcriber.prepared import (
+    PreparedRecording,
+    load_prepared_recording,
+    sha256_file,
+    write_prepared_recording,
+)
 from speech_transcriber.transcription.base import TranscriberCapabilities
 
 PUBLIC_COMMANDS = ("prepare", "recognize", "finalize", "prefetch")
@@ -218,6 +224,64 @@ def test_recognize_exposes_no_language_flag_for_artifact_inheritance() -> None:
     assert "--language" not in command_options("recognize")
 
 
+@pytest.mark.parametrize(
+    ("backend", "option", "value"),
+    [
+        ("parakeet", "--voxtral-delay-ms", "480"),
+        ("primeline", "--parakeet-segment-duration", "120"),
+        ("qwen", "--canary-chunk-duration", "20"),
+        ("canary", "--qwen-segment-duration", "120"),
+        ("faster-whisper", "--nemotron-num-lookahead-tokens", "0"),
+    ],
+)
+def test_recognize_rejects_explicit_options_for_another_backend(
+    backend: str, option: str, value: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with pytest.raises(SystemExit) as error:
+        cli.main(
+            [
+                "recognize",
+                "--prepared",
+                "prepared",
+                "--backend",
+                backend,
+                "--output",
+                "asr",
+                option,
+                value,
+            ]
+        )
+
+    assert error.value.code == 2
+    stderr = capsys.readouterr().err
+    assert option in stderr
+    assert backend in stderr
+    assert "does not apply" in stderr
+
+
+@pytest.mark.parametrize(
+    ("backend", "options"),
+    [
+        ("parakeet", ["--parakeet-segment-duration", "120"]),
+        ("primeline", []),
+        ("qwen", ["--qwen-segment-overlap", "10"]),
+        ("nemotron", ["--nemotron-num-lookahead-tokens", "0"]),
+        ("voxtral", ["--voxtral-delay-ms", "480"]),
+        ("faster-whisper", ["--faster-whisper-compute-type", "int8_float16"]),
+        ("canary", ["--canary-chunk-duration", "20"]),
+    ],
+)
+def test_recognize_accepts_options_owned_by_the_selected_backend(
+    backend: str, options: list[str]
+) -> None:
+    args = cli.build_parser().parse_args(
+        ["recognize", "--prepared", "prepared", "--backend", backend, "--output", "asr"]
+        + options
+    )
+
+    cli._validate_backend_cli_options(args)
+
+
 def test_prepare_command_writes_artifact_and_releases_diarizer(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -236,6 +300,7 @@ def test_prepare_command_writes_artifact_and_releases_diarizer(
     monkeypatch.setattr(
         "speech_transcriber.preparation.PreparationRunner.create_default", runner_factory
     )
+    monkeypatch.setenv("PYANNOTE_MODEL", "/models/pyannote-community-1")
     output = tmp_path / "prepared"
 
     assert (
@@ -258,6 +323,7 @@ def test_prepare_command_writes_artifact_and_releases_diarizer(
         "diarization.json",
         "prepared.json",
     }
+    assert load_prepared_recording(output).diarization_model == "/models/pyannote-community-1"
 
 
 @pytest.mark.parametrize("prepared_language", ["fr-FR", "en-US"])
@@ -271,7 +337,7 @@ def test_recognize_passes_the_prepared_language_to_the_backend_adapter(
     seen: dict[str, object] = {}
 
     def fake_transcriber(
-        config: object, device: str, language: str | None
+        config: object, device: str, language: str
     ) -> FakeTranscriber:
         seen["language"] = language
         return FakeTranscriber()
@@ -306,7 +372,7 @@ def test_recognize_writes_canonical_asr_artifact(
     prepared_directory, _source = write_prepared_fixture(tmp_path)
     transcriber = FakeTranscriber()
 
-    def fake_transcriber(config: object, device: str, language: str | None) -> FakeTranscriber:
+    def fake_transcriber(config: object, device: str, language: str) -> FakeTranscriber:
         assert device == "cpu"
         assert language == "de-DE"
         return transcriber
@@ -343,7 +409,7 @@ def test_recognize_wires_memory_metrics_from_the_backend_runtime(
     prepared_directory, _source = write_prepared_fixture(tmp_path)
     seen: dict[str, object] = {}
 
-    def fake_transcriber(config: object, device: str, language: str | None) -> FakeTranscriber:
+    def fake_transcriber(config: object, device: str, language: str) -> FakeTranscriber:
         return FakeTranscriber()
 
     def fake_runner(metrics: object) -> object:
@@ -385,7 +451,7 @@ def test_recognize_and_finalize_commands_cross_the_artifact_boundary(
     transcriber = FakeTranscriber()
 
     def recognition_transcriber(
-        config: object, device: str, language: str | None
+        config: object, device: str, language: str
     ) -> FakeTranscriber:
         return transcriber
 
@@ -412,7 +478,7 @@ def test_recognize_and_finalize_commands_cross_the_artifact_boundary(
     assert {path.name for path in asr.iterdir()} == {"asr_words.json", "metadata.json"}
     assert transcriber.loaded and transcriber.released
 
-    def unexpected_transcriber(config: object, device: str, language: str | None) -> object:
+    def unexpected_transcriber(config: object, device: str, language: str) -> object:
         raise AssertionError("finalization must not create a backend adapter")
 
     monkeypatch.setattr(factory_module, "create_transcriber", unexpected_transcriber)
@@ -555,6 +621,45 @@ def test_memory_metrics_use_torch_runtime_for_other_backends(
     assert metrics.device == "cuda"
 
 
+@pytest.mark.parametrize(
+    ("environment", "arguments", "expected"),
+    [
+        ({}, [], logging.INFO),
+        ({"LOG_LEVEL": "DEBUG"}, [], logging.DEBUG),
+        ({"LOG_LEVEL": "DEBUG"}, ["--log-level", "ERROR"], logging.ERROR),
+    ],
+)
+def test_logging_precedence_is_cli_then_environment_then_info(
+    monkeypatch: pytest.MonkeyPatch,
+    environment: dict[str, str],
+    arguments: list[str],
+    expected: int,
+) -> None:
+    configured: list[int] = []
+    monkeypatch.delenv("LOG_LEVEL", raising=False)
+    for name, value in environment.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setattr(
+        cli.logging, "basicConfig", lambda **values: configured.append(values["level"])
+    )
+    monkeypatch.setattr(cli, "_prefetch", lambda *_: None)
+
+    assert cli.main(["prefetch", "--backend", "parakeet", *arguments]) == 0
+    assert configured == [expected]
+
+
+def test_invalid_environment_log_level_fails_clearly(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("LOG_LEVEL", "banana")
+
+    with pytest.raises(SystemExit) as error:
+        cli.main(["prefetch", "--backend", "parakeet"])
+
+    assert error.value.code == 2
+    assert "LOG_LEVEL must be one of: DEBUG, INFO, WARNING, ERROR" in capsys.readouterr().err
+
+
 def test_prefetch_qwen_includes_the_forced_aligner(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[tuple[object, ...]] = []
 
@@ -563,15 +668,13 @@ def test_prefetch_qwen_includes_the_forced_aligner(monkeypatch: pytest.MonkeyPat
         model: str | None,
         qwen_aligner_model: str,
         pyannote_model: str,
-        log_level: str | None,
     ) -> None:
-        calls.append((backend, model, qwen_aligner_model, pyannote_model, log_level))
+        calls.append((backend, model, qwen_aligner_model, pyannote_model))
 
     monkeypatch.setattr(cli, "_prefetch", prefetch)
 
     assert cli.main(["prefetch", "--backend", "qwen"]) == 0
-    assert calls == [("qwen", None, "Qwen/Qwen3-ForcedAligner-0.6B-hf", DEFAULT_PYANNOTE_MODEL,
-                      None)]
+    assert calls == [("qwen", None, "Qwen/Qwen3-ForcedAligner-0.6B-hf", DEFAULT_PYANNOTE_MODEL)]
 
 
 def test_prefetch_faster_whisper_uses_only_the_model_repository(

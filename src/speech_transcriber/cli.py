@@ -22,6 +22,7 @@ from speech_transcriber.asr_artifact import (
 from speech_transcriber.config import (
     ASR_BACKENDS,
     BACKEND_RUNTIMES,
+    DEFAULT_LOG_LEVEL,
     DEFAULT_PYANNOTE_MODEL,
     DEFAULT_QWEN_ALIGNER_MODEL,
     FASTER_WHISPER_COMPUTE_TYPES,
@@ -37,6 +38,27 @@ if TYPE_CHECKING:
     from speech_transcriber.recognition import MemoryMetrics
 
 _LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR")
+_BACKEND_CLI_OPTIONS = {
+    "qwen_aligner_model": "--qwen-aligner-model",
+    "parakeet_segment_duration": "--parakeet-segment-duration",
+    "parakeet_segment_overlap": "--parakeet-segment-overlap",
+    "qwen_segment_duration": "--qwen-segment-duration",
+    "qwen_segment_overlap": "--qwen-segment-overlap",
+    "nemotron_num_lookahead_tokens": "--nemotron-num-lookahead-tokens",
+    "voxtral_delay_ms": "--voxtral-delay-ms",
+    "voxtral_timestamp_offset_tokens": "--voxtral-timestamp-offset-tokens",
+    "faster_whisper_compute_type": "--faster-whisper-compute-type",
+    "canary_chunk_duration": "--canary-chunk-duration",
+}
+_BACKEND_CLI_OPTION_OWNERS = {
+    "parakeet": {"parakeet_segment_duration", "parakeet_segment_overlap"},
+    "primeline": set(),
+    "qwen": {"qwen_aligner_model", "qwen_segment_duration", "qwen_segment_overlap"},
+    "nemotron": {"nemotron_num_lookahead_tokens"},
+    "voxtral": {"voxtral_delay_ms", "voxtral_timestamp_offset_tokens"},
+    "faster-whisper": {"faster_whisper_compute_type"},
+    "canary": {"canary_chunk_duration"},
+}
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -130,9 +152,19 @@ def _add_finalize_options(parser: argparse.ArgumentParser) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     """Run one worker stage and return a shell-compatible status code."""
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.command == "recognize":
+        try:
+            _validate_backend_cli_options(args)
+        except ValueError as error:
+            parser.error(str(error))
+    try:
+        log_level = _resolve_log_level(args.log_level)
+    except ValueError as error:
+        parser.error(str(error))
     logging.basicConfig(
-        level=getattr(logging, args.log_level or "INFO"),
+        level=getattr(logging, log_level),
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
     try:
@@ -143,7 +175,6 @@ def main(argv: list[str] | None = None) -> int:
                 args.qwen_aligner_model
                 or os.environ.get("QWEN_ALIGNER_MODEL", DEFAULT_QWEN_ALIGNER_MODEL),
                 args.pyannote_model or DEFAULT_PYANNOTE_MODEL,
-                args.log_level,
             )
             return 0
         if args.command == "finalize":
@@ -206,7 +237,7 @@ def _finalize(args: argparse.Namespace) -> int:
         expected_backend=args.backend,
         expected_normalized_audio_sha256=prepared.normalized_audio_sha256,
     )
-    config = FinalizationConfig.from_environment(args.output, {"log_level": args.log_level})
+    config = FinalizationConfig.from_environment(args.output, {})
     result = TranscriptFinalizer(config).finalize_prepared(
         prepared,
         recognition,
@@ -264,7 +295,6 @@ def _preparation_config(args: argparse.Namespace) -> PreparationConfig:
             "num_speakers": args.num_speakers,
             "min_speakers": args.min_speakers,
             "max_speakers": args.max_speakers,
-            "log_level": args.log_level,
         },
     )
 
@@ -288,7 +318,6 @@ def _recognition_config(args: argparse.Namespace) -> RecognitionConfig:
             "voxtral_timestamp_offset_tokens": args.voxtral_timestamp_offset_tokens,
             "faster_whisper_compute_type": args.faster_whisper_compute_type,
             "canary_chunk_duration_seconds": args.canary_chunk_duration,
-            "log_level": args.log_level,
         },
     )
 
@@ -298,7 +327,6 @@ def _prefetch(
     model: str | None,
     qwen_aligner_model: str,
     pyannote_model: str,
-    log_level: str | None,
 ) -> None:
     """Download selected ASR and pyannote model repositories for offline use.
 
@@ -309,10 +337,6 @@ def _prefetch(
 
     from speech_transcriber.config import DEFAULT_ASR_MODELS
 
-    logging.basicConfig(
-        level=getattr(logging, log_level or "INFO"),
-        format="%(asctime)s %(levelname)s %(name)s %(message)s",
-    )
     logging.getLogger(__name__).info("prefetching ASR model")
     snapshot_download(model or DEFAULT_ASR_MODELS[backend])
     if backend == "qwen":
@@ -320,6 +344,23 @@ def _prefetch(
         snapshot_download(qwen_aligner_model)
     logging.getLogger(__name__).info("prefetching pyannote model")
     snapshot_download(pyannote_model, token=True)
+
+
+def _validate_backend_cli_options(args: argparse.Namespace) -> None:
+    """Reject explicit recognition options owned by another backend."""
+    allowed = _BACKEND_CLI_OPTION_OWNERS[args.backend]
+    for destination, option in _BACKEND_CLI_OPTIONS.items():
+        if getattr(args, destination) is not None and destination not in allowed:
+            raise ValueError(f"{option} does not apply to backend {args.backend!r}")
+
+
+def _resolve_log_level(cli_level: str | None) -> str:
+    """Resolve one process logging level from CLI, environment, then default."""
+    level = (cli_level if cli_level is not None else os.environ.get("LOG_LEVEL", DEFAULT_LOG_LEVEL))
+    level = level.upper()
+    if level not in _LOG_LEVELS:
+        raise ValueError(f"LOG_LEVEL must be one of: {', '.join(_LOG_LEVELS)}")
+    return level
 
 
 if __name__ == "__main__":

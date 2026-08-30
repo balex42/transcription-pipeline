@@ -60,7 +60,7 @@ Audio segmentation is not part of the generic pipeline. Each ASR backend owns it
 - `qwen`: `Qwen/Qwen3-ASR-1.7B-hf` plus `Qwen/Qwen3-ForcedAligner-0.6B-hf`. Qwen recognizes bounded 240-second internal segments with 15-second overlap, releases ASR, aligns all recognized segments once, then reconciles them. Collapsed 80 ms-grid boundaries are interpolated and reported in metadata. The aligner limit is 300 seconds.
 - `nemotron`: `nvidia/nemotron-3.5-asr-streaming-0.6b`. Native Transformers RNNT cache-aware streaming, explicit language conditioning, native token emission timestamps, and internal token-to-word aggregation. Batch transcription defaults to 13 lookahead tokens (1.12s latency) for the model's highest-accuracy streaming configuration. It does not issue independent ASR requests for long-form audio.
 - `voxtral`: `mistralai/Voxtral-Mini-4B-Realtime-2602`. Native Transformers cache-aware streaming in one continuous `generate()` session using processor-defined buffers and EOF padding. `[STREAMING_WORD]` token positions provide approximate emission-group end times; starts remain unset for speaker alignment to infer.
-- `faster-whisper`: `Systran/faster-whisper-large-v3`. Backend = `faster-whisper`, runtime = CTranslate2. A distinct heterogeneous runtime using the native `faster-whisper` / CTranslate2 stack, not Transformers. It is not a restoration of the previously removed Transformers Whisper backend. Native word start/end timestamps and word probabilities map directly to canonical `ASRWord` records; no forced alignment is used. GPU recognition defaults to `float16` compute type; VAD is disabled by default (`vad_filter=False`) because the pipeline already normalizes the full recording and diarizes it separately with pyannote. The configured language is reduced to a Whisper base code (`de-DE` -> `de`); without a language, the model detects it and the detected language/probability is recorded in backend metadata.
+- `faster-whisper`: `Systran/faster-whisper-large-v3`. Backend = `faster-whisper`, runtime = CTranslate2. A distinct heterogeneous runtime using the native `faster-whisper` / CTranslate2 stack, not Transformers. It is not a restoration of the previously removed Transformers Whisper backend. Native word start/end timestamps and word probabilities map directly to canonical `ASRWord` records; no forced alignment is used. GPU recognition defaults to `float16` compute type; VAD is disabled by default (`vad_filter=False`) because the pipeline already normalizes the full recording and diarizes it separately with pyannote. The configured language is reduced to a Whisper base code (`de-DE` -> `de`). The adapter retains native language detection internally, but the production worker always supplies `PreparedRecording.language`.
 - `canary`: `nvidia/canary-1b-v2` (CC BY 4.0). NVIDIA NeMo runtime batch recognition for multilingual ASR, including German (`de`). It performs transcription only: `source_lang` and `target_lang` are both the normalized configured language. The adapter splits the normalized WAV into deterministic non-overlapping PCM chunks (default 10 seconds, exact frame boundaries), transcribes them sequentially with a single model load, and rebases native `Hypothesis.timestamp["word"]` records to recording-global `word`, `start`, and `end` values, including punctuation/capitalization; Canary exposes no stable native per-word confidence, so canonical confidence is `null`. No forced alignment, translation, speaker attribution, or manual timestamp de-duplication is used.
 - Diarization: `pyannote/speaker-diarization-community-1` runs once over the normalized full recording.
 
@@ -70,15 +70,15 @@ All adapters use deterministic inference, `model.eval()`, `torch.inference_mode(
 
 ## Language
 
-The pipeline is language-agnostic. `prepare` chooses the recording language (`--language`, default
-`de-DE`) and persists it in `prepared.json`; that artifact is the immutable language source of
-truth for the whole workflow. `recognize` reads exactly that language for every backend and
-`finalize` copies it into the transcript — no stage silently substitutes a generic default, and no
-later stage can change it. There is no `recognize --language` flag and recognition never reads a
+The pipeline is language-agnostic. The Argo `language` parameter (default `de-DE`) is passed only to
+`prepare --language`; local preparation can use the same flag or `LANGUAGE`. Preparation persists
+the selected value in `prepared.json`, and that artifact is the immutable inter-stage language
+source. `recognize` reads exactly that language for every backend and `finalize` copies it into the
+transcript — no stage silently substitutes a generic default, and no later stage can change it.
+There is no `recognize --language` or `finalize --language` flag, and neither stage reads a
 `LANGUAGE` environment variable. Qwen and Nemotron accept a locale such as `de-DE`; the Qwen ASR and
 forced-aligner stages use the base language code (for example `de`). Faster Whisper also reduces
-the locale to a Whisper base code (`de-DE` -> `de`); with no prepared language the model detects
-one and the detected language/probability is recorded in backend metadata. Canary
+the required prepared locale to a Whisper base code (`de-DE` -> `de`). Canary
 uses the same locale reduction but requires an explicit supported code; it records requested,
 normalized source, and target language in ASR metadata. The initial Canary integration uses
 identical source/target codes and therefore never requests speech translation.
@@ -128,12 +128,14 @@ Each worker stage parses only its own settings: CLI values override environment 
 override defaults. Environment variables for another stage — and for another ASR backend — are
 never read, so an invalid value cannot break an unrelated command: `VOXTRAL_DELAY_MS=garbage`
 cannot fail `prepare` or a Parakeet recognition, invalid Canary values cannot fail `finalize`,
-and `QWEN_SEGMENT_DURATION=garbage` cannot fail a Canary recognition.
+and `QWEN_SEGMENT_DURATION=garbage` cannot fail a Canary recognition. Explicit CLI options express
+operator intent and are stricter: recognition rejects a backend-specific option when it belongs to
+another selected backend (for example, Parakeet with `--voxtral-delay-ms`).
 
 `prepare` reads `WORKING_DIRECTORY`, `DEVICE`, `PYANNOTE_MODEL`, `LANGUAGE`, `NUM_SPEAKERS`,
-`MIN_SPEAKERS`, `MAX_SPEAKERS`, `KEEP_INTERMEDIATE_FILES`, and `LOG_LEVEL`.
+`MIN_SPEAKERS`, `MAX_SPEAKERS`, and `KEEP_INTERMEDIATE_FILES`.
 
-`recognize` reads `WORKING_DIRECTORY`, `DEVICE`, `ASR_MODEL`, and `LOG_LEVEL` always, plus only
+`recognize` reads `WORKING_DIRECTORY`, `DEVICE`, and `ASR_MODEL` always, plus only
 the selected backend's own settings: `PARAKEET_SEGMENT_DURATION`/`PARAKEET_SEGMENT_OVERLAP`
 (Parakeet), `QWEN_ALIGNER_MODEL`/`QWEN_SEGMENT_DURATION`/`QWEN_SEGMENT_OVERLAP` (Qwen),
 `NEMOTRON_NUM_LOOKAHEAD_TOKENS` (Nemotron), `VOXTRAL_DELAY_MS`/`VOXTRAL_TIMESTAMP_OFFSET_TOKENS`
@@ -142,8 +144,12 @@ It never reads `LANGUAGE`: recognition language comes exclusively from the prepa
 `--backend` is always explicit (Argo passes the DAG branch's backend parameter); there is no
 `ASR_BACKEND` environment fallback and no default backend.
 
-`finalize` reads `KEEP_INTERMEDIATE_FILES` and `LOG_LEVEL` only; it parses and validates no ASR or
+`finalize` reads `KEEP_INTERMEDIATE_FILES` only; it parses and validates no ASR or
 diarization settings.
+
+Logging is process-wide CLI bootstrap configuration rather than stage configuration. Every command
+resolves it once as explicit `--log-level`, then `LOG_LEVEL`, then `INFO`; supported values are
+`DEBUG`, `INFO`, `WARNING`, and `ERROR`, and an invalid environment value fails before worker setup.
 
 ```text
 ASR_MODEL
@@ -176,7 +182,7 @@ only the selected backend's variables (see the per-backend list above). The offl
 shared Argo template; runtimes that never touch Transformers (CTranslate2) simply do not consume
 `TRANSFORMERS_OFFLINE`, so the unused flag is harmless.
 
-Equivalent CLI flags include `--backend`, `--model`, `--parakeet-segment-duration`, `--qwen-segment-duration`, `--nemotron-num-lookahead-tokens`, `--faster-whisper-compute-type`, and `--canary-chunk-duration`. There is intentionally no global `--chunk-duration` or `CHUNK_DURATION`: those old settings were removed because they incorrectly coupled backend implementations.
+Equivalent CLI flags include `--backend`, `--model`, `--parakeet-segment-duration`, `--qwen-segment-duration`, `--nemotron-num-lookahead-tokens`, `--faster-whisper-compute-type`, `--canary-chunk-duration`, and `--log-level`. Backend-specific flags are accepted only for their owning selected backend. There is intentionally no global `--chunk-duration` or `CHUNK_DURATION`: those old settings were removed because they incorrectly coupled backend implementations.
 
 Nemotron validates an explicit lookahead through the loaded processor. Batch transcription defaults to 13 lookahead tokens; set `NEMOTRON_NUM_LOOKAHEAD_TOKENS` or `--nemotron-num-lookahead-tokens` to select another supported latency/accuracy trade-off. The checkpoint derives its first/subsequent streaming buffer sizes and latency from model/processor configuration.
 
@@ -334,6 +340,12 @@ PYANNOTE_MODEL=/models/pyannote-community-1 \
 speech-transcriber prepare /data/audio.m4a --output /data/prepared --device cuda
 ```
 
+`PYANNOTE_MODEL` accepts either a Hugging Face repository ID or an absolute local model path. The
+exact configured reference is preserved as inert `diarization.model` provenance in `prepared.json`;
+an absolute provenance value is not a portable artifact file and the loader never dereferences it.
+The actual `audio.file`, `audio.source`, and `diarization.file` references remain restricted to
+portable relative filenames inside the prepared bundle.
+
 With all required artifacts mounted locally, inference performs no network access, telemetry, NVIDIA API calls, or remote-code loading. The CTranslate2 recognition image resolves the cached snapshot path under `HF_HOME` and passes it directly to `WhisperModel`, so the read-only model cache is never copied into the pod's ephemeral filesystem. The NeMo backends each resolve `refs/main` to the cache's matching snapshot and restore the exact expected `.nemo` checkpoint (`parakeet-tdt-0.6b-v3.nemo`, `2_95_WER.nemo`, `canary-1b-v2.nemo`) directly with `ASRModel.restore_from()`, rather than calling `from_pretrained()` with an online-style repository ID. When `HF_HUB_OFFLINE=1` and a model is absent, recognition fails with an explicit cache-miss error instead of silently attempting a repository lookup.
 
 ## Podman and Kubernetes
@@ -435,6 +447,8 @@ and `ctranslate2_image`). The seven explicit recognition DAG branches all refere
 artifact, without changing the fan-out DAG. `prepare` and `finalize` use the Transformers image;
 `qwen`, `nemotron`, and `voxtral` map to `transformers_image`; `parakeet`, `primeline`, and
 `canary` map to `nemo_image`; `faster-whisper` maps to `ctranslate2_image`.
+The top-level `language` parameter defaults to `de-DE` and is passed only to `prepare --language`;
+recognition and finalization inherit it exclusively through `prepared.json`.
 
 The WorkflowTemplate and the three runtime image parameters form one compatible release pair. Each
 runtime image must be published by the container workflow with a matching immutable `sha-<commit>`
@@ -508,9 +522,9 @@ jobs/<workflow-uid>/
 The source recording is published once per workflow; backend publication tasks only copy their own
 four result files from a non-overlapping input directory. Durable artifact outputs explicitly use
 the RustFS service endpoint and the existing `rustfs-s3` Secret, rather than inheriting the default
-`argo-artifacts` connection. `utility_image` defaults to the lightweight `python:3.11-alpine` image
-for JSON validation and file-copy tasks. Production or air-gapped deployments should mirror and pin
-that utility image in their internal registry.
+`argo-artifacts` connection. `utility_image` is pinned to an immutable multi-architecture
+`python:3.11-alpine` digest for JSON validation and file-copy tasks. Production or air-gapped
+deployments should mirror that pinned image in their internal registry.
 
 The container GitHub Actions workflow uses an explicit application-input allowlist. Changes limited to
 Markdown or deployment manifests, including `deploy/argo/**`, do not build an image. Shared source
@@ -527,11 +541,12 @@ its own immutable `sha-<commit>` tag namespace.
 
 A separate lightweight `Quality` workflow (`.github/workflows/quality.yml`) runs `ruff check .`,
 `mypy src`, and `pytest`, then lints the Argo WorkflowTemplate offline. The lint step downloads a
-pinned Argo CLI release (`ARGO_LINT_VERSION` in the workflow), renders the template's spec as a
+pinned Argo CLI release (`ARGO_LINT_VERSION` in the workflow), verifies it against the official
+release checksum, renders the template's spec with PyYAML from the locked project environment as a
 submit-time Workflow with a placeholder S3 recording artifact, and runs `argo lint --offline`:
 schema and DAG-reference validation with no cluster, no credentials, and no network access during
 lint execution itself. The workflow triggers on pull requests and pushes to `main` that touch
-`src/**`, `tests/**`, `deploy/**`, `pyproject.toml`, or `uv.lock`. It downloads no model weights,
+`src/**`, `tests/**`, `deploy/**`, `scripts/**`, `pyproject.toml`, or `uv.lock`. It downloads no model weights,
 requires no GPU, and keeps model-dependent tests skipped, so it acts as the fast correctness gate
 for changes the container workflow does not build (including Argo template and regression-test
 changes).

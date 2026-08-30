@@ -6,28 +6,26 @@ required by other backends.
 
 from __future__ import annotations
 
-from speech_transcriber.config import DEFAULT_ASR_MODELS, DEFAULT_LANGUAGE, RecognitionConfig
+from speech_transcriber.config import DEFAULT_ASR_MODELS, RecognitionConfig
 from speech_transcriber.errors import UnsupportedASRBackendError
 from speech_transcriber.transcription.base import Transcriber
 
 
-def create_transcriber(config: RecognitionConfig, device: str, language: str | None) -> Transcriber:
+def create_transcriber(config: RecognitionConfig, device: str, language: str) -> Transcriber:
     """Create the selected ASR adapter without loading its model yet.
 
     ``language`` is the prepared artifact's recording language, passed straight
     through by the recognize CLI. Adapters keep their own normalization of
-    that concrete value; language-conditioned adapters may still require one.
+    that concrete value.
     """
+    if not isinstance(language, str) or not language:
+        raise ValueError("prepared language must be a non-empty string")
     if config.asr_backend not in DEFAULT_ASR_MODELS:
         raise UnsupportedASRBackendError(
             f"Unsupported ASR backend '{config.asr_backend}'. "
             "Supported backends: parakeet, primeline, qwen, nemotron, voxtral, "
             "faster-whisper, canary."
         )
-    # Language-conditioned backends require a concrete locale; the prepared
-    # artifact is the single source, and its language materializes the
-    # adapter-level default only if a caller constructs one without a language.
-    conditioned_language = language or DEFAULT_LANGUAGE
     model = config.resolved_asr_model
     if config.asr_backend == "parakeet":
         from speech_transcriber.transcription.parakeet import ParakeetTranscriber
@@ -50,8 +48,8 @@ def create_transcriber(config: RecognitionConfig, device: str, language: str | N
         )
 
         return QwenTranscriber(
-            QwenRecognizer(model, device, conditioned_language),
-            QwenForcedAligner(config.qwen_aligner_model, device, conditioned_language),
+            QwenRecognizer(model, device, language),
+            QwenForcedAligner(config.qwen_aligner_model, device, language),
             config.qwen_segment_duration,
             config.qwen_segment_overlap,
         )
@@ -59,7 +57,7 @@ def create_transcriber(config: RecognitionConfig, device: str, language: str | N
         from speech_transcriber.transcription.nemotron import NemotronTranscriber
 
         return NemotronTranscriber(
-            model, device, conditioned_language, config.nemotron_num_lookahead_tokens
+            model, device, language, config.nemotron_num_lookahead_tokens
         )
     if config.asr_backend == "voxtral":
         from speech_transcriber.transcription.voxtral import VoxtralTranscriber
@@ -85,7 +83,7 @@ def create_transcriber(config: RecognitionConfig, device: str, language: str | N
         return CanaryTranscriber(
             model,
             device,
-            conditioned_language,
+            language,
             config.canary_chunk_duration_seconds,
             working_directory=config.working_directory,
         )

@@ -46,6 +46,9 @@ def load_dag_tasks() -> dict[str, dict]:
 def resolve(value: object, backend: str) -> str:
     """Resolve a template placeholder to the concrete value a task would pass."""
     text = str(value)
+    _, workflow_parameters = load()
+    for name, parameter_value in workflow_parameters.items():
+        text = text.replace(f"{{{{workflow.parameters.{name}}}}}", parameter_value)
     text = text.replace("{{inputs.parameters.backend}}", backend)
     text = text.replace(
         "{{inputs.parameters.image}}",
@@ -63,7 +66,20 @@ def test_runtime_image_parameters_replaced_backend_image_parameters() -> None:
         "nemo_image",
         "ctranslate2_image",
         "backends",
+        "language",
     }
+
+
+def test_workflow_language_flows_only_into_prepare() -> None:
+    templates, parameters = load()
+
+    assert parameters["language"] == "de-DE"
+    prepare_args = templates["prepare"]["container"]["args"]
+    assert prepare_args[prepare_args.index("--language") + 1] == (
+        "{{workflow.parameters.language}}"
+    )
+    assert "--language" not in templates["recognize"]["container"]["args"]
+    assert "--language" not in templates["finalize"]["container"]["args"]
 
 
 def test_one_shared_recognition_template_exists() -> None:
@@ -279,7 +295,10 @@ def test_worker_invocations_parse_with_the_real_cli() -> None:
         except SystemExit as error:  # pragma: no cover - failure message
             raise AssertionError(f"invalid args in {context}: {argv}") from error
 
-    parse(templates["prepare"]["container"]["args"], "prepare")
+    parse(
+        [resolve(value, "parakeet") for value in templates["prepare"]["container"]["args"]],
+        "prepare",
+    )
 
     shared_args = templates["recognize"]["container"]["args"]
     for backend in ASR_BACKENDS:
@@ -287,8 +306,5 @@ def test_worker_invocations_parse_with_the_real_cli() -> None:
         parse(resolved, f"recognize-{backend}")
 
     finalize_args = templates["finalize"]["container"]["args"]
-    resolved_finalize = [
-        "parakeet" if value == "{{inputs.parameters.backend}}" else value
-        for value in finalize_args
-    ]
+    resolved_finalize = [resolve(value, "parakeet") for value in finalize_args]
     parse(resolved_finalize, "finalize")

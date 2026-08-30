@@ -12,11 +12,18 @@ set -euo pipefail
 
 ARGO_BIN="${1:-argo}"
 TEMPLATE="${2:-deploy/argo/transcription-workflowtemplate.yaml}"
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PYTHON_BIN="${PYTHON_BIN:-${PROJECT_ROOT}/.venv/bin/python}"
+
+if [[ ! -x "$PYTHON_BIN" ]]; then
+    echo "Python environment not found at $PYTHON_BIN; run 'uv sync --extra dev' first" >&2
+    exit 1
+fi
 
 RENDERED="$(mktemp /tmp/argo-lint-workflow-XXXXXX.yaml)"
 trap 'rm -f "$RENDERED"' EXIT
 
-python3 - "$TEMPLATE" > "$RENDERED" <<'PY'
+"$PYTHON_BIN" - "$TEMPLATE" > "$RENDERED" <<'PY'
 import sys
 
 import yaml

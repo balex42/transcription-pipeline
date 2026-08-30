@@ -113,8 +113,8 @@ def load_prepared_recording(directory: Path) -> PreparedRecording:
 
     audio = _object(manifest.get("audio"), "audio")
     diarization_info = _object(manifest.get("diarization"), "diarization")
-    normalized_name = _artifact_file(audio.get("file"), NORMALIZED_AUDIO_FILE, "audio.file")
-    diarization_name = _artifact_file(
+    normalized_name = _artifact_filename(audio.get("file"), NORMALIZED_AUDIO_FILE, "audio.file")
+    diarization_name = _artifact_filename(
         diarization_info.get("file"), DIARIZATION_FILE, "diarization.file"
     )
     normalized_path = directory / normalized_name
@@ -125,7 +125,7 @@ def load_prepared_recording(directory: Path) -> PreparedRecording:
         raise ValueError("prepared normalized audio SHA-256 does not match its manifest")
 
     metadata = AudioMetadata(
-        source=_relative_name(audio.get("source"), "audio.source"),
+        source=_relative_filename(audio.get("source"), "audio.source"),
         duration_seconds=_positive_float(audio.get("duration_seconds"), "audio.duration_seconds"),
         sample_rate=_positive_int(audio.get("sample_rate"), "audio.sample_rate"),
         channels=_positive_int(audio.get("channels"), "audio.channels"),
@@ -145,8 +145,10 @@ def load_prepared_recording(directory: Path) -> PreparedRecording:
         diarization=diarization,
         work_directory=directory,
         normalized_audio_sha256=expected_sha256,
-        diarization_model=_string(diarization_info.get("model"), "diarization.model"),
-        language=_string(manifest.get("language"), "language"),
+        diarization_model=_nonempty_string(
+            diarization_info.get("model"), "diarization.model"
+        ),
+        language=_nonempty_string(manifest.get("language"), "language"),
         cleanup_enabled=False,
     )
 
@@ -175,16 +177,14 @@ def _object(value: object, name: str) -> dict[str, Any]:
     return value
 
 
-def _string(value: object, name: str) -> str:
+def _nonempty_string(value: object, name: str) -> str:
     if not isinstance(value, str) or not value:
         raise ValueError(f"{name} must be a non-empty string")
-    if Path(value).is_absolute():
-        raise ValueError(f"{name} must not be an absolute path")
     return value
 
 
 def _sha256(value: object, name: str) -> str:
-    result = _string(value, name)
+    result = _nonempty_string(value, name)
     if len(result) != 64 or any(character not in "0123456789abcdef" for character in result):
         raise ValueError(f"{name} must be a lowercase SHA-256 hex digest")
     return result
@@ -205,15 +205,15 @@ def _positive_int(value: object, name: str) -> int:
     return value
 
 
-def _artifact_file(value: object, expected: str, name: str) -> str:
-    result = _relative_name(value, name)
+def _artifact_filename(value: object, expected: str, name: str) -> str:
+    result = _relative_filename(value, name)
     if result != expected:
         raise ValueError(f"{name} must be the relative path {expected!r}")
     return result
 
 
-def _relative_name(value: object, name: str) -> str:
-    result = _string(value, name)
+def _relative_filename(value: object, name: str) -> str:
+    result = _nonempty_string(value, name)
     if Path(result).is_absolute() or len(Path(result).parts) != 1:
         raise ValueError(f"{name} must be a relative filename")
     return result
@@ -221,7 +221,7 @@ def _relative_name(value: object, name: str) -> str:
 
 def _diarization_segment(value: object, index: int) -> DiarizationSegment:
     record = _object(value, f"diarization[{index}]")
-    speaker = _string(record.get("speaker"), f"diarization[{index}].speaker")
+    speaker = _nonempty_string(record.get("speaker"), f"diarization[{index}].speaker")
     start = _nonnegative_float(record.get("start"), f"diarization[{index}].start")
     end = _nonnegative_float(record.get("end"), f"diarization[{index}].end")
     if end < start:

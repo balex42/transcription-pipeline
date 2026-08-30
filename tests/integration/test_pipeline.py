@@ -104,6 +104,8 @@ def test_real_model_recognition_and_finalization(tmp_path: Path) -> None:
     )
     recognition = RecognitionConfig(
         prepared_path=tmp_path / "prepared",
+        output_directory=tmp_path / "asr",
+        working_directory=tmp_path / "work",
         asr_backend=backend,
         parakeet_segment_duration=30,
         parakeet_segment_overlap=5,
@@ -123,7 +125,7 @@ def test_real_model_recognition_and_finalization(tmp_path: Path) -> None:
 
     device = resolve_device_for_test()
     recognition = RecognitionRunner().recognize(
-        loaded, create_transcriber(recognition, device), backend
+        loaded, create_transcriber(recognition, device, loaded.language), backend
     )
     assert recognition.words
     if backend == "voxtral":

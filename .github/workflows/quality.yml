@@ -6,6 +6,7 @@ on:
       - "src/**"
       - "tests/**"
       - "deploy/**"
+      - "scripts/**"
       - "pyproject.toml"
       - "uv.lock"
       - ".github/workflows/quality.yml"
@@ -15,6 +16,7 @@ on:
       - "src/**"
       - "tests/**"
       - "deploy/**"
+      - "scripts/**"
       - "pyproject.toml"
       - "uv.lock"
       - ".github/workflows/quality.yml"
@@ -55,10 +57,15 @@ jobs:
         run: |
           curl -sfL --retry 3 \
             "https://github.com/argoproj/argo-workflows/releases/download/${ARGO_LINT_VERSION}/argo-linux-amd64.gz" \
-            -o argo.gz
-          gunzip -f argo.gz
+            -o argo-linux-amd64.gz
+          curl -sfL --retry 3 \
+            "https://github.com/argoproj/argo-workflows/releases/download/${ARGO_LINT_VERSION}/argo-workflows-cli-checksums.txt" \
+            -o argo-workflows-cli-checksums.txt
+          grep '  argo-linux-amd64.gz$' argo-workflows-cli-checksums.txt | sha256sum --check --strict
+          gunzip -f argo-linux-amd64.gz
+          mv argo-linux-amd64 argo
           chmod +x argo
           ./argo version --short
 
       - name: Lint Argo templates offline
-        run: bash scripts/lint-argo-template.sh ./argo
+        run: PYTHON_BIN="$PWD/.venv/bin/python" bash scripts/lint-argo-template.sh ./argo

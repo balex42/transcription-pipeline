@@ -23,6 +23,8 @@ spec:
         value: ghcr.io/balex42/transcription-pipeline-ctranslate2:sha-ff98e75
       - name: backends
         value: '["parakeet","primeline","qwen","nemotron","voxtral","faster-whisper","canary"]'
+      - name: language
+        value: de-DE
 
     artifacts:
       - name: recording
@@ -365,6 +367,8 @@ spec:
           - /work/tmp
           - --device
           - cuda
+          - --language
+          - "{{workflow.parameters.language}}"
 
         env:
           - name: HF_HOME

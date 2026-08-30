@@ -53,8 +53,7 @@ def config(
 def test_factory_selects_adapter_and_default_model(
     backend: str, adapter: type[object], model: str
 ) -> None:
-    language = "de-DE" if backend == "canary" else None
-    transcriber = create_transcriber(config(backend), "cpu", language)
+    transcriber = create_transcriber(config(backend), "cpu", "de-DE")
     assert isinstance(transcriber, adapter)
     assert transcriber.model_reference == model
     if backend == "qwen":
@@ -70,7 +69,7 @@ def test_factory_selects_adapter_and_default_model(
     if backend == "faster-whisper":
         assert transcriber.capabilities == TranscriberCapabilities(True, True, True, True)
         assert transcriber.compute_type == "float16"
-        assert transcriber.language is None
+        assert transcriber.language == "de-DE"
     if backend == "canary":
         assert transcriber.chunk_duration_seconds == 10.0
     if backend == "primeline":
@@ -131,7 +130,7 @@ def test_voxtral_delay_from_config_is_passed_to_adapter() -> None:
             voxtral_timestamp_offset_tokens=6,
         ),
         "cpu",
-        None,
+        "de-DE",
     )
     assert transcriber.delay_ms == 1200
     assert transcriber.timestamp_offset_tokens == 6
@@ -158,10 +157,16 @@ def test_explicit_model_overrides_backend_default() -> None:
     assert transcriber.model_reference == "/models/qwen"
 
 
+@pytest.mark.parametrize("language", [None, ""])
+def test_factory_does_not_manufacture_a_default_language(language: object) -> None:
+    with pytest.raises(ValueError, match="prepared language"):
+        create_transcriber(config("qwen"), "cpu", language)  # type: ignore[arg-type]
+
+
 @pytest.mark.parametrize("backend", ["invalid", "unknown-asr"])
 def test_invalid_backend_fails_clearly(backend: str) -> None:
     invalid = object.__new__(RecognitionConfig)
     object.__setattr__(invalid, "asr_backend", backend)
     object.__setattr__(invalid, "asr_model", None)
     with pytest.raises(UnsupportedASRBackendError, match=backend):
-        create_transcriber(invalid, "cpu", None)
+        create_transcriber(invalid, "cpu", "de-DE")

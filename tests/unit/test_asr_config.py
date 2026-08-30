@@ -267,7 +267,7 @@ def test_spec_example_voxtral_garbage_does_not_break_parakeet(tmp_path: Path) ->
         ["recognize", "--prepared", "prepared", "--backend", "parakeet", "--output", "out"]
     )
     config = RecognitionConfig.from_environment(
-        args.prepared, args.output, args.backend, {"log_level": args.log_level},
+        args.prepared, args.output, args.backend, {},
         {"VOXTRAL_DELAY_MS": "garbage"},
     )
     assert config.asr_backend == "parakeet"
@@ -328,7 +328,13 @@ def test_finalize_ignores_recognition_and_diarization_garbage(garbage: dict[str,
     config = finalize({}, garbage)
     assert config.alignment_tolerance == 0.25
     assert config.turn_gap_seconds == 1.0
-    assert config.log_level == "INFO"
+    assert not hasattr(config, "log_level")
+
+
+def test_stage_configs_do_not_carry_cli_logging_state() -> None:
+    assert not hasattr(prepare({}), "log_level")
+    assert not hasattr(recognize_for("parakeet", {}), "log_level")
+    assert not hasattr(finalize({}), "log_level")
 
 
 # --- Preparation configuration -----------------------------------------------------

@@ -12,7 +12,7 @@ from speech_transcriber.prepared import (
 )
 
 
-def _write_bundle(tmp_path: Path) -> Path:
+def _write_bundle(tmp_path: Path, diarization_model: str = "pyannote/test") -> Path:
     normalized = tmp_path / "source.wav"
     normalized.write_bytes(b"normalized audio")
     prepared = PreparedRecording(
@@ -26,7 +26,7 @@ def _write_bundle(tmp_path: Path) -> Path:
         diarization=[DiarizationSegment("SPEAKER_00", 0.0, 12.5)],
         work_directory=tmp_path,
         normalized_audio_sha256=sha256_file(normalized),
-        diarization_model="pyannote/test",
+        diarization_model=diarization_model,
         language="de-DE",
     )
     destination = tmp_path / "prepared"
@@ -49,6 +49,22 @@ def test_prepared_recording_round_trip_uses_relative_paths(tmp_path: Path) -> No
     assert manifest["audio"]["file"] == "normalized.wav"
     assert len(manifest["audio"]["sha256"]) == 64
     assert loaded.normalized_audio_sha256 == manifest["audio"]["sha256"]
+
+
+@pytest.mark.parametrize(
+    "model",
+    ["pyannote/speaker-diarization-community-1", "/models/pyannote-community-1"],
+)
+def test_pyannote_model_provenance_round_trips_unchanged(
+    tmp_path: Path, model: str
+) -> None:
+    directory = _write_bundle(tmp_path, diarization_model=model)
+
+    loaded = load_prepared_recording(directory)
+
+    assert loaded.diarization_model == model
+    manifest = json.loads((directory / "prepared.json").read_text(encoding="utf-8"))
+    assert manifest["diarization"]["model"] == model
 
 
 def test_load_rejects_missing_prepared_manifest(tmp_path: Path) -> None:
@@ -76,27 +92,50 @@ def test_load_rejects_missing_required_files(tmp_path: Path, missing: str) -> No
         load_prepared_recording(directory)
 
 
+def test_load_rejects_invalid_audio_digest(tmp_path: Path) -> None:
+    directory = _write_bundle(tmp_path)
+    manifest_path = directory / "prepared.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["audio"]["sha256"] = "not-a-digest"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="SHA-256"):
+        load_prepared_recording(directory)
+
+
 @pytest.mark.parametrize(
-    ("mutate", "message"),
+    ("section", "field", "value"),
     [
-        (lambda manifest: manifest["audio"].update(sha256="not-a-digest"), "SHA-256"),
-        (
-            lambda manifest: manifest["diarization"].update(model="/models/pyannote"),
-            "absolute path",
-        ),
+        ("audio", "file", "/tmp/normalized.wav"),
+        ("audio", "file", "../normalized.wav"),
+        ("diarization", "file", "/tmp/diarization.json"),
+        ("diarization", "file", "nested/diarization.json"),
+        ("audio", "source", "/private/input/meeting.m4a"),
+        ("audio", "source", "../meeting.m4a"),
     ],
 )
-def test_load_rejects_invalid_prepared_provenance(
-    tmp_path: Path, mutate: object, message: str
+def test_load_rejects_nonportable_artifact_file_references(
+    tmp_path: Path, section: str, field: str, value: str
 ) -> None:
     directory = _write_bundle(tmp_path)
     manifest_path = directory / "prepared.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    mutate(manifest)  # type: ignore[operator]
+    manifest[section][field] = value
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
 
-    with pytest.raises(ValueError, match=message):
+    with pytest.raises(ValueError, match="relative filename"):
         load_prepared_recording(directory)
+
+
+def test_prepared_recording_requires_a_language() -> None:
+    with pytest.raises(TypeError):
+        PreparedRecording(  # type: ignore[call-arg]
+            audio=NormalizedAudio(Path("audio.wav"), AudioMetadata("audio.wav", 1.0)),
+            diarization=[],
+            work_directory=Path("work"),
+            normalized_audio_sha256="0" * 64,
+            diarization_model="pyannote/test",
+        )
 
 
 def test_load_rejects_modified_normalized_audio(tmp_path: Path) -> None:

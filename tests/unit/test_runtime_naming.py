@@ -133,3 +133,15 @@ def test_ci_has_no_backend_named_container_references() -> None:
     assert "runtimes/faster-whisper" not in workflow
     assert "-canary" not in workflow
     assert "-faster-whisper" not in workflow
+
+
+def test_quality_ci_tracks_and_executes_the_argo_lint_script() -> None:
+    workflow = read(".github/workflows/quality.yml")
+
+    assert workflow.count('"scripts/**"') == 2
+    assert (
+        'PYTHON_BIN="$PWD/.venv/bin/python" bash scripts/lint-argo-template.sh ./argo'
+        in workflow
+    )
+    assert "argo-workflows-cli-checksums.txt" in workflow
+    assert "sha256sum --check --strict" in workflow
