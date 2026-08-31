@@ -16,11 +16,11 @@ spec:
         # image updates, rather than tracking the moving tag.
         value: python:3.11-alpine@sha256:6857d2dae63e052057f2db389a7061188ac9a92a3fa8d402bde68f36df6fada1
       - name: transformers_image
-        value: ghcr.io/balex42/transcription-pipeline-transformers:sha-5d135c9
+        value: ghcr.io/balex42/transcription-pipeline-transformers:sha-abd1f7d
       - name: nemo_image
-        value: ghcr.io/balex42/transcription-pipeline-nemo:sha-5d135c9
+        value: ghcr.io/balex42/transcription-pipeline-nemo:sha-abd1f7d
       - name: ctranslate2_image
-        value: ghcr.io/balex42/transcription-pipeline-ctranslate2:sha-5d135c9
+        value: ghcr.io/balex42/transcription-pipeline-ctranslate2:sha-abd1f7d
       - name: backends
         value: '["parakeet","primeline","qwen","nemotron","voxtral","faster-whisper","canary"]'
       - name: language
