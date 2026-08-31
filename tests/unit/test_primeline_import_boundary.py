@@ -36,7 +36,7 @@ import builtins
 
 blocked = (
     "transformers", "faster_whisper", "ctranslate2", "speech_transcriber.pipeline",
-    "speech_transcriber.audio", "speech_transcriber.diarization",
+    "speech_transcriber.diarization",
     "speech_transcriber.runtime", "speech_transcriber.transcription.parakeet",
     "speech_transcriber.transcription.qwen", "speech_transcriber.transcription.nemotron",
     "speech_transcriber.transcription.voxtral",

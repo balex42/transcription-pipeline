@@ -53,7 +53,7 @@ does not load ASR or diarization models.
 | Backend | Model | Processing and timestamps |
 | --- | --- | --- |
 | `parakeet` | `nvidia/parakeet-tdt-0.6b-v3` | NeMo `.nemo` checkpoint, native word timestamps, punctuation and capitalization. Uses 180-second segments with 15-second overlap. No forced alignment. |
-| `primeline` | `primeline/parakeet-primeline` | German-focused NeMo FastConformer TDT checkpoint (`2_95_WER.nemo`). Transcribes the normalized WAV in one call using the checkpoint's local attention. Native words, no chunking, no forced alignment, and nullable confidence. |
+| `primeline` | `primeline/parakeet-primeline` | German-focused NeMo FastConformer TDT checkpoint (`2_95_WER.nemo`). Uses the same 180-second segments with 15-second overlap as Parakeet, with native words, no forced alignment, and nullable confidence. |
 | `qwen` | `Qwen/Qwen3-ASR-1.7B-hf` and `Qwen/Qwen3-ForcedAligner-0.6B-hf` | Recognizes 240-second segments with 15-second overlap. The recognizer is released before the aligner is loaded. The aligner handles each recognized segment, then the adapter reconciles results. The aligner limit is 300 seconds. |
 | `nemotron` | `nvidia/nemotron-3.5-asr-streaming-0.6b` | Transformers RNNT in one cache-aware stream. Uses explicit language conditioning and native token emission times. Defaults to 13 lookahead tokens, which the model documents as 1.12 seconds of latency. |
 | `voxtral` | `mistralai/Voxtral-Mini-4B-Realtime-2602` | One cache-aware `generate()` session with processor-defined buffers and EOF padding. `[STREAMING_WORD]` positions provide approximate emission-group end times. Word starts remain unset for finalization to infer. |

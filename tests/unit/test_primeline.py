@@ -5,6 +5,7 @@ from __future__ import annotations
 import wave
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from speech_transcriber.errors import ASROutputError, ModelLoadError
@@ -29,14 +30,14 @@ def hypothesis(records: list[dict[str, object]]) -> object:
     return instance
 
 
-def audio(tmp_path: Path) -> NormalizedAudio:
+def audio(tmp_path: Path, seconds: float = 1.0) -> NormalizedAudio:
     path = tmp_path / "audio.wav"
     with wave.open(str(path), "wb") as wav:
         wav.setnchannels(1)
         wav.setsampwidth(2)
         wav.setframerate(16_000)
-        wav.writeframes(b"\x00\x00" * 16_000)
-    return NormalizedAudio(path, AudioMetadata(path.name, 1.0))
+        wav.writeframes(b"\x00\x00" * round(16_000 * seconds))
+    return NormalizedAudio(path, AudioMetadata(path.name, seconds))
 
 
 def fake_repository_cache(tmp_path: Path) -> Path:
@@ -158,7 +159,7 @@ def test_numeric_confidence_is_preserved_when_exposed() -> None:
 
 
 def test_multiple_hypotheses_are_rejected() -> None:
-    with pytest.raises(ASROutputError, match="2 hypotheses for one recording"):
+    with pytest.raises(ASROutputError, match="2 hypotheses for one segment"):
         flatten_primeline_words([Hypothesis([]), Hypothesis([])])
 
 
@@ -255,7 +256,7 @@ def test_load_restores_the_local_checkpoint_and_records_nemo_provenance(
     assert instance.dtype_name == "checkpoint-default"
 
 
-def test_transcribe_runs_one_whole_recording_call_and_validates_output(
+def test_transcribe_uses_the_shared_segmented_nemo_path_and_validates_output(
     tmp_path: Path, monkeypatch: object
 ) -> None:
     class RestoredModel:
@@ -270,8 +271,8 @@ def test_transcribe_runs_one_whole_recording_call_and_validates_output(
     def restore(model_path: str, device: str) -> RestoredModel:
         instance = RestoredModel()
 
-        def transcribe(audio: list[str], **kwargs: object) -> list[Hypothesis]:
-            calls.append({"audio": audio, **kwargs})
+        def transcribe(samples: list[np.ndarray], **kwargs: object) -> list[Hypothesis]:
+            calls.append({"samples": len(samples[0]), **kwargs})
             return [
                 Hypothesis(
                     [
@@ -297,11 +298,40 @@ def test_transcribe_runs_one_whole_recording_call_and_validates_output(
         ("Hallo", 0.0, 0.4),
         ("Welt!", 0.4, 0.9),
     ]
-    assert calls[0]["audio"] == [str(tmp_path / "audio.wav")]
+    assert calls[0]["samples"] == 16_000
     assert calls[0]["batch_size"] == 1
     assert calls[0]["return_hypotheses"] is True
     assert calls[0]["timestamps"] is True
-    assert transcriber.backend_metrics["word_count"] == 2.0
+    assert transcriber.backend_metrics["segments_processed"] == 1.0
+
+
+def test_transcribe_rebases_overlapping_segments(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class Model:
+        def __init__(self) -> None:
+            self.calls: list[int] = []
+
+        def transcribe(self, samples: list[np.ndarray], **kwargs: object) -> list[Hypothesis]:
+            self.calls.append(len(samples[0]))
+            return [Hypothesis([{"word": "Hallo", "start": 0.0, "end": 0.5}])]
+
+    model = Model()
+    artifact = tmp_path / "2_95_WER.nemo"
+    artifact.write_bytes(b"trusted model")
+    import speech_transcriber.transcription.primeline as module
+
+    monkeypatch.setattr(module, "_restore_primeline_model", lambda path, device: model)
+    transcriber = PrimelineTranscriber(str(artifact), "cpu", 2.0, 1.0)
+
+    words = transcriber.transcribe(audio(tmp_path, seconds=3.0))
+
+    assert model.calls == [32_000, 32_000]
+    assert [(word.text, word.start, word.end) for word in words] == [
+        ("Hallo", 0.0, 0.5),
+        ("Hallo", 1.0, 1.5),
+    ]
+    assert transcriber.backend_metrics["segments_processed"] == 2.0
 
 
 def test_transcribe_wraps_nemo_failures_as_output_errors(
